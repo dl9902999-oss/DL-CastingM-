@@ -363,6 +363,7 @@ export default function Melting() {
                         <span>材質: <span className="text-zinc-200">{batch?.material || '-'}</span></span>
                         <span>數量: <span className="text-zinc-200">{batch?.quantity_planned || '-'}</span></span>
                         <span>爐號: <span className="text-zinc-200">{record.furnace_no}</span></span>
+                        <span>預估重量: <span className="text-zinc-200">{(() => { const b3 = batches.find(bb => bb.id === record.batch_id); if (!b3) return '-'; const wo3 = workOrders.find(ww => ww.id === b3.work_order_id); return wo3?.estimated_weight ? `${wo3.estimated_weight}kg` : '-'; })()}</span></span>
                       </div>
                       <div className="mt-2 text-xs text-zinc-400">
                         <span className="font-medium">實際澆注 &amp; 預估得料率:</span>
@@ -380,7 +381,11 @@ export default function Melting() {
                             );
                           })}
                         </div>
-                        <span className="text-zinc-300 mt-1 inline-block">合計: {record.pouring_weight}kg</span>
+                        <div className="flex flex-wrap items-center gap-3 mt-1.5 text-zinc-300">
+                          <span>合計澆注: <span className="font-medium">{record.pouring_weight}kg</span></span>
+                          <span>合計預估重量: <span className="font-medium">{(() => { const b4 = batches.find(bb => bb.id === record.batch_id); if (!b4) return '-'; const wo4 = workOrders.find(ww => ww.id === b4.work_order_id); const estW = wo4?.estimated_weight || 0; const qty = b4.quantity_planned || 1; return `${estW * qty}kg`; })()}</span></span>
+                          <span>平均得料率: <span className={`font-bold ${record.yield_rate >= 80 ? 'text-green-400' : record.yield_rate >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{(() => { const ws = record.pouring_weights && record.pouring_weights.length > 0 ? record.pouring_weights : [record.pouring_weight]; const b5 = batches.find(bb => bb.id === record.batch_id); if (!b5) return '0.0'; const wo5 = workOrders.find(ww => ww.id === b5.work_order_id); const estW = wo5?.estimated_weight || 0; if (estW <= 0) return '0.0'; const rates = ws.filter(w => w > 0).map(w => (estW / w) * 100); return rates.length > 0 ? (rates.reduce((s, r) => s + r, 0) / rates.length).toFixed(1) : '0.0'; })()}%</span></span>
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">

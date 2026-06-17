@@ -94,6 +94,7 @@ export default function Molding() {
       customer: batch.customer || wo?.customer || '-',
       product_name: batch.product_name || wo?.product_name || '-',
       material: batch.material || wo?.material || '-',
+      estimated_weight: wo?.estimated_weight || 0,
     };
   };
 
@@ -287,6 +288,7 @@ export default function Molding() {
                         <span>品名: <span className="text-zinc-200">{getWoInfo(batch).product_name}</span></span>
                         <span>材質: <span className="text-zinc-200">{getWoInfo(batch).material}</span></span>
                         <span>數量: <span className="text-zinc-200">{batch.quantity_completed}/{batch.quantity_planned}</span></span>
+                        <span>預估重量: <span className="text-zinc-200">{getWoInfo(batch).estimated_weight > 0 ? `${getWoInfo(batch).estimated_weight}kg` : '-'}</span></span>
                         {batch.estimated_pouring_weight > 0 && (
                           <span>預估澆注: <span className="text-zinc-200">{batch.estimated_pouring_weight}kg</span></span>
                         )}
