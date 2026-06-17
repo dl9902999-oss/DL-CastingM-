@@ -156,10 +156,11 @@ export function getMeltingRecords(): MeltingRecord[] {
   return getItems<MeltingRecord>(STORAGE_KEYS.MELTING_RECORDS);
 }
 
-export function createMeltingRecord(data: { batch_id: string; batch_no: string; furnace_no: string; melting_weight: number; pouring_weight: number }): MeltingRecord {
+export function createMeltingRecord(data: { batch_id: string; batch_no: string; furnace_no: string; melting_weight: number; pouring_weights: number[] }): MeltingRecord {
   const records = getMeltingRecords();
-  // 預估得料率 = 工單預估重量 / 澆注重量 * 100%
-  const yieldRate = data.pouring_weight > 0 && data.melting_weight > 0 ? (data.melting_weight / data.pouring_weight) * 100 : 0;
+  const totalPouring = data.pouring_weights.reduce((sum, w) => sum + w, 0);
+  // 預估得料率 = 工單預估重量 / 總澆注重量 * 100%
+  const yieldRate = totalPouring > 0 && data.melting_weight > 0 ? (data.melting_weight / totalPouring) * 100 : 0;
   const newRecord: MeltingRecord = {
     id: generateId(),
     heat_no: generateOrderNo('HT'),
@@ -167,7 +168,8 @@ export function createMeltingRecord(data: { batch_id: string; batch_no: string; 
     batch_no: data.batch_no,
     furnace_no: data.furnace_no,
     melting_weight: data.melting_weight,
-    pouring_weight: data.pouring_weight,
+    pouring_weight: totalPouring,
+    pouring_weights: data.pouring_weights,
     yield_rate: Math.round(yieldRate * 100) / 100,
     status: 'Completed',
     created_at: new Date().toISOString(),
@@ -178,13 +180,16 @@ export function createMeltingRecord(data: { batch_id: string; batch_no: string; 
   return newRecord;
 }
 
-export function updateMeltingRecord(id: string, data: { furnace_no?: string; pouring_weight?: number; melting_weight?: number }): MeltingRecord | null {
+export function updateMeltingRecord(id: string, data: { furnace_no?: string; pouring_weights?: number[]; melting_weight?: number }): MeltingRecord | null {
   const records = getMeltingRecords();
   const index = records.findIndex(r => r.id === id);
   if (index === -1) return null;
   const record = records[index];
   if (data.furnace_no !== undefined) record.furnace_no = data.furnace_no;
-  if (data.pouring_weight !== undefined) record.pouring_weight = data.pouring_weight;
+  if (data.pouring_weights !== undefined) {
+    record.pouring_weights = data.pouring_weights;
+    record.pouring_weight = data.pouring_weights.reduce((sum, w) => sum + w, 0);
+  }
   if (data.melting_weight !== undefined) record.melting_weight = data.melting_weight;
   // Recalculate yield rate
   if (record.pouring_weight > 0 && record.melting_weight > 0) {

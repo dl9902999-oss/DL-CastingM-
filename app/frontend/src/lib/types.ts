@@ -57,6 +57,7 @@ export interface MeltingRecord {
   furnace_no: string;
   melting_weight: number;
   pouring_weight: number;
+  pouring_weights: number[];
   yield_rate: number;
   status: 'Pending' | 'In Progress' | 'Completed';
   created_at: string;

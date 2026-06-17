@@ -19,8 +19,10 @@ export default function Melting() {
   const [editingRecord, setEditingRecord] = useState<MeltingRecord | null>(null);
   const { toast } = useToast();
 
-  const [form, setForm] = useState({ batch_id: '', furnace_no: '', pouring_weight: 0 });
-  const [editForm, setEditForm] = useState({ furnace_no: '', pouring_weight: 0 });
+  const [form, setForm] = useState({ batch_id: '', furnace_no: '' });
+  const [pouringWeights, setPouringWeights] = useState<number[]>([0]);
+  const [editForm, setEditForm] = useState({ furnace_no: '' });
+  const [editPouringWeights, setEditPouringWeights] = useState<number[]>([0]);
   const [batchSearch, setBatchSearch] = useState('');
   const [selectedBatch, setSelectedBatch] = useState<MoldingBatch | null>(null);
 
@@ -42,7 +44,6 @@ export default function Melting() {
     );
   });
 
-  // Get work order estimated weight for the selected batch
   const getEstimatedWeight = (batch: MoldingBatch | null): number => {
     if (!batch) return 0;
     const wo = workOrders.find(w => w.id === batch.work_order_id);
@@ -56,9 +57,28 @@ export default function Melting() {
     return wo?.estimated_weight || 0;
   };
 
+  const getBatchQuantity = (batch: MoldingBatch | null): number => {
+    if (!batch) return 1;
+    return batch.quantity_planned || 1;
+  };
+
+  // When batch is selected, initialize pouring weights array based on quantity
+  const handleSelectBatch = (b: MoldingBatch) => {
+    setSelectedBatch(b);
+    setForm({ ...form, batch_id: b.id });
+    setBatchSearch('');
+    const qty = b.quantity_planned || 1;
+    setPouringWeights(new Array(qty).fill(0));
+  };
+
   const handleCreate = () => {
-    if (!form.batch_id || !form.furnace_no || form.pouring_weight <= 0) {
+    if (!form.batch_id || !form.furnace_no) {
       toast({ title: '請填寫所有必要欄位', variant: 'destructive' });
+      return;
+    }
+    const totalPouring = pouringWeights.reduce((sum, w) => sum + w, 0);
+    if (totalPouring <= 0) {
+      toast({ title: '請至少填寫一個澆注重量', variant: 'destructive' });
       return;
     }
     const batch = batches.find(b => b.id === form.batch_id);
@@ -69,11 +89,12 @@ export default function Melting() {
       batch_no: batch.batch_no,
       furnace_no: form.furnace_no,
       melting_weight: estimatedWeight,
-      pouring_weight: form.pouring_weight,
+      pouring_weights: pouringWeights,
     });
     setRecords(getMeltingRecords());
     setIsCreateOpen(false);
-    setForm({ batch_id: '', furnace_no: '', pouring_weight: 0 });
+    setForm({ batch_id: '', furnace_no: '' });
+    setPouringWeights([0]);
     setSelectedBatch(null);
     setBatchSearch('');
     toast({ title: '澆注紀錄已建立' });
@@ -81,20 +102,30 @@ export default function Melting() {
 
   const handleEdit = (record: MeltingRecord) => {
     setEditingRecord(record);
-    setEditForm({ furnace_no: record.furnace_no, pouring_weight: record.pouring_weight });
+    setEditForm({ furnace_no: record.furnace_no });
+    // Use existing pouring_weights or fallback to single value
+    const weights = record.pouring_weights && record.pouring_weights.length > 0
+      ? [...record.pouring_weights]
+      : [record.pouring_weight];
+    setEditPouringWeights(weights);
     setIsEditOpen(true);
   };
 
   const handleUpdate = () => {
     if (!editingRecord) return;
-    if (!editForm.furnace_no || editForm.pouring_weight <= 0) {
+    if (!editForm.furnace_no) {
       toast({ title: '請填寫所有必要欄位', variant: 'destructive' });
+      return;
+    }
+    const totalPouring = editPouringWeights.reduce((sum, w) => sum + w, 0);
+    if (totalPouring <= 0) {
+      toast({ title: '請至少填寫一個澆注重量', variant: 'destructive' });
       return;
     }
     const estimatedWeight = getEstimatedWeightByBatchId(editingRecord.batch_id);
     updateMeltingRecord(editingRecord.id, {
       furnace_no: editForm.furnace_no,
-      pouring_weight: editForm.pouring_weight,
+      pouring_weights: editPouringWeights,
       melting_weight: estimatedWeight,
     });
     setRecords(getMeltingRecords());
@@ -111,23 +142,25 @@ export default function Melting() {
   };
 
   const estimatedWeight = getEstimatedWeight(selectedBatch);
-  const yieldRate = form.pouring_weight > 0 && estimatedWeight > 0 ? ((estimatedWeight / form.pouring_weight) * 100).toFixed(1) : '0.0';
+  const totalPouring = pouringWeights.reduce((sum, w) => sum + w, 0);
+  const yieldRate = totalPouring > 0 && estimatedWeight > 0 ? ((estimatedWeight / totalPouring) * 100).toFixed(1) : '0.0';
 
   const editEstimatedWeight = editingRecord ? getEstimatedWeightByBatchId(editingRecord.batch_id) : 0;
-  const editYieldRate = editForm.pouring_weight > 0 && editEstimatedWeight > 0 ? ((editEstimatedWeight / editForm.pouring_weight) * 100).toFixed(1) : '0.0';
+  const editTotalPouring = editPouringWeights.reduce((sum, w) => sum + w, 0);
+  const editYieldRate = editTotalPouring > 0 && editEstimatedWeight > 0 ? ((editEstimatedWeight / editTotalPouring) * 100).toFixed(1) : '0.0';
 
   return (
     <AppLayout>
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">批次澆注</h1>
-          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) { setSelectedBatch(null); setBatchSearch(''); } }}>
+          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) { setSelectedBatch(null); setBatchSearch(''); setPouringWeights([0]); } }}>
             <DialogTrigger asChild>
               <Button className="bg-amber-500 hover:bg-amber-600 text-zinc-900">
                 <Plus className="w-4 h-4 mr-2" />新增澆注
               </Button>
             </DialogTrigger>
-            <DialogContent className="bg-zinc-800 border-zinc-700 max-w-md">
+            <DialogContent className="bg-zinc-800 border-zinc-700 max-w-md max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle className="text-zinc-100">新增澆注紀錄</DialogTitle>
               </DialogHeader>
@@ -140,7 +173,7 @@ export default function Melting() {
                         <span className="font-mono text-amber-400">{selectedBatch.batch_no}</span>
                         <span className="text-zinc-400 ml-2">客戶: {selectedBatch.customer || '-'} | 品名: {selectedBatch.product_name || '-'} | 材質: {selectedBatch.material || '-'}</span>
                       </div>
-                      <Button variant="ghost" size="icon" onClick={() => { setSelectedBatch(null); setForm({ ...form, batch_id: '' }); setBatchSearch(''); }} className="text-zinc-400 hover:text-zinc-100 h-6 w-6">
+                      <Button variant="ghost" size="icon" onClick={() => { setSelectedBatch(null); setForm({ ...form, batch_id: '' }); setBatchSearch(''); setPouringWeights([0]); }} className="text-zinc-400 hover:text-zinc-100 h-6 w-6">
                         <X className="w-4 h-4" />
                       </Button>
                     </div>
@@ -162,7 +195,7 @@ export default function Melting() {
                           filteredBatches.map(b => (
                             <button
                               key={b.id}
-                              onClick={() => { setSelectedBatch(b); setForm({ ...form, batch_id: b.id }); setBatchSearch(''); }}
+                              onClick={() => handleSelectBatch(b)}
                               className="w-full text-left p-2 rounded hover:bg-zinc-600 text-sm"
                             >
                               <span className="font-mono text-amber-400">{b.batch_no}</span>
@@ -185,14 +218,34 @@ export default function Melting() {
                   </div>
                 )}
                 <div>
-                  <Label className="text-zinc-300">實際澆注重量 (kg)</Label>
-                  <Input type="number" value={form.pouring_weight} onChange={e => setForm({ ...form, pouring_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  <Label className="text-zinc-300">實際澆注重量 (共 {pouringWeights.length} 件)</Label>
+                  <div className="space-y-2 mt-2">
+                    {pouringWeights.map((w, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <span className="text-xs text-zinc-400 w-16">第 {idx + 1} 件</span>
+                        <Input
+                          type="number"
+                          value={w}
+                          onChange={e => {
+                            const newWeights = [...pouringWeights];
+                            newWeights[idx] = Number(e.target.value);
+                            setPouringWeights(newWeights);
+                          }}
+                          className="bg-zinc-700 border-zinc-600 text-zinc-100 flex-1"
+                          placeholder="kg"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  {pouringWeights.length > 0 && (
+                    <p className="text-xs text-zinc-400 mt-2">合計: <span className="text-zinc-200 font-medium">{totalPouring} kg</span></p>
+                  )}
                 </div>
                 <div className="p-3 bg-zinc-700/50 rounded-md">
                   <span className="text-sm text-zinc-400">預估得料率: </span>
                   <span className="text-lg font-bold text-amber-400">{yieldRate}%</span>
-                  {estimatedWeight > 0 && form.pouring_weight > 0 && (
-                    <span className="text-xs text-zinc-500 ml-2">({estimatedWeight} / {form.pouring_weight} × 100%)</span>
+                  {estimatedWeight > 0 && totalPouring > 0 && (
+                    <span className="text-xs text-zinc-500 ml-2">({estimatedWeight} / {totalPouring} × 100%)</span>
                   )}
                 </div>
                 <Button onClick={handleCreate} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">建立</Button>
@@ -203,15 +256,20 @@ export default function Melting() {
 
         {/* Edit Dialog */}
         <Dialog open={isEditOpen} onOpenChange={(open) => { setIsEditOpen(open); if (!open) setEditingRecord(null); }}>
-          <DialogContent className="bg-zinc-800 border-zinc-700 max-w-md">
+          <DialogContent className="bg-zinc-800 border-zinc-700 max-w-md max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-zinc-100">編輯澆注紀錄 - {editingRecord?.heat_no}</DialogTitle>
             </DialogHeader>
-            {editingRecord && (
+            {editingRecord && (() => {
+              const editBatch = batches.find(b => b.id === editingRecord.batch_id);
+              return (
               <div className="space-y-3">
                 <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600">
                   <Label className="text-zinc-400 text-xs">批次</Label>
                   <p className="text-sm font-medium text-zinc-100">{editingRecord.batch_no}</p>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    客戶: <span className="text-zinc-200">{editBatch?.customer || '-'}</span> | 品名: <span className="text-zinc-200">{editBatch?.product_name || '-'}</span> | 材質: <span className="text-zinc-200">{editBatch?.material || '-'}</span>
+                  </p>
                 </div>
                 <div>
                   <Label className="text-zinc-300">爐號</Label>
@@ -222,19 +280,40 @@ export default function Melting() {
                   <p className="text-sm font-medium text-zinc-100">{editEstimatedWeight > 0 ? `${editEstimatedWeight} kg` : '未填寫'}</p>
                 </div>
                 <div>
-                  <Label className="text-zinc-300">實際澆注重量 (kg)</Label>
-                  <Input type="number" value={editForm.pouring_weight} onChange={e => setEditForm({ ...editForm, pouring_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  <Label className="text-zinc-300">實際澆注重量 (共 {editPouringWeights.length} 件)</Label>
+                  <div className="space-y-2 mt-2">
+                    {editPouringWeights.map((w, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <span className="text-xs text-zinc-400 w-16">第 {idx + 1} 件</span>
+                        <Input
+                          type="number"
+                          value={w}
+                          onChange={e => {
+                            const newWeights = [...editPouringWeights];
+                            newWeights[idx] = Number(e.target.value);
+                            setEditPouringWeights(newWeights);
+                          }}
+                          className="bg-zinc-700 border-zinc-600 text-zinc-100 flex-1"
+                          placeholder="kg"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  {editPouringWeights.length > 0 && (
+                    <p className="text-xs text-zinc-400 mt-2">合計: <span className="text-zinc-200 font-medium">{editTotalPouring} kg</span></p>
+                  )}
                 </div>
                 <div className="p-3 bg-zinc-700/50 rounded-md">
                   <span className="text-sm text-zinc-400">預估得料率: </span>
                   <span className="text-lg font-bold text-amber-400">{editYieldRate}%</span>
-                  {editEstimatedWeight > 0 && editForm.pouring_weight > 0 && (
-                    <span className="text-xs text-zinc-500 ml-2">({editEstimatedWeight} / {editForm.pouring_weight} × 100%)</span>
+                  {editEstimatedWeight > 0 && editTotalPouring > 0 && (
+                    <span className="text-xs text-zinc-500 ml-2">({editEstimatedWeight} / {editTotalPouring} × 100%)</span>
                   )}
                 </div>
                 <Button onClick={handleUpdate} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">儲存</Button>
               </div>
-            )}
+              );
+            })()}
           </DialogContent>
         </Dialog>
 
@@ -247,6 +326,7 @@ export default function Melting() {
           ) : (
             records.map(record => {
               const batch = batches.find(b => b.id === record.batch_id);
+              const weights = record.pouring_weights && record.pouring_weights.length > 0 ? record.pouring_weights : [record.pouring_weight];
               return (
               <Card key={record.id} className="bg-zinc-800 border-zinc-700">
                 <CardContent className="p-4">
@@ -263,7 +343,17 @@ export default function Melting() {
                         <span>材質: <span className="text-zinc-200">{batch?.material || '-'}</span></span>
                         <span>數量: <span className="text-zinc-200">{batch?.quantity_planned || '-'}</span></span>
                         <span>爐號: <span className="text-zinc-200">{record.furnace_no}</span></span>
-                        <span>實際澆注: <span className="text-zinc-200">{record.pouring_weight}kg</span></span>
+                      </div>
+                      <div className="mt-2 text-xs text-zinc-400">
+                        <span className="font-medium">實際澆注:</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {weights.map((w, idx) => (
+                            <span key={idx} className="bg-zinc-700 px-2 py-0.5 rounded text-zinc-200">
+                              第{idx + 1}件: {w}kg
+                            </span>
+                          ))}
+                        </div>
+                        <span className="text-zinc-300 mt-1 inline-block">合計: {record.pouring_weight}kg</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
