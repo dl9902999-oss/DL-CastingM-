@@ -141,7 +141,7 @@ export default function Melting() {
                   </div>
                 )}
                 <div>
-                  <Label className="text-zinc-300">澆注重量 (kg)</Label>
+                  <Label className="text-zinc-300">實際澆注重量 (kg)</Label>
                   <Input type="number" value={form.pouring_weight} onChange={e => setForm({ ...form, pouring_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
                 </div>
                 <div className="p-3 bg-zinc-700/50 rounded-md">
@@ -164,7 +164,9 @@ export default function Melting() {
               <CardContent className="p-8 text-center text-zinc-400">尚無熔煉紀錄</CardContent>
             </Card>
           ) : (
-            records.map(record => (
+            records.map(record => {
+              const batch = batches.find(b => b.id === record.batch_id);
+              return (
               <Card key={record.id} className="bg-zinc-800 border-zinc-700">
                 <CardContent className="p-4">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -175,8 +177,12 @@ export default function Melting() {
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-zinc-400">
                         <span>批次: <span className="text-zinc-200">{record.batch_no}</span></span>
+                        <span>客戶: <span className="text-zinc-200">{batch?.customer || '-'}</span></span>
+                        <span>品名: <span className="text-zinc-200">{batch?.product_name || '-'}</span></span>
+                        <span>材質: <span className="text-zinc-200">{batch?.material || '-'}</span></span>
+                        <span>數量: <span className="text-zinc-200">{batch?.quantity_planned || '-'}</span></span>
                         <span>爐號: <span className="text-zinc-200">{record.furnace_no}</span></span>
-                        <span>澆注: <span className="text-zinc-200">{record.pouring_weight}kg</span></span>
+                        <span>實際澆注: <span className="text-zinc-200">{record.pouring_weight}kg</span></span>
                       </div>
                     </div>
                     <div className="text-right">
@@ -188,7 +194,8 @@ export default function Melting() {
                   </div>
                 </CardContent>
               </Card>
-            ))
+              );
+            })
           )}
         </div>
       </div>
