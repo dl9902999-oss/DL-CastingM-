@@ -178,6 +178,32 @@ export function createMeltingRecord(data: { batch_id: string; batch_no: string; 
   return newRecord;
 }
 
+export function updateMeltingRecord(id: string, data: { furnace_no?: string; pouring_weight?: number; melting_weight?: number }): MeltingRecord | null {
+  const records = getMeltingRecords();
+  const index = records.findIndex(r => r.id === id);
+  if (index === -1) return null;
+  const record = records[index];
+  if (data.furnace_no !== undefined) record.furnace_no = data.furnace_no;
+  if (data.pouring_weight !== undefined) record.pouring_weight = data.pouring_weight;
+  if (data.melting_weight !== undefined) record.melting_weight = data.melting_weight;
+  // Recalculate yield rate
+  if (record.pouring_weight > 0 && record.melting_weight > 0) {
+    record.yield_rate = Math.round((record.melting_weight / record.pouring_weight) * 100 * 100) / 100;
+  }
+  record.updated_at = new Date().toISOString();
+  records[index] = record;
+  setItems(STORAGE_KEYS.MELTING_RECORDS, records);
+  return record;
+}
+
+export function deleteMeltingRecord(id: string): boolean {
+  const records = getMeltingRecords();
+  const filtered = records.filter(r => r.id !== id);
+  if (filtered.length === records.length) return false;
+  setItems(STORAGE_KEYS.MELTING_RECORDS, filtered);
+  return true;
+}
+
 // Quality Inspections
 export function getQualityInspections(): QualityInspection[] {
   return getItems<QualityInspection>(STORAGE_KEYS.QUALITY_INSPECTIONS);

@@ -6,8 +6,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { MeltingRecord, MoldingBatch, WorkOrder } from '@/lib/types';
-import { getMeltingRecords, createMeltingRecord, getMoldingBatches, getWorkOrders } from '@/lib/store';
-import { Plus, Flame, Search, X } from 'lucide-react';
+import { getMeltingRecords, createMeltingRecord, updateMeltingRecord, deleteMeltingRecord, getMoldingBatches, getWorkOrders } from '@/lib/store';
+import { Plus, Flame, Search, X, Pencil, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 export default function Melting() {
@@ -15,9 +15,12 @@ export default function Melting() {
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<MeltingRecord | null>(null);
   const { toast } = useToast();
 
   const [form, setForm] = useState({ batch_id: '', furnace_no: '', pouring_weight: 0 });
+  const [editForm, setEditForm] = useState({ furnace_no: '', pouring_weight: 0 });
   const [batchSearch, setBatchSearch] = useState('');
   const [selectedBatch, setSelectedBatch] = useState<MoldingBatch | null>(null);
 
@@ -46,6 +49,13 @@ export default function Melting() {
     return wo?.estimated_weight || 0;
   };
 
+  const getEstimatedWeightByBatchId = (batchId: string): number => {
+    const batch = batches.find(b => b.id === batchId);
+    if (!batch) return 0;
+    const wo = workOrders.find(w => w.id === batch.work_order_id);
+    return wo?.estimated_weight || 0;
+  };
+
   const handleCreate = () => {
     if (!form.batch_id || !form.furnace_no || form.pouring_weight <= 0) {
       toast({ title: '請填寫所有必要欄位', variant: 'destructive' });
@@ -69,8 +79,42 @@ export default function Melting() {
     toast({ title: '澆注紀錄已建立' });
   };
 
+  const handleEdit = (record: MeltingRecord) => {
+    setEditingRecord(record);
+    setEditForm({ furnace_no: record.furnace_no, pouring_weight: record.pouring_weight });
+    setIsEditOpen(true);
+  };
+
+  const handleUpdate = () => {
+    if (!editingRecord) return;
+    if (!editForm.furnace_no || editForm.pouring_weight <= 0) {
+      toast({ title: '請填寫所有必要欄位', variant: 'destructive' });
+      return;
+    }
+    const estimatedWeight = getEstimatedWeightByBatchId(editingRecord.batch_id);
+    updateMeltingRecord(editingRecord.id, {
+      furnace_no: editForm.furnace_no,
+      pouring_weight: editForm.pouring_weight,
+      melting_weight: estimatedWeight,
+    });
+    setRecords(getMeltingRecords());
+    setIsEditOpen(false);
+    setEditingRecord(null);
+    toast({ title: '澆注紀錄已更新' });
+  };
+
+  const handleDelete = (record: MeltingRecord) => {
+    if (!window.confirm(`確定要刪除澆注紀錄 ${record.heat_no} 嗎？`)) return;
+    deleteMeltingRecord(record.id);
+    setRecords(getMeltingRecords());
+    toast({ title: '澆注紀錄已刪除' });
+  };
+
   const estimatedWeight = getEstimatedWeight(selectedBatch);
   const yieldRate = form.pouring_weight > 0 && estimatedWeight > 0 ? ((estimatedWeight / form.pouring_weight) * 100).toFixed(1) : '0.0';
+
+  const editEstimatedWeight = editingRecord ? getEstimatedWeightByBatchId(editingRecord.batch_id) : 0;
+  const editYieldRate = editForm.pouring_weight > 0 && editEstimatedWeight > 0 ? ((editEstimatedWeight / editForm.pouring_weight) * 100).toFixed(1) : '0.0';
 
   return (
     <AppLayout>
@@ -157,6 +201,43 @@ export default function Melting() {
           </Dialog>
         </div>
 
+        {/* Edit Dialog */}
+        <Dialog open={isEditOpen} onOpenChange={(open) => { setIsEditOpen(open); if (!open) setEditingRecord(null); }}>
+          <DialogContent className="bg-zinc-800 border-zinc-700 max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-zinc-100">編輯澆注紀錄 - {editingRecord?.heat_no}</DialogTitle>
+            </DialogHeader>
+            {editingRecord && (
+              <div className="space-y-3">
+                <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600">
+                  <Label className="text-zinc-400 text-xs">批次</Label>
+                  <p className="text-sm font-medium text-zinc-100">{editingRecord.batch_no}</p>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">爐號</Label>
+                  <Input value={editForm.furnace_no} onChange={e => setEditForm({ ...editForm, furnace_no: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                </div>
+                <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600">
+                  <Label className="text-zinc-400 text-xs">工單預估重量</Label>
+                  <p className="text-sm font-medium text-zinc-100">{editEstimatedWeight > 0 ? `${editEstimatedWeight} kg` : '未填寫'}</p>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">實際澆注重量 (kg)</Label>
+                  <Input type="number" value={editForm.pouring_weight} onChange={e => setEditForm({ ...editForm, pouring_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                </div>
+                <div className="p-3 bg-zinc-700/50 rounded-md">
+                  <span className="text-sm text-zinc-400">預估得料率: </span>
+                  <span className="text-lg font-bold text-amber-400">{editYieldRate}%</span>
+                  {editEstimatedWeight > 0 && editForm.pouring_weight > 0 && (
+                    <span className="text-xs text-zinc-500 ml-2">({editEstimatedWeight} / {editForm.pouring_weight} × 100%)</span>
+                  )}
+                </div>
+                <Button onClick={handleUpdate} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">儲存</Button>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
         {/* Records List */}
         <div className="space-y-3">
           {records.length === 0 ? (
@@ -185,11 +266,21 @@ export default function Melting() {
                         <span>實際澆注: <span className="text-zinc-200">{record.pouring_weight}kg</span></span>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <span className="text-xs text-zinc-400">預估得料率</span>
-                      <p className={`text-lg font-bold ${record.yield_rate >= 80 ? 'text-green-400' : record.yield_rate >= 60 ? 'text-amber-400' : 'text-red-400'}`}>
-                        {record.yield_rate}%
-                      </p>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <span className="text-xs text-zinc-400">預估得料率</span>
+                        <p className={`text-lg font-bold ${record.yield_rate >= 80 ? 'text-green-400' : record.yield_rate >= 60 ? 'text-amber-400' : 'text-red-400'}`}>
+                          {record.yield_rate}%
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(record)} className="text-zinc-400 hover:text-amber-400 h-7 w-7">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(record)} className="text-zinc-400 hover:text-red-400 h-7 w-7">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </CardContent>
