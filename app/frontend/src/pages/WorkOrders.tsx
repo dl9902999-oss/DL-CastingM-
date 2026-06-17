@@ -96,6 +96,17 @@ export default function WorkOrders() {
     return batches.filter(b => b.work_order_id === orderId).reduce((sum, b) => sum + b.quantity_planned, 0);
   };
 
+  // Derive display status based on batch quantities
+  const getDisplayStatus = (order: WorkOrder) => {
+    const startedQty = getStartedQty(order.id);
+    if (order.status === 'Cancelled') return { label: '已取消', cls: 'bg-zinc-600 text-zinc-300' };
+    if (order.status === 'Completed' || startedQty >= order.quantity) return { label: '已完成', cls: 'bg-green-500/20 text-green-400' };
+    if (startedQty > 0) return { label: '部分開工', cls: 'bg-cyan-500/20 text-cyan-400' };
+    if (order.status === 'Partial') return { label: '部分開工', cls: 'bg-cyan-500/20 text-cyan-400' };
+    if (order.status === 'In Progress') return { label: '進行中', cls: 'bg-amber-500/20 text-amber-400' };
+    return { label: '待開工', cls: 'bg-blue-500/20 text-blue-400' };
+  };
+
   const resetForm = () => setForm({
     customer: '', product_name: '', material: '', quantity: 0,
     estimated_weight: 0, mold_supply: '', mold_type: '', heat_treatment: '',
@@ -266,13 +277,7 @@ export default function WorkOrders() {
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-mono text-sm font-semibold text-amber-400">{order.order_no}</span>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${
-                          order.status === 'Open' ? 'bg-blue-500/20 text-blue-400' :
-                          order.status === 'Partial' ? 'bg-cyan-500/20 text-cyan-400' :
-                          order.status === 'In Progress' ? 'bg-amber-500/20 text-amber-400' :
-                          order.status === 'Completed' ? 'bg-green-500/20 text-green-400' :
-                          'bg-zinc-600 text-zinc-300'
-                        }`}>{order.status === 'Open' ? '待開工' : order.status === 'Partial' ? '部分開工' : order.status === 'In Progress' ? '進行中' : order.status === 'Completed' ? '已完成' : '已取消'}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${getDisplayStatus(order).cls}`}>{getDisplayStatus(order).label}</span>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400">
                         <span>客戶: <span className="text-zinc-200">{order.customer}</span></span>
