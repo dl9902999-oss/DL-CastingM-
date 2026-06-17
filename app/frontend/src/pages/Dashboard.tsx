@@ -96,11 +96,12 @@ export default function Dashboard() {
                     </div>
                     <span className={`text-xs px-2 py-1 rounded-full ${
                       order.status === 'Open' ? 'bg-blue-500/20 text-blue-400' :
+                      order.status === 'Partial' ? 'bg-cyan-500/20 text-cyan-400' :
                       order.status === 'In Progress' ? 'bg-amber-500/20 text-amber-400' :
                       order.status === 'Completed' ? 'bg-green-500/20 text-green-400' :
                       'bg-zinc-600 text-zinc-300'
                     }`}>
-                      {order.status === 'Open' ? '待開工' : order.status === 'In Progress' ? '進行中' : order.status === 'Completed' ? '已完成' : '已取消'}
+                      {order.status === 'Open' ? '待開工' : order.status === 'Partial' ? '部分開工' : order.status === 'In Progress' ? '進行中' : order.status === 'Completed' ? '已完成' : '已取消'}
                     </span>
                   </div>
                 ))}

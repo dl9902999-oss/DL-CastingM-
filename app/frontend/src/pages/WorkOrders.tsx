@@ -260,10 +260,11 @@ export default function WorkOrders() {
                         <span className="font-mono text-sm font-semibold text-amber-400">{order.order_no}</span>
                         <span className={`text-xs px-2 py-0.5 rounded-full ${
                           order.status === 'Open' ? 'bg-blue-500/20 text-blue-400' :
+                          order.status === 'Partial' ? 'bg-cyan-500/20 text-cyan-400' :
                           order.status === 'In Progress' ? 'bg-amber-500/20 text-amber-400' :
                           order.status === 'Completed' ? 'bg-green-500/20 text-green-400' :
                           'bg-zinc-600 text-zinc-300'
-                        }`}>{order.status === 'Open' ? '待開工' : order.status === 'In Progress' ? '進行中' : order.status === 'Completed' ? '已完成' : '已取消'}</span>
+                        }`}>{order.status === 'Open' ? '待開工' : order.status === 'Partial' ? '部分開工' : order.status === 'In Progress' ? '進行中' : order.status === 'Completed' ? '已完成' : '已取消'}</span>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400">
                         <span>客戶: <span className="text-zinc-200">{order.customer}</span></span>
@@ -393,6 +394,7 @@ export default function WorkOrders() {
                     </SelectTrigger>
                     <SelectContent className="bg-zinc-700 border-zinc-600">
                       <SelectItem value="Open">待開工</SelectItem>
+                      <SelectItem value="Partial">部分開工</SelectItem>
                       <SelectItem value="In Progress">進行中</SelectItem>
                       <SelectItem value="Completed">已完成</SelectItem>
                       <SelectItem value="Cancelled">已取消</SelectItem>

@@ -26,7 +26,7 @@ export interface WorkOrder {
   remarks: string;
   mold_photos: string[];
   drawing_photos: string[];
-  status: 'Open' | 'In Progress' | 'Completed' | 'Cancelled';
+  status: 'Open' | 'Partial' | 'In Progress' | 'Completed' | 'Cancelled';
   created_at: string;
   updated_at: string;
 }
