@@ -7,10 +7,14 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { WorkOrder } from '@/lib/types';
+import { WorkOrder, MoldSupply, MoldType, HeatTreatment } from '@/lib/types';
 import { getWorkOrders, createWorkOrder, updateWorkOrder } from '@/lib/store';
 import { Plus, Search, Edit, Image, FileImage, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+
+const MOLD_SUPPLY_OPTIONS: MoldSupply[] = ['客戶提供', '公司自有', '代客製作'];
+const MOLD_TYPE_OPTIONS: MoldType[] = ['單面模', '現板模', '上下模', '保模', '其他'];
+const HEAT_TREATMENT_OPTIONS: HeatTreatment[] = ['退火', '淬火', '回火', '正常化', '調質', '其他'];
 
 function ImageUpload({ label, images, onChange, icon }: { label: string; images: string[]; onChange: (imgs: string[]) => void; icon: React.ReactNode }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -72,6 +76,10 @@ export default function WorkOrders() {
     product_name: '',
     material: '',
     quantity: 0,
+    estimated_weight: 0,
+    mold_supply: '' as MoldSupply | '',
+    mold_type: '' as MoldType | '',
+    heat_treatment: '' as HeatTreatment | '',
     due_date: '',
     remarks: '',
     mold_photos: [] as string[],
@@ -82,7 +90,11 @@ export default function WorkOrders() {
     setOrders(getWorkOrders());
   }, []);
 
-  const resetForm = () => setForm({ customer: '', product_name: '', material: '', quantity: 0, due_date: '', remarks: '', mold_photos: [], drawing_photos: [] });
+  const resetForm = () => setForm({
+    customer: '', product_name: '', material: '', quantity: 0,
+    estimated_weight: 0, mold_supply: '', mold_type: '', heat_treatment: '',
+    due_date: '', remarks: '', mold_photos: [], drawing_photos: []
+  });
 
   const handleCreate = () => {
     if (!form.customer || !form.product_name || !form.material || form.quantity <= 0) {
@@ -138,9 +150,54 @@ export default function WorkOrders() {
                   <Label className="text-zinc-300">材質</Label>
                   <Input value={form.material} onChange={e => setForm({ ...form, material: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-zinc-300">數量</Label>
+                    <Input type="number" value={form.quantity} onChange={e => setForm({ ...form, quantity: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  </div>
+                  <div>
+                    <Label className="text-zinc-300">預估重量 (kg)</Label>
+                    <Input type="number" value={form.estimated_weight} onChange={e => setForm({ ...form, estimated_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  </div>
+                </div>
                 <div>
-                  <Label className="text-zinc-300">數量</Label>
-                  <Input type="number" value={form.quantity} onChange={e => setForm({ ...form, quantity: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  <Label className="text-zinc-300">模具供給</Label>
+                  <Select value={form.mold_supply} onValueChange={val => setForm({ ...form, mold_supply: val as MoldSupply })}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
+                      <SelectValue placeholder="選擇模具供給方式" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">
+                      {MOLD_SUPPLY_OPTIONS.map(opt => (
+                        <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">模具型式</Label>
+                  <Select value={form.mold_type} onValueChange={val => setForm({ ...form, mold_type: val as MoldType })}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
+                      <SelectValue placeholder="選擇模具型式" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">
+                      {MOLD_TYPE_OPTIONS.map(opt => (
+                        <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">熱處理</Label>
+                  <Select value={form.heat_treatment} onValueChange={val => setForm({ ...form, heat_treatment: val as HeatTreatment })}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
+                      <SelectValue placeholder="選擇熱處理方式" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">
+                      {HEAT_TREATMENT_OPTIONS.map(opt => (
+                        <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label className="text-zinc-300">交期</Label>
@@ -206,6 +263,12 @@ export default function WorkOrders() {
                         <span>材質: <span className="text-zinc-200">{order.material}</span></span>
                         <span>數量: <span className="text-zinc-200">{order.quantity}</span></span>
                       </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400 mt-1">
+                        {order.estimated_weight > 0 && <span>預估重量: <span className="text-zinc-200">{order.estimated_weight}kg</span></span>}
+                        {order.mold_supply && <span>模具供給: <span className="text-zinc-200">{order.mold_supply}</span></span>}
+                        {order.mold_type && <span>模具型式: <span className="text-zinc-200">{order.mold_type}</span></span>}
+                        {order.heat_treatment && <span>熱處理: <span className="text-zinc-200">{order.heat_treatment}</span></span>}
+                      </div>
                       {order.due_date && <p className="text-xs text-zinc-500 mt-1">交期: {order.due_date}</p>}
                       {/* Photo indicators */}
                       <div className="flex items-center gap-3 mt-2">
@@ -257,9 +320,54 @@ export default function WorkOrders() {
                   <Label className="text-zinc-300">材質</Label>
                   <Input value={editOrder.material} onChange={e => setEditOrder({ ...editOrder, material: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-zinc-300">數量</Label>
+                    <Input type="number" value={editOrder.quantity} onChange={e => setEditOrder({ ...editOrder, quantity: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  </div>
+                  <div>
+                    <Label className="text-zinc-300">預估重量 (kg)</Label>
+                    <Input type="number" value={editOrder.estimated_weight || 0} onChange={e => setEditOrder({ ...editOrder, estimated_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  </div>
+                </div>
                 <div>
-                  <Label className="text-zinc-300">數量</Label>
-                  <Input type="number" value={editOrder.quantity} onChange={e => setEditOrder({ ...editOrder, quantity: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  <Label className="text-zinc-300">模具供給</Label>
+                  <Select value={editOrder.mold_supply || ''} onValueChange={val => setEditOrder({ ...editOrder, mold_supply: val as MoldSupply })}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
+                      <SelectValue placeholder="選擇模具供給方式" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">
+                      {MOLD_SUPPLY_OPTIONS.map(opt => (
+                        <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">模具型式</Label>
+                  <Select value={editOrder.mold_type || ''} onValueChange={val => setEditOrder({ ...editOrder, mold_type: val as MoldType })}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
+                      <SelectValue placeholder="選擇模具型式" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">
+                      {MOLD_TYPE_OPTIONS.map(opt => (
+                        <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">熱處理</Label>
+                  <Select value={editOrder.heat_treatment || ''} onValueChange={val => setEditOrder({ ...editOrder, heat_treatment: val as HeatTreatment })}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
+                      <SelectValue placeholder="選擇熱處理方式" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">
+                      {HEAT_TREATMENT_OPTIONS.map(opt => (
+                        <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label className="text-zinc-300">交期</Label>

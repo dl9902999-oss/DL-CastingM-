@@ -7,6 +7,10 @@ export interface UserProfile {
   name: string;
 }
 
+export type MoldSupply = '客戶提供' | '公司自有' | '代客製作';
+export type MoldType = '單面模' | '現板模' | '上下模' | '保模' | '其他';
+export type HeatTreatment = '退火' | '淬火' | '回火' | '正常化' | '調質' | '其他';
+
 export interface WorkOrder {
   id: string;
   order_no: string;
@@ -14,6 +18,10 @@ export interface WorkOrder {
   product_name: string;
   material: string;
   quantity: number;
+  estimated_weight: number;
+  mold_supply: MoldSupply | '';
+  mold_type: MoldType | '';
+  heat_treatment: HeatTreatment | '';
   due_date: string;
   remarks: string;
   mold_photos: string[];
