@@ -77,6 +77,8 @@ export function createWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' | 'statu
   const orders = getWorkOrders();
   const newOrder: WorkOrder = {
     ...data,
+    mold_photos: data.mold_photos || [],
+    drawing_photos: data.drawing_photos || [],
     id: generateId(),
     order_no: generateOrderNo('WO'),
     status: 'Open',

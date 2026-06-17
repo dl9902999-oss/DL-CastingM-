@@ -11,11 +11,13 @@ export interface WorkOrder {
   id: string;
   order_no: string;
   customer: string;
-  part_no: string;
+  product_name: string;
   material: string;
   quantity: number;
   due_date: string;
   remarks: string;
+  mold_photos: string[];
+  drawing_photos: string[];
   status: 'Open' | 'In Progress' | 'Completed' | 'Cancelled';
   created_at: string;
   updated_at: string;
