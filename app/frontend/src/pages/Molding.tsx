@@ -7,8 +7,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MoldingBatch, WorkOrder } from '@/lib/types';
-import { getMoldingBatches, createMoldingBatch, updateMoldingBatch, getWorkOrders } from '@/lib/store';
-import { Plus, QrCode, Search, Image, X, Edit } from 'lucide-react';
+import { getMoldingBatches, createMoldingBatch, updateMoldingBatch, deleteMoldingBatch, getWorkOrders } from '@/lib/store';
+import { Plus, QrCode, Search, Image, X, Edit, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -156,6 +156,13 @@ export default function Molding() {
     toast({ title: '批次已更新' });
   };
 
+  const handleDeleteBatch = (batch: MoldingBatch) => {
+    if (!window.confirm(`確定要刪除批次 ${batch.batch_no} 嗎？`)) return;
+    deleteMoldingBatch(batch.id);
+    setBatches(getMoldingBatches());
+    toast({ title: '批次已刪除' });
+  };
+
   return (
     <AppLayout>
       <div className="space-y-4">
@@ -293,6 +300,9 @@ export default function Molding() {
                       />
                       <Button variant="ghost" size="icon" onClick={() => setEditBatch({ ...batch, molding_photos: batch.molding_photos || [] })} className="text-zinc-400 hover:text-zinc-100">
                         <Edit className="w-4 h-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDeleteBatch(batch)} className="text-zinc-400 hover:text-red-400">
+                        <Trash2 className="w-4 h-4" />
                       </Button>
                       <Button variant="ghost" size="icon" onClick={() => setQrBatch(batch)} className="text-zinc-400 hover:text-zinc-100">
                         <QrCode className="w-4 h-4" />

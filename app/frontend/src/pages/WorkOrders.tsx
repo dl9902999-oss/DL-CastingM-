@@ -8,8 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment } from '@/lib/types';
-import { getWorkOrders, createWorkOrder, updateWorkOrder, getMoldingBatches } from '@/lib/store';
-import { Plus, Search, Edit, Image, FileImage, X } from 'lucide-react';
+import { getWorkOrders, createWorkOrder, updateWorkOrder, deleteWorkOrder, getMoldingBatches } from '@/lib/store';
+import { Plus, Search, Edit, Image, FileImage, X, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const MOLD_SUPPLY_OPTIONS: MoldSupply[] = ['客戶提供', '公司自有', '代客製作'];
@@ -122,6 +122,14 @@ export default function WorkOrders() {
     setBatches(getMoldingBatches());
     setEditOrder(null);
     toast({ title: '工單已更新' });
+  };
+
+  const handleDelete = (order: WorkOrder) => {
+    if (!window.confirm(`確定要刪除工單 ${order.order_no} 嗎？`)) return;
+    deleteWorkOrder(order.id);
+    setOrders(getWorkOrders());
+    setBatches(getMoldingBatches());
+    toast({ title: '工單已刪除' });
   };
 
   const filtered = orders.filter(o =>
@@ -303,9 +311,14 @@ export default function WorkOrders() {
                         )}
                       </div>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={() => setEditOrder({ ...order, mold_photos: order.mold_photos || [], drawing_photos: order.drawing_photos || [] })} className="text-zinc-400 hover:text-zinc-100">
-                      <Edit className="w-4 h-4" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => setEditOrder({ ...order, mold_photos: order.mold_photos || [], drawing_photos: order.drawing_photos || [] })} className="text-zinc-400 hover:text-zinc-100">
+                        <Edit className="w-4 h-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(order)} className="text-zinc-400 hover:text-red-400">
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

@@ -94,6 +94,11 @@ export function createWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' | 'statu
   return newOrder;
 }
 
+export function deleteWorkOrder(id: string): void {
+  const orders = getWorkOrders().filter(o => o.id !== id);
+  setItems(STORAGE_KEYS.WORK_ORDERS, orders);
+}
+
 export function updateWorkOrder(id: string, data: Partial<WorkOrder>): WorkOrder | null {
   const orders = getWorkOrders();
   const idx = orders.findIndex(o => o.id === id);
@@ -129,6 +134,11 @@ export function createMoldingBatch(data: { work_order_id: string; order_no: stri
   batches.push(newBatch);
   setItems(STORAGE_KEYS.MOLDING_BATCHES, batches);
   return newBatch;
+}
+
+export function deleteMoldingBatch(id: string): void {
+  const batches = getMoldingBatches().filter(b => b.id !== id);
+  setItems(STORAGE_KEYS.MOLDING_BATCHES, batches);
 }
 
 export function updateMoldingBatch(id: string, data: Partial<MoldingBatch>): MoldingBatch | null {
