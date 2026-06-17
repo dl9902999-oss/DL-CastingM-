@@ -36,8 +36,13 @@ export interface MoldingBatch {
   batch_no: string;
   work_order_id: string;
   order_no: string;
+  customer: string;
+  product_name: string;
+  material: string;
   quantity_planned: number;
   quantity_completed: number;
+  estimated_pouring_weight: number;
+  molding_photos: string[];
   status: 'Pending' | 'In Progress' | 'Completed';
   created_at: string;
   updated_at: string;

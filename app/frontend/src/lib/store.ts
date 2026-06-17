@@ -108,15 +108,20 @@ export function getMoldingBatches(): MoldingBatch[] {
   return getItems<MoldingBatch>(STORAGE_KEYS.MOLDING_BATCHES);
 }
 
-export function createMoldingBatch(data: { work_order_id: string; order_no: string; quantity_planned: number }): MoldingBatch {
+export function createMoldingBatch(data: { work_order_id: string; order_no: string; customer: string; product_name: string; material: string; quantity_planned: number; estimated_pouring_weight: number; molding_photos: string[] }): MoldingBatch {
   const batches = getMoldingBatches();
   const newBatch: MoldingBatch = {
     id: generateId(),
     batch_no: generateOrderNo('MB'),
     work_order_id: data.work_order_id,
     order_no: data.order_no,
+    customer: data.customer || '',
+    product_name: data.product_name || '',
+    material: data.material || '',
     quantity_planned: data.quantity_planned,
     quantity_completed: 0,
+    estimated_pouring_weight: data.estimated_pouring_weight || 0,
+    molding_photos: data.molding_photos || [],
     status: 'Pending',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

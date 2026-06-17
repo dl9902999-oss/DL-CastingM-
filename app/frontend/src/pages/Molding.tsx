@@ -1,42 +1,118 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MoldingBatch, WorkOrder } from '@/lib/types';
 import { getMoldingBatches, createMoldingBatch, updateMoldingBatch, getWorkOrders } from '@/lib/store';
-import { Plus, QrCode } from 'lucide-react';
+import { Plus, QrCode, Search, Image, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useToast } from '@/hooks/use-toast';
+
+function MoldingImageUpload({ images, onChange }: { images: string[]; onChange: (imgs: string[]) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const result = ev.target?.result as string;
+        if (result) {
+          onChange([...images, result]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+
+  const removeImage = (index: number) => {
+    onChange(images.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div>
+      <Label className="text-zinc-300 flex items-center gap-1.5 mb-1.5">
+        <Image className="w-4 h-4 text-blue-400" />造模相片
+      </Label>
+      <div className="flex flex-wrap gap-2 mb-2">
+        {images.map((img, idx) => (
+          <div key={idx} className="relative w-16 h-16 rounded-md overflow-hidden border border-zinc-600 group">
+            <img src={img} alt="" className="w-full h-full object-cover" />
+            <button
+              onClick={() => removeImage(idx)}
+              className="absolute top-0 right-0 bg-red-500 rounded-bl-md p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <X className="w-3 h-3 text-white" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <input ref={inputRef} type="file" accept="image/*" multiple onChange={handleFileChange} className="hidden" />
+      <Button type="button" variant="outline" size="sm" onClick={() => inputRef.current?.click()} className="border-zinc-600 text-zinc-300 hover:bg-zinc-700">
+        <Plus className="w-3 h-3 mr-1" />上傳照片
+      </Button>
+    </div>
+  );
+}
 
 export default function Molding() {
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [qrBatch, setQrBatch] = useState<MoldingBatch | null>(null);
+  const [viewPhotos, setViewPhotos] = useState<string[] | null>(null);
   const { toast } = useToast();
 
-  const [form, setForm] = useState({ work_order_id: '', quantity_planned: 0 });
+  const [woSearch, setWoSearch] = useState('');
+  const [selectedWo, setSelectedWo] = useState<WorkOrder | null>(null);
+  const [form, setForm] = useState({
+    quantity_planned: 0,
+    estimated_pouring_weight: 0,
+    molding_photos: [] as string[],
+  });
 
   useEffect(() => {
     setBatches(getMoldingBatches());
     setWorkOrders(getWorkOrders().filter(o => o.status !== 'Cancelled'));
   }, []);
 
+  // Filter work orders by customer or product_name
+  const filteredWo = woSearch.trim()
+    ? workOrders.filter(wo =>
+        wo.customer.toLowerCase().includes(woSearch.toLowerCase()) ||
+        wo.product_name.toLowerCase().includes(woSearch.toLowerCase())
+      )
+    : workOrders;
+
+  const handleSelectWo = (wo: WorkOrder) => {
+    setSelectedWo(wo);
+    setWoSearch('');
+  };
+
   const handleCreate = () => {
-    if (!form.work_order_id || form.quantity_planned <= 0) {
+    if (!selectedWo || form.quantity_planned <= 0) {
       toast({ title: '請選擇工單並填寫數量', variant: 'destructive' });
       return;
     }
-    const wo = workOrders.find(o => o.id === form.work_order_id);
-    if (!wo) return;
-    createMoldingBatch({ work_order_id: form.work_order_id, order_no: wo.order_no, quantity_planned: form.quantity_planned });
+    createMoldingBatch({
+      work_order_id: selectedWo.id,
+      order_no: selectedWo.order_no,
+      customer: selectedWo.customer,
+      product_name: selectedWo.product_name,
+      material: selectedWo.material,
+      quantity_planned: form.quantity_planned,
+      estimated_pouring_weight: form.estimated_pouring_weight,
+      molding_photos: form.molding_photos,
+    });
     setBatches(getMoldingBatches());
     setIsCreateOpen(false);
-    setForm({ work_order_id: '', quantity_planned: 0 });
+    setSelectedWo(null);
+    setForm({ quantity_planned: 0, estimated_pouring_weight: 0, molding_photos: [] });
     toast({ title: '造模批次已建立' });
   };
 
@@ -50,34 +126,75 @@ export default function Molding() {
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">批次造模</h1>
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) { setSelectedWo(null); setWoSearch(''); } }}>
             <DialogTrigger asChild>
               <Button className="bg-amber-500 hover:bg-amber-600 text-zinc-900">
                 <Plus className="w-4 h-4 mr-2" />新增批次
               </Button>
             </DialogTrigger>
-            <DialogContent className="bg-zinc-800 border-zinc-700 max-w-md">
+            <DialogContent className="bg-zinc-800 border-zinc-700 max-w-md max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle className="text-zinc-100">新增造模批次</DialogTitle>
               </DialogHeader>
               <div className="space-y-3">
+                {/* Work Order Search */}
                 <div>
-                  <Label className="text-zinc-300">工單</Label>
-                  <Select value={form.work_order_id} onValueChange={val => setForm({ ...form, work_order_id: val })}>
-                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
-                      <SelectValue placeholder="選擇工單" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-zinc-700 border-zinc-600">
-                      {workOrders.map(wo => (
-                        <SelectItem key={wo.id} value={wo.id}>{wo.order_no} - {wo.customer}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-zinc-300">工單（以客戶或品名搜尋）</Label>
+                  {selectedWo ? (
+                    <div className="p-3 bg-zinc-700/50 rounded-md mt-1">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-amber-400">{selectedWo.order_no}</p>
+                          <p className="text-xs text-zinc-400">客戶: {selectedWo.customer} | 品名: {selectedWo.product_name} | 材質: {selectedWo.material}</p>
+                        </div>
+                        <Button variant="ghost" size="sm" onClick={() => setSelectedWo(null)} className="text-zinc-400 hover:text-zinc-100 h-6 px-2">
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="relative mt-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                      <Input
+                        value={woSearch}
+                        onChange={e => setWoSearch(e.target.value)}
+                        placeholder="輸入客戶名稱或品名搜尋..."
+                        className="pl-10 bg-zinc-700 border-zinc-600 text-zinc-100"
+                      />
+                      {woSearch.trim() && filteredWo.length > 0 && (
+                        <div className="absolute z-10 w-full mt-1 bg-zinc-700 border border-zinc-600 rounded-md max-h-40 overflow-y-auto">
+                          {filteredWo.map(wo => (
+                            <button
+                              key={wo.id}
+                              onClick={() => handleSelectWo(wo)}
+                              className="w-full text-left px-3 py-2 hover:bg-zinc-600 transition-colors"
+                            >
+                              <p className="text-sm text-amber-400">{wo.order_no}</p>
+                              <p className="text-xs text-zinc-400">{wo.customer} - {wo.product_name} ({wo.material})</p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {woSearch.trim() && filteredWo.length === 0 && (
+                        <div className="absolute z-10 w-full mt-1 bg-zinc-700 border border-zinc-600 rounded-md p-3">
+                          <p className="text-xs text-zinc-400 text-center">無符合的工單</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <Label className="text-zinc-300">計劃數量</Label>
                   <Input type="number" value={form.quantity_planned} onChange={e => setForm({ ...form, quantity_planned: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
                 </div>
+                <div>
+                  <Label className="text-zinc-300">預估澆注重量 (kg)</Label>
+                  <Input type="number" value={form.estimated_pouring_weight} onChange={e => setForm({ ...form, estimated_pouring_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                </div>
+                <MoldingImageUpload
+                  images={form.molding_photos}
+                  onChange={(imgs) => setForm({ ...form, molding_photos: imgs })}
+                />
                 <Button onClick={handleCreate} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">建立</Button>
               </div>
             </DialogContent>
@@ -104,10 +221,25 @@ export default function Molding() {
                           'bg-green-500/20 text-green-400'
                         }`}>{batch.status}</span>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs text-zinc-400">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-zinc-400">
                         <span>工單: <span className="text-zinc-200">{batch.order_no}</span></span>
-                        <span>進度: <span className="text-zinc-200">{batch.quantity_completed}/{batch.quantity_planned}</span></span>
+                        <span>客戶: <span className="text-zinc-200">{batch.customer || '-'}</span></span>
+                        <span>品名: <span className="text-zinc-200">{batch.product_name || '-'}</span></span>
+                        <span>材質: <span className="text-zinc-200">{batch.material || '-'}</span></span>
+                        <span>數量: <span className="text-zinc-200">{batch.quantity_completed}/{batch.quantity_planned}</span></span>
+                        {batch.estimated_pouring_weight > 0 && (
+                          <span>預估澆注: <span className="text-zinc-200">{batch.estimated_pouring_weight}kg</span></span>
+                        )}
                       </div>
+                      {/* Photo indicator */}
+                      {batch.molding_photos && batch.molding_photos.length > 0 && (
+                        <button
+                          onClick={() => setViewPhotos(batch.molding_photos)}
+                          className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 mt-1.5"
+                        >
+                          <Image className="w-3 h-3" />造模相片 ({batch.molding_photos.length})
+                        </button>
+                      )}
                       {/* Progress bar */}
                       <div className="mt-2 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
                         <div
@@ -149,6 +281,22 @@ export default function Molding() {
                 <p className="text-sm text-zinc-300 font-mono">{qrBatch.batch_no}</p>
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* View Photos Dialog */}
+        <Dialog open={!!viewPhotos} onOpenChange={(open) => !open && setViewPhotos(null)}>
+          <DialogContent className="bg-zinc-800 border-zinc-700 max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="text-zinc-100">造模相片</DialogTitle>
+            </DialogHeader>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-2">
+              {viewPhotos?.map((img, idx) => (
+                <div key={idx} className="aspect-square rounded-lg overflow-hidden border border-zinc-600">
+                  <img src={img} alt="" className="w-full h-full object-cover" />
+                </div>
+              ))}
+            </div>
           </DialogContent>
         </Dialog>
       </div>
