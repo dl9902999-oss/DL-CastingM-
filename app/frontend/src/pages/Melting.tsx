@@ -54,12 +54,12 @@ export default function Melting() {
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
               <Button className="bg-amber-500 hover:bg-amber-600 text-zinc-900">
-                <Plus className="w-4 h-4 mr-2" />新增熔煉
+                <Plus className="w-4 h-4 mr-2" />新增澆注
               </Button>
             </DialogTrigger>
             <DialogContent className="bg-zinc-800 border-zinc-700 max-w-md">
               <DialogHeader>
-                <DialogTitle className="text-zinc-100">新增熔煉紀錄</DialogTitle>
+                <DialogTitle className="text-zinc-100">新增澆注紀錄</DialogTitle>
               </DialogHeader>
               <div className="space-y-3">
                 <div>
