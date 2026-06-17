@@ -220,23 +220,35 @@ export function updateShipmentOrder(id: string, data: Partial<ShipmentOrder>): S
 }
 
 // Dashboard Stats
-export function getDashboardStats(): { todayProduction: number; yieldRate: number; wipQuantity: number; pendingShipment: number } {
+export function getDashboardStats(): { todayProduction: number; todayProductionKg: number; yieldRate: number; wipQuantity: number; pendingShipment: number } {
   const today = new Date().toISOString().slice(0, 10);
   const batches = getMoldingBatches();
-  const inspections = getQualityInspections();
+  const meltings = getMeltingRecords();
   const shipments = getShipmentOrders();
 
+  // Today's production: pieces from batches completed today
   const todayBatches = batches.filter(b => b.created_at.slice(0, 10) === today);
   const todayProduction = todayBatches.reduce((sum, b) => sum + b.quantity_completed, 0);
 
-  const totalInspected = inspections.reduce((sum, i) => sum + i.inspected_quantity, 0);
-  const totalPass = inspections.filter(i => i.result === 'PASS').reduce((sum, i) => sum + i.inspected_quantity, 0);
-  const yieldRate = totalInspected > 0 ? Math.round((totalPass / totalInspected) * 10000) / 100 : 0;
+  // Today's production weight: pouring weight from melting records created today
+  const todayMeltings = meltings.filter(m => m.created_at.slice(0, 10) === today);
+  const todayProductionKg = todayMeltings.reduce((sum, m) => sum + m.pouring_weight, 0);
+
+  // Yield rate: last month statistics (total failed weight / total production weight)
+  // Failed weight = melting_weight - pouring_weight (loss)
+  // Yield rate = (1 - total_loss_weight / total_melting_weight) * 100
+  const now = new Date();
+  const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()).toISOString();
+  const lastMonthMeltings = meltings.filter(m => m.created_at >= oneMonthAgo);
+  const totalMeltingWeight = lastMonthMeltings.reduce((sum, m) => sum + m.melting_weight, 0);
+  const totalPouringWeight = lastMonthMeltings.reduce((sum, m) => sum + m.pouring_weight, 0);
+  const totalFailedWeight = totalMeltingWeight - totalPouringWeight;
+  const yieldRate = totalMeltingWeight > 0 ? Math.round((1 - totalFailedWeight / totalMeltingWeight) * 10000) / 100 : 0;
 
   const wipQuantity = batches.filter(b => b.status !== 'Completed').reduce((sum, b) => sum + b.quantity_planned, 0);
   const pendingShipment = shipments.filter(s => s.status === 'Pending').length;
 
-  return { todayProduction, yieldRate, wipQuantity, pendingShipment };
+  return { todayProduction, todayProductionKg, yieldRate, wipQuantity, pendingShipment };
 }
 
 // Traceability

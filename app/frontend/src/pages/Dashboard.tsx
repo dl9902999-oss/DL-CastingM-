@@ -5,7 +5,7 @@ import { Activity, TrendingUp, Package, Truck } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 
 export default function Dashboard() {
-  const [stats, setStats] = useState({ todayProduction: 0, yieldRate: 0, wipQuantity: 0, pendingShipment: 0 });
+  const [stats, setStats] = useState({ todayProduction: 0, todayProductionKg: 0, yieldRate: 0, wipQuantity: 0, pendingShipment: 0 });
   const [recentOrders, setRecentOrders] = useState<{ order_no: string; customer: string; status: string }[]>([]);
 
   useEffect(() => {
@@ -14,33 +14,68 @@ export default function Dashboard() {
     setRecentOrders(orders.map(o => ({ order_no: o.order_no, customer: o.customer, status: o.status })));
   }, []);
 
-  const statCards = [
-    { title: '今日產量', value: stats.todayProduction, unit: '件', icon: <Activity className="w-5 h-5" />, color: 'text-blue-400' },
-    { title: '良率', value: `${stats.yieldRate}%`, unit: '', icon: <TrendingUp className="w-5 h-5" />, color: 'text-green-400' },
-    { title: '在製量', value: stats.wipQuantity, unit: '件', icon: <Package className="w-5 h-5" />, color: 'text-amber-400' },
-    { title: '待出貨', value: stats.pendingShipment, unit: '單', icon: <Truck className="w-5 h-5" />, color: 'text-purple-400' },
-  ];
-
   return (
     <AppLayout>
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-zinc-100">儀表板</h1>
+        <h1 className="text-2xl font-bold text-zinc-100">總覽</h1>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {statCards.map(card => (
-            <Card key={card.title} className="bg-zinc-800 border-zinc-700">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className={card.color}>{card.icon}</span>
-                </div>
-                <p className="text-2xl font-bold text-zinc-100">
-                  {card.value}{card.unit && <span className="text-sm text-zinc-400 ml-1">{card.unit}</span>}
-                </p>
-                <p className="text-xs text-zinc-400 mt-1">{card.title}</p>
-              </CardContent>
-            </Card>
-          ))}
+          {/* Today Production */}
+          <Card className="bg-zinc-800 border-zinc-700">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-blue-400"><Activity className="w-5 h-5" /></span>
+              </div>
+              <p className="text-2xl font-bold text-zinc-100">
+                {stats.todayProduction}<span className="text-sm text-zinc-400 ml-1">件</span>
+              </p>
+              <p className="text-lg font-semibold text-zinc-200 mt-0.5">
+                {stats.todayProductionKg}<span className="text-sm text-zinc-400 ml-1">kg</span>
+              </p>
+              <p className="text-xs text-zinc-400 mt-1">今日生產</p>
+            </CardContent>
+          </Card>
+
+          {/* Yield Rate - Last Month */}
+          <Card className="bg-zinc-800 border-zinc-700">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-green-400"><TrendingUp className="w-5 h-5" /></span>
+              </div>
+              <p className="text-2xl font-bold text-zinc-100">
+                {stats.yieldRate}%
+              </p>
+              <p className="text-xs text-zinc-400 mt-1">良率（前一個月）</p>
+              <p className="text-[10px] text-zinc-500">= 1 - 失敗重量/總生產重量</p>
+            </CardContent>
+          </Card>
+
+          {/* WIP */}
+          <Card className="bg-zinc-800 border-zinc-700">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-amber-400"><Package className="w-5 h-5" /></span>
+              </div>
+              <p className="text-2xl font-bold text-zinc-100">
+                {stats.wipQuantity}<span className="text-sm text-zinc-400 ml-1">件</span>
+              </p>
+              <p className="text-xs text-zinc-400 mt-1">在製量</p>
+            </CardContent>
+          </Card>
+
+          {/* Pending Shipment */}
+          <Card className="bg-zinc-800 border-zinc-700">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-purple-400"><Truck className="w-5 h-5" /></span>
+              </div>
+              <p className="text-2xl font-bold text-zinc-100">
+                {stats.pendingShipment}<span className="text-sm text-zinc-400 ml-1">單</span>
+              </p>
+              <p className="text-xs text-zinc-400 mt-1">待出貨</p>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Recent Work Orders */}

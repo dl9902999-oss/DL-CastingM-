@@ -25,7 +25,7 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { label: '儀表板', path: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, roles: ['Admin', 'Production', 'QC', 'Warehouse'] },
+  { label: '總覽', path: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, roles: ['Admin', 'Production', 'QC', 'Warehouse'] },
   { label: '工單管理', path: '/work-orders', icon: <ClipboardList className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '批次造模', path: '/molding', icon: <Layers className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '熔煉澆注', path: '/melting', icon: <Flame className="w-5 h-5" />, roles: ['Admin', 'Production'] },
