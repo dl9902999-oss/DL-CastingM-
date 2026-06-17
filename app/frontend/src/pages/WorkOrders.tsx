@@ -7,8 +7,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { WorkOrder, MoldSupply, MoldType, HeatTreatment } from '@/lib/types';
-import { getWorkOrders, createWorkOrder, updateWorkOrder } from '@/lib/store';
+import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment } from '@/lib/types';
+import { getWorkOrders, createWorkOrder, updateWorkOrder, getMoldingBatches } from '@/lib/store';
 import { Plus, Search, Edit, Image, FileImage, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -65,6 +65,7 @@ function ImageUpload({ label, images, onChange, icon }: { label: string; images:
 
 export default function WorkOrders() {
   const [orders, setOrders] = useState<WorkOrder[]>([]);
+  const [batches, setBatches] = useState<MoldingBatch[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<WorkOrder | null>(null);
@@ -88,7 +89,12 @@ export default function WorkOrders() {
 
   useEffect(() => {
     setOrders(getWorkOrders());
+    setBatches(getMoldingBatches());
   }, []);
+
+  const getStartedQty = (orderId: string) => {
+    return batches.filter(b => b.work_order_id === orderId).reduce((sum, b) => sum + b.quantity_planned, 0);
+  };
 
   const resetForm = () => setForm({
     customer: '', product_name: '', material: '', quantity: 0,
@@ -103,6 +109,7 @@ export default function WorkOrders() {
     }
     createWorkOrder(form);
     setOrders(getWorkOrders());
+    setBatches(getMoldingBatches());
     setIsCreateOpen(false);
     resetForm();
     toast({ title: '工單已建立' });
@@ -112,6 +119,7 @@ export default function WorkOrders() {
     if (!editOrder) return;
     updateWorkOrder(editOrder.id, editOrder);
     setOrders(getWorkOrders());
+    setBatches(getMoldingBatches());
     setEditOrder(null);
     toast({ title: '工單已更新' });
   };
@@ -261,7 +269,11 @@ export default function WorkOrders() {
                         <span>客戶: <span className="text-zinc-200">{order.customer}</span></span>
                         <span>品名: <span className="text-zinc-200">{order.product_name}</span></span>
                         <span>材質: <span className="text-zinc-200">{order.material}</span></span>
-                        <span>數量: <span className="text-zinc-200">{order.quantity}</span></span>
+                        <span>訂單數量: <span className="text-zinc-200">{order.quantity}</span></span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400 mt-1">
+                        <span>已開工數量: <span className="text-zinc-200">{getStartedQty(order.id)}</span></span>
+                        <span>餘剩數量: <span className={`${order.quantity - getStartedQty(order.id) <= 0 ? 'text-green-400' : 'text-amber-300'}`}>{order.quantity - getStartedQty(order.id)}</span></span>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400 mt-1">
                         {order.estimated_weight > 0 && <span>預估重量: <span className="text-zinc-200">{order.estimated_weight}kg</span></span>}
