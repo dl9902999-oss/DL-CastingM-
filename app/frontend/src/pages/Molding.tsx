@@ -167,7 +167,7 @@ export default function Molding() {
     <AppLayout>
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <h1 className="text-2xl font-bold text-zinc-100">批次造模</h1>
+          <h1 className="text-2xl font-bold text-zinc-100">開工造模</h1>
           <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) { setSelectedWo(null); setWoSearch(''); } }}>
             <DialogTrigger asChild>
               <Button className="bg-amber-500 hover:bg-amber-600 text-zinc-900">
