@@ -5,24 +5,26 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { MeltingRecord, MoldingBatch } from '@/lib/types';
-import { getMeltingRecords, createMeltingRecord, getMoldingBatches } from '@/lib/store';
+import { MeltingRecord, MoldingBatch, WorkOrder } from '@/lib/types';
+import { getMeltingRecords, createMeltingRecord, getMoldingBatches, getWorkOrders } from '@/lib/store';
 import { Plus, Flame, Search, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 export default function Melting() {
   const [records, setRecords] = useState<MeltingRecord[]>([]);
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const { toast } = useToast();
 
-  const [form, setForm] = useState({ batch_id: '', furnace_no: '', melting_weight: 0, pouring_weight: 0 });
+  const [form, setForm] = useState({ batch_id: '', furnace_no: '', pouring_weight: 0 });
   const [batchSearch, setBatchSearch] = useState('');
   const [selectedBatch, setSelectedBatch] = useState<MoldingBatch | null>(null);
 
   useEffect(() => {
     setRecords(getMeltingRecords());
     setBatches(getMoldingBatches());
+    setWorkOrders(getWorkOrders());
   }, []);
 
   const filteredBatches = batches.filter(b => {
@@ -37,29 +39,38 @@ export default function Melting() {
     );
   });
 
+  // Get work order estimated weight for the selected batch
+  const getEstimatedWeight = (batch: MoldingBatch | null): number => {
+    if (!batch) return 0;
+    const wo = workOrders.find(w => w.id === batch.work_order_id);
+    return wo?.estimated_weight || 0;
+  };
+
   const handleCreate = () => {
-    if (!form.batch_id || !form.furnace_no || form.melting_weight <= 0) {
+    if (!form.batch_id || !form.furnace_no || form.pouring_weight <= 0) {
       toast({ title: '請填寫所有必要欄位', variant: 'destructive' });
       return;
     }
     const batch = batches.find(b => b.id === form.batch_id);
     if (!batch) return;
+    const estimatedWeight = getEstimatedWeight(batch);
     createMeltingRecord({
       batch_id: form.batch_id,
       batch_no: batch.batch_no,
       furnace_no: form.furnace_no,
-      melting_weight: form.melting_weight,
+      melting_weight: estimatedWeight,
       pouring_weight: form.pouring_weight,
     });
     setRecords(getMeltingRecords());
     setIsCreateOpen(false);
-    setForm({ batch_id: '', furnace_no: '', melting_weight: 0, pouring_weight: 0 });
+    setForm({ batch_id: '', furnace_no: '', pouring_weight: 0 });
     setSelectedBatch(null);
     setBatchSearch('');
     toast({ title: '澆注紀錄已建立' });
   };
 
-  const yieldRate = form.melting_weight > 0 ? ((form.pouring_weight / form.melting_weight) * 100).toFixed(1) : '0.0';
+  const estimatedWeight = getEstimatedWeight(selectedBatch);
+  const yieldRate = form.pouring_weight > 0 && estimatedWeight > 0 ? ((estimatedWeight / form.pouring_weight) * 100).toFixed(1) : '0.0';
 
   return (
     <AppLayout>
@@ -123,17 +134,22 @@ export default function Melting() {
                   <Label className="text-zinc-300">爐號</Label>
                   <Input value={form.furnace_no} onChange={e => setForm({ ...form, furnace_no: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" placeholder="例: F-01" />
                 </div>
-                <div>
-                  <Label className="text-zinc-300">熔煉重量 (kg)</Label>
-                  <Input type="number" value={form.melting_weight} onChange={e => setForm({ ...form, melting_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
-                </div>
+                {selectedBatch && (
+                  <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600">
+                    <Label className="text-zinc-400 text-xs">工單預估重量</Label>
+                    <p className="text-sm font-medium text-zinc-100">{estimatedWeight > 0 ? `${estimatedWeight} kg` : '未填寫'}</p>
+                  </div>
+                )}
                 <div>
                   <Label className="text-zinc-300">澆注重量 (kg)</Label>
                   <Input type="number" value={form.pouring_weight} onChange={e => setForm({ ...form, pouring_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
                 </div>
                 <div className="p-3 bg-zinc-700/50 rounded-md">
-                  <span className="text-sm text-zinc-400">收得率: </span>
+                  <span className="text-sm text-zinc-400">預估得料率: </span>
                   <span className="text-lg font-bold text-amber-400">{yieldRate}%</span>
+                  {estimatedWeight > 0 && form.pouring_weight > 0 && (
+                    <span className="text-xs text-zinc-500 ml-2">({estimatedWeight} / {form.pouring_weight} × 100%)</span>
+                  )}
                 </div>
                 <Button onClick={handleCreate} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">建立</Button>
               </div>
@@ -157,15 +173,14 @@ export default function Melting() {
                         <Flame className="w-4 h-4 text-orange-400" />
                         <span className="font-mono text-sm font-semibold text-amber-400">{record.heat_no}</span>
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-zinc-400">
                         <span>批次: <span className="text-zinc-200">{record.batch_no}</span></span>
                         <span>爐號: <span className="text-zinc-200">{record.furnace_no}</span></span>
-                        <span>熔煉: <span className="text-zinc-200">{record.melting_weight}kg</span></span>
                         <span>澆注: <span className="text-zinc-200">{record.pouring_weight}kg</span></span>
                       </div>
                     </div>
                     <div className="text-right">
-                      <span className="text-xs text-zinc-400">收得率</span>
+                      <span className="text-xs text-zinc-400">預估得料率</span>
                       <p className={`text-lg font-bold ${record.yield_rate >= 80 ? 'text-green-400' : record.yield_rate >= 60 ? 'text-amber-400' : 'text-red-400'}`}>
                         {record.yield_rate}%
                       </p>

@@ -158,7 +158,8 @@ export function getMeltingRecords(): MeltingRecord[] {
 
 export function createMeltingRecord(data: { batch_id: string; batch_no: string; furnace_no: string; melting_weight: number; pouring_weight: number }): MeltingRecord {
   const records = getMeltingRecords();
-  const yieldRate = data.melting_weight > 0 ? (data.pouring_weight / data.melting_weight) * 100 : 0;
+  // 預估得料率 = 工單預估重量 / 澆注重量 * 100%
+  const yieldRate = data.pouring_weight > 0 && data.melting_weight > 0 ? (data.melting_weight / data.pouring_weight) * 100 : 0;
   const newRecord: MeltingRecord = {
     id: generateId(),
     heat_no: generateOrderNo('HT'),
