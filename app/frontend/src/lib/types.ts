@@ -42,6 +42,7 @@ export interface MoldingBatch {
   quantity_planned: number;
   quantity_completed: number;
   estimated_pouring_weight: number;
+  remarks: string;
   molding_photos: string[];
   status: 'Pending' | 'In Progress' | 'Completed';
   created_at: string;

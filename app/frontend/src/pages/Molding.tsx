@@ -76,6 +76,7 @@ export default function Molding() {
   const [form, setForm] = useState({
     quantity_planned: 0,
     estimated_pouring_weight: 0,
+    remarks: '',
     molding_photos: [] as string[],
   });
 
@@ -128,12 +129,13 @@ export default function Molding() {
       material: selectedWo.material,
       quantity_planned: form.quantity_planned,
       estimated_pouring_weight: form.estimated_pouring_weight,
+      remarks: form.remarks,
       molding_photos: form.molding_photos,
     });
     setBatches(getMoldingBatches());
     setIsCreateOpen(false);
     setSelectedWo(null);
-    setForm({ quantity_planned: 0, estimated_pouring_weight: 0, molding_photos: [] });
+    setForm({ quantity_planned: 0, estimated_pouring_weight: 0, remarks: '', molding_photos: [] });
     toast({ title: '造模批次已建立' });
   };
 
@@ -148,6 +150,7 @@ export default function Molding() {
       quantity_planned: editBatch.quantity_planned,
       quantity_completed: editBatch.quantity_completed,
       estimated_pouring_weight: editBatch.estimated_pouring_weight,
+      remarks: editBatch.remarks || '',
       molding_photos: editBatch.molding_photos,
       status: editBatch.status,
     });
@@ -225,6 +228,12 @@ export default function Molding() {
                     </div>
                   )}
                 </div>
+                {selectedWo && (
+                  <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600">
+                    <Label className="text-zinc-400 text-xs">工單預估重量</Label>
+                    <p className="text-sm font-medium text-zinc-100">{selectedWo.estimated_weight > 0 ? `${selectedWo.estimated_weight} kg` : '未填寫'}</p>
+                  </div>
+                )}
                 <div>
                   <Label className="text-zinc-300">計劃數量</Label>
                   <Input type="number" value={form.quantity_planned} onChange={e => setForm({ ...form, quantity_planned: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
@@ -232,6 +241,15 @@ export default function Molding() {
                 <div>
                   <Label className="text-zinc-300">預估澆注重量 (kg)</Label>
                   <Input type="number" value={form.estimated_pouring_weight} onChange={e => setForm({ ...form, estimated_pouring_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                </div>
+                <div>
+                  <Label className="text-zinc-300">備註</Label>
+                  <textarea
+                    value={form.remarks}
+                    onChange={e => setForm({ ...form, remarks: e.target.value })}
+                    placeholder="輸入備註內容..."
+                    className="w-full min-h-[80px] px-3 py-2 bg-zinc-700 border border-zinc-600 rounded-md text-zinc-100 placeholder:text-zinc-500 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                  />
                 </div>
                 <MoldingImageUpload
                   images={form.molding_photos}
@@ -273,6 +291,10 @@ export default function Molding() {
                           <span>預估澆注: <span className="text-zinc-200">{batch.estimated_pouring_weight}kg</span></span>
                         )}
                       </div>
+                      {/* Remarks */}
+                      {batch.remarks && (
+                        <p className="text-xs text-zinc-400 mt-1.5">備註: <span className="text-zinc-300">{batch.remarks}</span></p>
+                      )}
                       {/* Photo indicator */}
                       {batch.molding_photos && batch.molding_photos.length > 0 && (
                         <button
@@ -327,6 +349,15 @@ export default function Molding() {
                   <p className="text-sm font-medium text-amber-400">{editBatch.batch_no}</p>
                   <p className="text-xs text-zinc-400">工單: {editBatch.order_no} | 客戶: {getWoInfo(editBatch).customer} | 品名: {getWoInfo(editBatch).product_name} | 材質: {getWoInfo(editBatch).material}</p>
                 </div>
+                {(() => {
+                  const wo = allWorkOrders.find(w => w.id === editBatch.work_order_id);
+                  return wo ? (
+                    <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600">
+                      <Label className="text-zinc-400 text-xs">工單預估重量</Label>
+                      <p className="text-sm font-medium text-zinc-100">{wo.estimated_weight > 0 ? `${wo.estimated_weight} kg` : '未填寫'}</p>
+                    </div>
+                  ) : null;
+                })()}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label className="text-zinc-300">計劃數量</Label>
@@ -340,6 +371,15 @@ export default function Molding() {
                 <div>
                   <Label className="text-zinc-300">預估澆注重量 (kg)</Label>
                   <Input type="number" value={editBatch.estimated_pouring_weight || 0} onChange={e => setEditBatch({ ...editBatch, estimated_pouring_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                </div>
+                <div>
+                  <Label className="text-zinc-300">備註</Label>
+                  <textarea
+                    value={editBatch.remarks || ''}
+                    onChange={e => setEditBatch({ ...editBatch, remarks: e.target.value })}
+                    placeholder="輸入備註內容..."
+                    className="w-full min-h-[80px] px-3 py-2 bg-zinc-700 border border-zinc-600 rounded-md text-zinc-100 placeholder:text-zinc-500 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                  />
                 </div>
                 <div>
                   <Label className="text-zinc-300">狀態</Label>
