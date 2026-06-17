@@ -5,9 +5,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MoldingBatch, WorkOrder } from '@/lib/types';
 import { getMoldingBatches, createMoldingBatch, updateMoldingBatch, getWorkOrders } from '@/lib/store';
-import { Plus, QrCode, Search, Image, X } from 'lucide-react';
+import { Plus, QrCode, Search, Image, X, Edit } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -66,6 +67,7 @@ export default function Molding() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [qrBatch, setQrBatch] = useState<MoldingBatch | null>(null);
   const [viewPhotos, setViewPhotos] = useState<string[] | null>(null);
+  const [editBatch, setEditBatch] = useState<MoldingBatch | null>(null);
   const { toast } = useToast();
 
   const [woSearch, setWoSearch] = useState('');
@@ -119,6 +121,20 @@ export default function Molding() {
   const handleUpdateQuantity = (batch: MoldingBatch, qty: number) => {
     updateMoldingBatch(batch.id, { quantity_completed: qty, status: qty >= batch.quantity_planned ? 'Completed' : 'In Progress' });
     setBatches(getMoldingBatches());
+  };
+
+  const handleEditSave = () => {
+    if (!editBatch) return;
+    updateMoldingBatch(editBatch.id, {
+      quantity_planned: editBatch.quantity_planned,
+      quantity_completed: editBatch.quantity_completed,
+      estimated_pouring_weight: editBatch.estimated_pouring_weight,
+      molding_photos: editBatch.molding_photos,
+      status: editBatch.status,
+    });
+    setBatches(getMoldingBatches());
+    setEditBatch(null);
+    toast({ title: '批次已更新' });
   };
 
   return (
@@ -256,6 +272,9 @@ export default function Molding() {
                         defaultValue={batch.quantity_completed}
                         onBlur={e => handleUpdateQuantity(batch, Number(e.target.value))}
                       />
+                      <Button variant="ghost" size="icon" onClick={() => setEditBatch({ ...batch, molding_photos: batch.molding_photos || [] })} className="text-zinc-400 hover:text-zinc-100">
+                        <Edit className="w-4 h-4" />
+                      </Button>
                       <Button variant="ghost" size="icon" onClick={() => setQrBatch(batch)} className="text-zinc-400 hover:text-zinc-100">
                         <QrCode className="w-4 h-4" />
                       </Button>
@@ -266,6 +285,55 @@ export default function Molding() {
             ))
           )}
         </div>
+
+        {/* Edit Batch Dialog */}
+        <Dialog open={!!editBatch} onOpenChange={(open) => !open && setEditBatch(null)}>
+          <DialogContent className="bg-zinc-800 border-zinc-700 max-w-md max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-zinc-100">編輯造模批次</DialogTitle>
+            </DialogHeader>
+            {editBatch && (
+              <div className="space-y-3">
+                <div className="p-3 bg-zinc-700/50 rounded-md">
+                  <p className="text-sm font-medium text-amber-400">{editBatch.batch_no}</p>
+                  <p className="text-xs text-zinc-400">工單: {editBatch.order_no} | 客戶: {editBatch.customer || '-'} | 品名: {editBatch.product_name || '-'}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-zinc-300">計劃數量</Label>
+                    <Input type="number" value={editBatch.quantity_planned} onChange={e => setEditBatch({ ...editBatch, quantity_planned: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  </div>
+                  <div>
+                    <Label className="text-zinc-300">完成數量</Label>
+                    <Input type="number" value={editBatch.quantity_completed} onChange={e => setEditBatch({ ...editBatch, quantity_completed: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">預估澆注重量 (kg)</Label>
+                  <Input type="number" value={editBatch.estimated_pouring_weight || 0} onChange={e => setEditBatch({ ...editBatch, estimated_pouring_weight: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                </div>
+                <div>
+                  <Label className="text-zinc-300">狀態</Label>
+                  <Select value={editBatch.status} onValueChange={val => setEditBatch({ ...editBatch, status: val as MoldingBatch['status'] })}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">
+                      <SelectItem value="Pending">Pending</SelectItem>
+                      <SelectItem value="In Progress">In Progress</SelectItem>
+                      <SelectItem value="Completed">Completed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <MoldingImageUpload
+                  images={editBatch.molding_photos || []}
+                  onChange={(imgs) => setEditBatch({ ...editBatch, molding_photos: imgs })}
+                />
+                <Button onClick={handleEditSave} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">更新</Button>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* QR Code Dialog */}
         <Dialog open={!!qrBatch} onOpenChange={(open) => !open && setQrBatch(null)}>
