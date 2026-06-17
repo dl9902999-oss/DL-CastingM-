@@ -114,6 +114,12 @@ export default function Molding() {
       toast({ title: '請選擇工單並填寫數量', variant: 'destructive' });
       return;
     }
+    // Check cumulative quantity does not exceed work order quantity
+    const existingQty = batches.filter(b => b.work_order_id === selectedWo.id).reduce((sum, b) => sum + b.quantity_planned, 0);
+    if (existingQty + form.quantity_planned > selectedWo.quantity) {
+      toast({ title: `累計數量不能大於工單數量（工單數量: ${selectedWo.quantity}，已開工: ${existingQty}，可用餘量: ${selectedWo.quantity - existingQty}）`, variant: 'destructive' });
+      return;
+    }
     createMoldingBatch({
       work_order_id: selectedWo.id,
       order_no: selectedWo.order_no,
