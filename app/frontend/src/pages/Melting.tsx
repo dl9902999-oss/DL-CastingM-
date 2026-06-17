@@ -241,12 +241,22 @@ export default function Melting() {
                     <p className="text-xs text-zinc-400 mt-2">合計: <span className="text-zinc-200 font-medium">{totalPouring} kg</span></p>
                   )}
                 </div>
-                <div className="p-3 bg-zinc-700/50 rounded-md">
-                  <span className="text-sm text-zinc-400">預估得料率: </span>
-                  <span className="text-lg font-bold text-amber-400">{yieldRate}%</span>
-                  {estimatedWeight > 0 && totalPouring > 0 && (
-                    <span className="text-xs text-zinc-500 ml-2">({estimatedWeight} / {totalPouring} × 100%)</span>
-                  )}
+                <div className="p-3 bg-zinc-700/50 rounded-md space-y-1">
+                  <span className="text-sm text-zinc-400">預估得料率（各件）:</span>
+                  <div className="space-y-1">
+                    {pouringWeights.map((w, idx) => {
+                      const rate = w > 0 && estimatedWeight > 0 ? ((estimatedWeight / w) * 100).toFixed(1) : '0.0';
+                      return (
+                        <div key={idx} className="flex items-center gap-2 text-xs">
+                          <span className="text-zinc-400 w-16">第 {idx + 1} 件</span>
+                          <span className={`font-bold ${Number(rate) >= 80 ? 'text-green-400' : Number(rate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{rate}%</span>
+                          {w > 0 && estimatedWeight > 0 && (
+                            <span className="text-zinc-500">({estimatedWeight} / {w} × 100%)</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 <Button onClick={handleCreate} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">建立</Button>
               </div>
@@ -303,12 +313,22 @@ export default function Melting() {
                     <p className="text-xs text-zinc-400 mt-2">合計: <span className="text-zinc-200 font-medium">{editTotalPouring} kg</span></p>
                   )}
                 </div>
-                <div className="p-3 bg-zinc-700/50 rounded-md">
-                  <span className="text-sm text-zinc-400">預估得料率: </span>
-                  <span className="text-lg font-bold text-amber-400">{editYieldRate}%</span>
-                  {editEstimatedWeight > 0 && editTotalPouring > 0 && (
-                    <span className="text-xs text-zinc-500 ml-2">({editEstimatedWeight} / {editTotalPouring} × 100%)</span>
-                  )}
+                <div className="p-3 bg-zinc-700/50 rounded-md space-y-1">
+                  <span className="text-sm text-zinc-400">預估得料率（各件）:</span>
+                  <div className="space-y-1">
+                    {editPouringWeights.map((w, idx) => {
+                      const rate = w > 0 && editEstimatedWeight > 0 ? ((editEstimatedWeight / w) * 100).toFixed(1) : '0.0';
+                      return (
+                        <div key={idx} className="flex items-center gap-2 text-xs">
+                          <span className="text-zinc-400 w-16">第 {idx + 1} 件</span>
+                          <span className={`font-bold ${Number(rate) >= 80 ? 'text-green-400' : Number(rate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{rate}%</span>
+                          {w > 0 && editEstimatedWeight > 0 && (
+                            <span className="text-zinc-500">({editEstimatedWeight} / {w} × 100%)</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 <Button onClick={handleUpdate} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">儲存</Button>
               </div>
@@ -345,24 +365,25 @@ export default function Melting() {
                         <span>爐號: <span className="text-zinc-200">{record.furnace_no}</span></span>
                       </div>
                       <div className="mt-2 text-xs text-zinc-400">
-                        <span className="font-medium">實際澆注:</span>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {weights.map((w, idx) => (
-                            <span key={idx} className="bg-zinc-700 px-2 py-0.5 rounded text-zinc-200">
-                              第{idx + 1}件: {w}kg
-                            </span>
-                          ))}
+                        <span className="font-medium">實際澆注 &amp; 預估得料率:</span>
+                        <div className="space-y-0.5 mt-1">
+                          {weights.map((w, idx) => {
+                            const estW = (() => { const b2 = batches.find(bb => bb.id === record.batch_id); if (!b2) return 0; const wo2 = workOrders.find(ww => ww.id === b2.work_order_id); return wo2?.estimated_weight || 0; })();
+                            const rate = w > 0 && estW > 0 ? ((estW / w) * 100).toFixed(1) : '0.0';
+                            return (
+                              <div key={idx} className="flex items-center gap-2">
+                                <span className="bg-zinc-700 px-2 py-0.5 rounded text-zinc-200">第{idx + 1}件: {w}kg</span>
+                                <span className={`font-bold ${Number(rate) >= 80 ? 'text-green-400' : Number(rate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>
+                                  得料率: {rate}%
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
                         <span className="text-zinc-300 mt-1 inline-block">合計: {record.pouring_weight}kg</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <span className="text-xs text-zinc-400">預估得料率</span>
-                        <p className={`text-lg font-bold ${record.yield_rate >= 80 ? 'text-green-400' : record.yield_rate >= 60 ? 'text-amber-400' : 'text-red-400'}`}>
-                          {record.yield_rate}%
-                        </p>
-                      </div>
                       <div className="flex flex-col gap-1">
                         <Button variant="ghost" size="icon" onClick={() => handleEdit(record)} className="text-zinc-400 hover:text-amber-400 h-7 w-7">
                           <Pencil className="w-3.5 h-3.5" />
