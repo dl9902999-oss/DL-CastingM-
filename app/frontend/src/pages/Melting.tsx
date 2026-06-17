@@ -5,10 +5,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MeltingRecord, MoldingBatch } from '@/lib/types';
 import { getMeltingRecords, createMeltingRecord, getMoldingBatches } from '@/lib/store';
-import { Plus, Flame } from 'lucide-react';
+import { Plus, Flame, Search, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 export default function Melting() {
@@ -18,11 +17,25 @@ export default function Melting() {
   const { toast } = useToast();
 
   const [form, setForm] = useState({ batch_id: '', furnace_no: '', melting_weight: 0, pouring_weight: 0 });
+  const [batchSearch, setBatchSearch] = useState('');
+  const [selectedBatch, setSelectedBatch] = useState<MoldingBatch | null>(null);
 
   useEffect(() => {
     setRecords(getMeltingRecords());
     setBatches(getMoldingBatches());
   }, []);
+
+  const filteredBatches = batches.filter(b => {
+    if (!batchSearch) return true;
+    const keyword = batchSearch.toLowerCase();
+    return (
+      b.batch_no.toLowerCase().includes(keyword) ||
+      (b.customer || '').toLowerCase().includes(keyword) ||
+      (b.product_name || '').toLowerCase().includes(keyword) ||
+      (b.material || '').toLowerCase().includes(keyword) ||
+      (b.order_no || '').toLowerCase().includes(keyword)
+    );
+  });
 
   const handleCreate = () => {
     if (!form.batch_id || !form.furnace_no || form.melting_weight <= 0) {
@@ -41,7 +54,9 @@ export default function Melting() {
     setRecords(getMeltingRecords());
     setIsCreateOpen(false);
     setForm({ batch_id: '', furnace_no: '', melting_weight: 0, pouring_weight: 0 });
-    toast({ title: '熔煉紀錄已建立' });
+    setSelectedBatch(null);
+    setBatchSearch('');
+    toast({ title: '澆注紀錄已建立' });
   };
 
   const yieldRate = form.melting_weight > 0 ? ((form.pouring_weight / form.melting_weight) * 100).toFixed(1) : '0.0';
@@ -51,7 +66,7 @@ export default function Melting() {
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">批次澆注</h1>
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) { setSelectedBatch(null); setBatchSearch(''); } }}>
             <DialogTrigger asChild>
               <Button className="bg-amber-500 hover:bg-amber-600 text-zinc-900">
                 <Plus className="w-4 h-4 mr-2" />新增澆注
@@ -63,17 +78,46 @@ export default function Melting() {
               </DialogHeader>
               <div className="space-y-3">
                 <div>
-                  <Label className="text-zinc-300">批次</Label>
-                  <Select value={form.batch_id} onValueChange={val => setForm({ ...form, batch_id: val })}>
-                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
-                      <SelectValue placeholder="選擇批次" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-zinc-700 border-zinc-600">
-                      {batches.map(b => (
-                        <SelectItem key={b.id} value={b.id}>{b.batch_no} ({b.order_no})</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-zinc-300">批次（以客戶、產品、材質搜尋）</Label>
+                  {selectedBatch ? (
+                    <div className="flex items-center gap-2 p-2 bg-zinc-700 rounded-md border border-zinc-600">
+                      <div className="flex-1 text-sm text-zinc-100">
+                        <span className="font-mono text-amber-400">{selectedBatch.batch_no}</span>
+                        <span className="text-zinc-400 ml-2">客戶: {selectedBatch.customer || '-'} | 品名: {selectedBatch.product_name || '-'} | 材質: {selectedBatch.material || '-'}</span>
+                      </div>
+                      <Button variant="ghost" size="icon" onClick={() => { setSelectedBatch(null); setForm({ ...form, batch_id: '' }); setBatchSearch(''); }} className="text-zinc-400 hover:text-zinc-100 h-6 w-6">
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Search className="absolute left-2 top-2.5 w-4 h-4 text-zinc-400" />
+                        <Input
+                          value={batchSearch}
+                          onChange={e => setBatchSearch(e.target.value)}
+                          className="bg-zinc-700 border-zinc-600 text-zinc-100 pl-8"
+                          placeholder="輸入客戶、產品名稱或材質搜尋..."
+                        />
+                      </div>
+                      <div className="max-h-40 overflow-y-auto space-y-1 border border-zinc-600 rounded-md p-1">
+                        {filteredBatches.length === 0 ? (
+                          <p className="text-xs text-zinc-500 p-2 text-center">無符合批次</p>
+                        ) : (
+                          filteredBatches.map(b => (
+                            <button
+                              key={b.id}
+                              onClick={() => { setSelectedBatch(b); setForm({ ...form, batch_id: b.id }); setBatchSearch(''); }}
+                              className="w-full text-left p-2 rounded hover:bg-zinc-600 text-sm"
+                            >
+                              <span className="font-mono text-amber-400">{b.batch_no}</span>
+                              <span className="text-zinc-400 ml-2 text-xs">客戶: {b.customer || '-'} | 品名: {b.product_name || '-'} | 材質: {b.material || '-'}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <Label className="text-zinc-300">爐號</Label>
