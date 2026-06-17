@@ -177,7 +177,28 @@ export function createMeltingRecord(data: { batch_id: string; batch_no: string; 
   };
   records.push(newRecord);
   setItems(STORAGE_KEYS.MELTING_RECORDS, records);
+  // Auto-update batch status: count total poured pieces for this batch
+  syncBatchStatusFromMelting(data.batch_id);
   return newRecord;
+}
+
+function syncBatchStatusFromMelting(batchId: string) {
+  const allRecords = getMeltingRecords();
+  const batchRecords = allRecords.filter(r => r.batch_id === batchId);
+  const totalPouredPieces = batchRecords.reduce((sum, r) => {
+    const ws = r.pouring_weights && r.pouring_weights.length > 0 ? r.pouring_weights : [r.pouring_weight];
+    return sum + ws.filter(w => w > 0).length;
+  }, 0);
+  const batches = getMoldingBatches();
+  const batch = batches.find(b => b.id === batchId);
+  if (!batch) return;
+  if (totalPouredPieces >= batch.quantity_planned) {
+    updateMoldingBatch(batch.id, { quantity_completed: batch.quantity_planned, status: 'Completed' });
+  } else if (totalPouredPieces > 0) {
+    updateMoldingBatch(batch.id, { quantity_completed: totalPouredPieces, status: 'In Progress' });
+  } else {
+    updateMoldingBatch(batch.id, { quantity_completed: 0, status: 'Pending' });
+  }
 }
 
 export function updateMeltingRecord(id: string, data: { furnace_no?: string; pouring_weights?: number[]; melting_weight?: number }): MeltingRecord | null {
@@ -198,14 +219,19 @@ export function updateMeltingRecord(id: string, data: { furnace_no?: string; pou
   record.updated_at = new Date().toISOString();
   records[index] = record;
   setItems(STORAGE_KEYS.MELTING_RECORDS, records);
+  // Sync batch status
+  syncBatchStatusFromMelting(record.batch_id);
   return record;
 }
 
 export function deleteMeltingRecord(id: string): boolean {
   const records = getMeltingRecords();
+  const record = records.find(r => r.id === id);
   const filtered = records.filter(r => r.id !== id);
   if (filtered.length === records.length) return false;
   setItems(STORAGE_KEYS.MELTING_RECORDS, filtered);
+  // Sync batch status after deletion
+  if (record) syncBatchStatusFromMelting(record.batch_id);
   return true;
 }
 
