@@ -235,7 +235,7 @@ export default function Molding() {
                           batch.status === 'Pending' ? 'bg-zinc-600 text-zinc-300' :
                           batch.status === 'In Progress' ? 'bg-amber-500/20 text-amber-400' :
                           'bg-green-500/20 text-green-400'
-                        }`}>{batch.status}</span>
+                        }`}>{batch.status === 'Pending' ? '待處理' : batch.status === 'In Progress' ? '進行中' : '已完成'}</span>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-zinc-400">
                         <span>工單: <span className="text-zinc-200">{batch.order_no}</span></span>
@@ -319,9 +319,9 @@ export default function Molding() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-zinc-700 border-zinc-600">
-                      <SelectItem value="Pending">Pending</SelectItem>
-                      <SelectItem value="In Progress">In Progress</SelectItem>
-                      <SelectItem value="Completed">Completed</SelectItem>
+                      <SelectItem value="Pending">待處理</SelectItem>
+                      <SelectItem value="In Progress">進行中</SelectItem>
+                      <SelectItem value="Completed">已完成</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

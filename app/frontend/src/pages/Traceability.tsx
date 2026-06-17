@@ -91,7 +91,7 @@ export default function Traceability() {
                       <span className="text-sm text-zinc-200">{o.order_no}</span>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-zinc-400">{o.customer}</span>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-300">{o.status}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-300">{o.status === 'Open' ? '待開工' : o.status === 'In Progress' ? '進行中' : o.status === 'Completed' ? '已完成' : '已取消'}</span>
                       </div>
                     </div>
                   ))}
@@ -111,7 +111,7 @@ export default function Traceability() {
                   {result.batches.map((b, i) => (
                     <div key={i} className="flex justify-between items-center py-2 border-b border-zinc-700 last:border-0">
                       <span className="text-sm text-zinc-200">{b.batch_no}</span>
-                      <span className="text-xs text-zinc-400">{b.quantity_completed}/{b.quantity_planned} ({b.status})</span>
+                      <span className="text-xs text-zinc-400">{b.quantity_completed}/{b.quantity_planned} ({b.status === 'Pending' ? '待處理' : b.status === 'In Progress' ? '進行中' : '已完成'})</span>
                     </div>
                   ))}
                 </CardContent>
@@ -201,7 +201,7 @@ export default function Traceability() {
                         <span className="text-xs text-zinc-400">{s.customer} | {s.quantity}件</span>
                         <span className={`text-xs px-2 py-0.5 rounded-full ${
                           s.status === 'Pending' ? 'bg-amber-500/20 text-amber-400' : 'bg-green-500/20 text-green-400'
-                        }`}>{s.status}</span>
+                        }`}>{s.status === 'Pending' ? '待出貨' : '已出貨'}</span>
                       </div>
                     </div>
                   ))}
