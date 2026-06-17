@@ -64,6 +64,7 @@ function MoldingImageUpload({ images, onChange }: { images: string[]; onChange: 
 export default function Molding() {
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
+  const [allWorkOrders, setAllWorkOrders] = useState<WorkOrder[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [qrBatch, setQrBatch] = useState<MoldingBatch | null>(null);
   const [viewPhotos, setViewPhotos] = useState<string[] | null>(null);
@@ -79,9 +80,21 @@ export default function Molding() {
   });
 
   useEffect(() => {
+    const allWo = getWorkOrders();
+    setAllWorkOrders(allWo);
+    setWorkOrders(allWo.filter(o => o.status !== 'Cancelled'));
     setBatches(getMoldingBatches());
-    setWorkOrders(getWorkOrders().filter(o => o.status !== 'Cancelled'));
   }, []);
+
+  // Helper: get work order info for a batch (fallback when batch fields are empty)
+  const getWoInfo = (batch: MoldingBatch) => {
+    const wo = allWorkOrders.find(w => w.id === batch.work_order_id);
+    return {
+      customer: batch.customer || wo?.customer || '-',
+      product_name: batch.product_name || wo?.product_name || '-',
+      material: batch.material || wo?.material || '-',
+    };
+  };
 
   // Filter work orders by customer or product_name
   const filteredWo = woSearch.trim()
@@ -239,9 +252,9 @@ export default function Molding() {
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-zinc-400">
                         <span>工單: <span className="text-zinc-200">{batch.order_no}</span></span>
-                        <span>客戶: <span className="text-zinc-200">{batch.customer || '-'}</span></span>
-                        <span>品名: <span className="text-zinc-200">{batch.product_name || '-'}</span></span>
-                        <span>材質: <span className="text-zinc-200">{batch.material || '-'}</span></span>
+                        <span>客戶: <span className="text-zinc-200">{getWoInfo(batch).customer}</span></span>
+                        <span>品名: <span className="text-zinc-200">{getWoInfo(batch).product_name}</span></span>
+                        <span>材質: <span className="text-zinc-200">{getWoInfo(batch).material}</span></span>
                         <span>數量: <span className="text-zinc-200">{batch.quantity_completed}/{batch.quantity_planned}</span></span>
                         {batch.estimated_pouring_weight > 0 && (
                           <span>預估澆注: <span className="text-zinc-200">{batch.estimated_pouring_weight}kg</span></span>
@@ -296,7 +309,7 @@ export default function Molding() {
               <div className="space-y-3">
                 <div className="p-3 bg-zinc-700/50 rounded-md">
                   <p className="text-sm font-medium text-amber-400">{editBatch.batch_no}</p>
-                  <p className="text-xs text-zinc-400">工單: {editBatch.order_no} | 客戶: {editBatch.customer || '-'} | 品名: {editBatch.product_name || '-'}</p>
+                  <p className="text-xs text-zinc-400">工單: {editBatch.order_no} | 客戶: {getWoInfo(editBatch).customer} | 品名: {getWoInfo(editBatch).product_name} | 材質: {getWoInfo(editBatch).material}</p>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
