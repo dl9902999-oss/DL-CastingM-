@@ -142,10 +142,7 @@ export default function Molding() {
     toast({ title: '造模批次已建立' });
   };
 
-  const handleUpdateQuantity = (batch: MoldingBatch, qty: number) => {
-    updateMoldingBatch(batch.id, { quantity_completed: qty, status: qty >= batch.quantity_planned ? 'Completed' : 'In Progress' });
-    setBatches(getMoldingBatches());
-  };
+
 
   const handleEditSave = () => {
     if (!editBatch) return;
@@ -345,13 +342,6 @@ export default function Molding() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        placeholder="完成數"
-                        className="w-20 bg-zinc-700 border-zinc-600 text-zinc-100 text-sm"
-                        defaultValue={batch.quantity_completed}
-                        onBlur={e => handleUpdateQuantity(batch, Number(e.target.value))}
-                      />
                       <Button variant="ghost" size="icon" onClick={() => setEditBatch({ ...batch, molding_photos: batch.molding_photos || [], closing_photos: batch.closing_photos || [] })} className="text-zinc-400 hover:text-zinc-100">
                         <Edit className="w-4 h-4" />
                       </Button>
