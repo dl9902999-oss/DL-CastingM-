@@ -5,14 +5,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
 import { MoldingBatch, WorkOrder } from '@/lib/types';
 import { getMoldingBatches, createMoldingBatch, updateMoldingBatch, deleteMoldingBatch, getWorkOrders } from '@/lib/store';
 import { Plus, QrCode, Search, Image, X, Edit, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useToast } from '@/hooks/use-toast';
 
-function MoldingImageUpload({ images, onChange }: { images: string[]; onChange: (imgs: string[]) => void }) {
+function PhotoUploadSection({ label, icon, images, onChange }: { label: string; icon: React.ReactNode; images: string[]; onChange: (imgs: string[]) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -36,9 +36,9 @@ function MoldingImageUpload({ images, onChange }: { images: string[]; onChange: 
   };
 
   return (
-    <div>
+    <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600">
       <Label className="text-zinc-300 flex items-center gap-1.5 mb-1.5">
-        <Image className="w-4 h-4 text-blue-400" />造模相片
+        {icon}{label}
       </Label>
       <div className="flex flex-wrap gap-2 mb-2">
         {images.map((img, idx) => (
@@ -78,6 +78,7 @@ export default function Molding() {
     estimated_pouring_weight: 0,
     remarks: '',
     molding_photos: [] as string[],
+    closing_photos: [] as string[],
   });
 
   useEffect(() => {
@@ -132,11 +133,12 @@ export default function Molding() {
       estimated_pouring_weight: form.estimated_pouring_weight,
       remarks: form.remarks,
       molding_photos: form.molding_photos,
+      closing_photos: form.closing_photos,
     });
     setBatches(getMoldingBatches());
     setIsCreateOpen(false);
     setSelectedWo(null);
-    setForm({ quantity_planned: 0, estimated_pouring_weight: 0, remarks: '', molding_photos: [] });
+    setForm({ quantity_planned: 0, estimated_pouring_weight: 0, remarks: '', molding_photos: [], closing_photos: [] });
     toast({ title: '造模批次已建立' });
   };
 
@@ -147,13 +149,23 @@ export default function Molding() {
 
   const handleEditSave = () => {
     if (!editBatch) return;
+    // Determine status based on photos
+    let status: MoldingBatch['status'] = editBatch.status;
+    const closingPhotos = editBatch.closing_photos || [];
+    const moldingPhotos = editBatch.molding_photos || [];
+    if (closingPhotos.length > 0) {
+      status = 'Completed';
+    } else if (moldingPhotos.length > 0) {
+      status = 'In Progress';
+    }
     updateMoldingBatch(editBatch.id, {
       quantity_planned: editBatch.quantity_planned,
       quantity_completed: editBatch.quantity_completed,
       estimated_pouring_weight: editBatch.estimated_pouring_weight,
       remarks: editBatch.remarks || '',
-      molding_photos: editBatch.molding_photos,
-      status: editBatch.status,
+      molding_photos: moldingPhotos,
+      closing_photos: closingPhotos,
+      status,
     });
     setBatches(getMoldingBatches());
     setEditBatch(null);
@@ -252,9 +264,17 @@ export default function Molding() {
                     className="w-full min-h-[80px] px-3 py-2 bg-zinc-700 border border-zinc-600 rounded-md text-zinc-100 placeholder:text-zinc-500 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-amber-500/50"
                   />
                 </div>
-                <MoldingImageUpload
+                <PhotoUploadSection
+                  label="造模方案照片"
+                  icon={<Image className="w-4 h-4 text-blue-400" />}
                   images={form.molding_photos}
                   onChange={(imgs) => setForm({ ...form, molding_photos: imgs })}
+                />
+                <PhotoUploadSection
+                  label="合模標示照片"
+                  icon={<Image className="w-4 h-4 text-green-400" />}
+                  images={form.closing_photos}
+                  onChange={(imgs) => setForm({ ...form, closing_photos: imgs })}
                 />
                 <Button onClick={handleCreate} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">建立</Button>
               </div>
@@ -297,15 +317,25 @@ export default function Molding() {
                       {batch.remarks && (
                         <p className="text-xs text-zinc-400 mt-1.5">備註: <span className="text-zinc-300">{batch.remarks}</span></p>
                       )}
-                      {/* Photo indicator */}
-                      {batch.molding_photos && batch.molding_photos.length > 0 && (
-                        <button
-                          onClick={() => setViewPhotos(batch.molding_photos)}
-                          className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 mt-1.5"
-                        >
-                          <Image className="w-3 h-3" />造模相片 ({batch.molding_photos.length})
-                        </button>
-                      )}
+                      {/* Photo indicators */}
+                      <div className="flex flex-wrap gap-3 mt-1.5">
+                        {batch.molding_photos && batch.molding_photos.length > 0 && (
+                          <button
+                            onClick={() => setViewPhotos(batch.molding_photos)}
+                            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
+                          >
+                            <Image className="w-3 h-3" />造模方案照片 ({batch.molding_photos.length})
+                          </button>
+                        )}
+                        {batch.closing_photos && batch.closing_photos.length > 0 && (
+                          <button
+                            onClick={() => setViewPhotos(batch.closing_photos)}
+                            className="flex items-center gap-1 text-xs text-green-400 hover:text-green-300"
+                          >
+                            <Image className="w-3 h-3" />合模標示照片 ({batch.closing_photos.length})
+                          </button>
+                        )}
+                      </div>
                       {/* Progress bar */}
                       <div className="mt-2 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
                         <div
@@ -322,7 +352,7 @@ export default function Molding() {
                         defaultValue={batch.quantity_completed}
                         onBlur={e => handleUpdateQuantity(batch, Number(e.target.value))}
                       />
-                      <Button variant="ghost" size="icon" onClick={() => setEditBatch({ ...batch, molding_photos: batch.molding_photos || [] })} className="text-zinc-400 hover:text-zinc-100">
+                      <Button variant="ghost" size="icon" onClick={() => setEditBatch({ ...batch, molding_photos: batch.molding_photos || [], closing_photos: batch.closing_photos || [] })} className="text-zinc-400 hover:text-zinc-100">
                         <Edit className="w-4 h-4" />
                       </Button>
                       <Button variant="ghost" size="icon" onClick={() => handleDeleteBatch(batch)} className="text-zinc-400 hover:text-red-400">
@@ -383,22 +413,22 @@ export default function Molding() {
                     className="w-full min-h-[80px] px-3 py-2 bg-zinc-700 border border-zinc-600 rounded-md text-zinc-100 placeholder:text-zinc-500 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-amber-500/50"
                   />
                 </div>
-                <div>
-                  <Label className="text-zinc-300">狀態</Label>
-                  <Select value={editBatch.status} onValueChange={val => setEditBatch({ ...editBatch, status: val as MoldingBatch['status'] })}>
-                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-zinc-700 border-zinc-600">
-                      <SelectItem value="Pending">待處理</SelectItem>
-                      <SelectItem value="In Progress">進行中</SelectItem>
-                      <SelectItem value="Completed">已完成</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600">
+                  <Label className="text-zinc-400 text-xs">狀態說明</Label>
+                  <p className="text-xs text-zinc-300 mt-1">• 上傳「造模方案照片」→ 狀態變更為「進行中」</p>
+                  <p className="text-xs text-zinc-300">• 上傳「合模標示照片」→ 狀態變更為「已完成」</p>
                 </div>
-                <MoldingImageUpload
+                <PhotoUploadSection
+                  label="造模方案照片"
+                  icon={<Image className="w-4 h-4 text-blue-400" />}
                   images={editBatch.molding_photos || []}
                   onChange={(imgs) => setEditBatch({ ...editBatch, molding_photos: imgs })}
+                />
+                <PhotoUploadSection
+                  label="合模標示照片"
+                  icon={<Image className="w-4 h-4 text-green-400" />}
+                  images={editBatch.closing_photos || []}
+                  onChange={(imgs) => setEditBatch({ ...editBatch, closing_photos: imgs })}
                 />
                 <Button onClick={handleEditSave} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">更新</Button>
               </div>
@@ -427,7 +457,7 @@ export default function Molding() {
         <Dialog open={!!viewPhotos} onOpenChange={(open) => !open && setViewPhotos(null)}>
           <DialogContent className="bg-zinc-800 border-zinc-700 max-w-2xl">
             <DialogHeader>
-              <DialogTitle className="text-zinc-100">造模相片</DialogTitle>
+              <DialogTitle className="text-zinc-100">照片檢視</DialogTitle>
             </DialogHeader>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-2">
               {viewPhotos?.map((img, idx) => (
