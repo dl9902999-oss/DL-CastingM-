@@ -10,7 +10,7 @@ import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from '@/
 import { Customer, CustomerType, CustomerStatus } from '@/lib/types';
 import { Plus, Search, Edit, Trash2, Users, X } from 'lucide-react';
 
-const CUSTOMER_TYPES: CustomerType[] = ['一般客戶', 'VIP客戶', '經銷商', '代工客戶', '其他'];
+const CUSTOMER_TYPES: CustomerType[] = ['產業機械', '砂石產業', '營造工程', '加工廠', '貿易商', '其他'];
 const CUSTOMER_STATUSES: CustomerStatus[] = ['啟用', '停用'];
 
 interface FormState {

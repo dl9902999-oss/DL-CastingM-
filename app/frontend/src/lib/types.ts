@@ -11,7 +11,7 @@ export type MoldSupply = '客戶提供' | '公司自有' | '代客製作';
 export type MoldType = '單面模' | '現板模' | '上下模' | '保模' | '其他';
 export type HeatTreatment = '退火' | '淬火' | '回火' | '正常化' | '調質' | '其他';
 
-export type CustomerType = '一般客戶' | 'VIP客戶' | '經銷商' | '代工客戶' | '其他';
+export type CustomerType = '產業機械' | '砂石產業' | '營造工程' | '加工廠' | '貿易商' | '其他';
 export type CustomerStatus = '啟用' | '停用';
 
 export interface Customer {
