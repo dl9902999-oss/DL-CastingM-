@@ -147,13 +147,15 @@ export default function Molding() {
   const handleEditSave = () => {
     if (!editBatch) return;
     // Determine status based on photos
-    let status: MoldingBatch['status'] = editBatch.status;
     const closingPhotos = editBatch.closing_photos || [];
     const moldingPhotos = editBatch.molding_photos || [];
+    let status: MoldingBatch['status'];
     if (closingPhotos.length > 0) {
       status = 'Completed';
     } else if (moldingPhotos.length > 0) {
       status = 'In Progress';
+    } else {
+      status = 'Pending';
     }
     updateMoldingBatch(editBatch.id, {
       quantity_planned: editBatch.quantity_planned,
