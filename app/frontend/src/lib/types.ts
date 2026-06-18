@@ -21,7 +21,7 @@ export interface Customer {
   short_name: string;
   type: CustomerType | '';
   address: string;
-  delivery_address: string;
+  delivery_addresses: string[];
   phone: string;
   email: string;
   contact1_name: string;

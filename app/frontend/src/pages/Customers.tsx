@@ -8,24 +8,40 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from '@/lib/store';
 import { Customer, CustomerType, CustomerStatus } from '@/lib/types';
-import { Plus, Search, Edit, Trash2, Users } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Users, X } from 'lucide-react';
 
 const CUSTOMER_TYPES: CustomerType[] = ['一般客戶', 'VIP客戶', '經銷商', '代工客戶', '其他'];
 const CUSTOMER_STATUSES: CustomerStatus[] = ['啟用', '停用'];
 
-const emptyForm = {
+interface FormState {
+  name: string;
+  short_name: string;
+  type: CustomerType | '';
+  address: string;
+  delivery_addresses: string[];
+  phone: string;
+  email: string;
+  contact1_name: string;
+  contact1_phone: string;
+  contact2_name: string;
+  contact2_phone: string;
+  status: CustomerStatus;
+  remarks: string;
+}
+
+const emptyForm: FormState = {
   name: '',
   short_name: '',
-  type: '' as CustomerType | '',
+  type: '',
   address: '',
-  delivery_address: '',
+  delivery_addresses: [''],
   phone: '',
   email: '',
   contact1_name: '',
   contact1_phone: '',
   contact2_name: '',
   contact2_phone: '',
-  status: '啟用' as CustomerStatus,
+  status: '啟用',
   remarks: '',
 };
 
@@ -35,7 +51,7 @@ export default function Customers() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState<FormState>(emptyForm);
 
   const filteredCustomers = useMemo(() => {
     if (!searchQuery.trim()) return customers;
@@ -52,12 +68,24 @@ export default function Customers() {
       toast({ title: '請輸入客戶名稱', variant: 'destructive' });
       return;
     }
+    if (!form.type) {
+      toast({ title: '請選擇客戶類型', variant: 'destructive' });
+      return;
+    }
+    if (!form.contact1_name.trim()) {
+      toast({ title: '請輸入聯絡人1姓名', variant: 'destructive' });
+      return;
+    }
+    if (!form.contact1_phone.trim()) {
+      toast({ title: '請輸入聯絡人1手機', variant: 'destructive' });
+      return;
+    }
     createCustomer({
       name: form.name,
       short_name: form.short_name,
       type: form.type,
       address: form.address,
-      delivery_address: form.delivery_address,
+      delivery_addresses: form.delivery_addresses.filter(a => a.trim() !== ''),
       phone: form.phone,
       email: form.email,
       contact1_name: form.contact1_name,
@@ -75,12 +103,15 @@ export default function Customers() {
 
   const handleEditOpen = (customer: Customer) => {
     setEditCustomer(customer);
+    const addresses = customer.delivery_addresses && customer.delivery_addresses.length > 0
+      ? customer.delivery_addresses
+      : [''];
     setForm({
       name: customer.name,
       short_name: customer.short_name,
       type: customer.type,
       address: customer.address,
-      delivery_address: customer.delivery_address,
+      delivery_addresses: addresses,
       phone: customer.phone,
       email: customer.email,
       contact1_name: customer.contact1_name,
@@ -94,12 +125,28 @@ export default function Customers() {
 
   const handleEditSave = () => {
     if (!editCustomer) return;
+    if (!form.name.trim()) {
+      toast({ title: '請輸入客戶名稱', variant: 'destructive' });
+      return;
+    }
+    if (!form.type) {
+      toast({ title: '請選擇客戶類型', variant: 'destructive' });
+      return;
+    }
+    if (!form.contact1_name.trim()) {
+      toast({ title: '請輸入聯絡人1姓名', variant: 'destructive' });
+      return;
+    }
+    if (!form.contact1_phone.trim()) {
+      toast({ title: '請輸入聯絡人1手機', variant: 'destructive' });
+      return;
+    }
     updateCustomer(editCustomer.id, {
       name: form.name,
       short_name: form.short_name,
       type: form.type,
       address: form.address,
-      delivery_address: form.delivery_address,
+      delivery_addresses: form.delivery_addresses.filter(a => a.trim() !== ''),
       phone: form.phone,
       email: form.email,
       contact1_name: form.contact1_name,
@@ -122,11 +169,27 @@ export default function Customers() {
     toast({ title: '客戶已刪除' });
   };
 
-  const FormFields = () => (
+  const addDeliveryAddress = () => {
+    setForm({ ...form, delivery_addresses: [...form.delivery_addresses, ''] });
+  };
+
+  const updateDeliveryAddress = (index: number, value: string) => {
+    const updated = [...form.delivery_addresses];
+    updated[index] = value;
+    setForm({ ...form, delivery_addresses: updated });
+  };
+
+  const removeDeliveryAddress = (index: number) => {
+    if (form.delivery_addresses.length <= 1) return;
+    const updated = form.delivery_addresses.filter((_, i) => i !== index);
+    setForm({ ...form, delivery_addresses: updated });
+  };
+
+  const formContent = (
     <div className="grid gap-3 max-h-[60vh] overflow-y-auto pr-2">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <Label>客戶名稱 *</Label>
+          <Label>客戶名稱 <span className="text-red-400">*</span></Label>
           <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="bg-zinc-800 border-zinc-600" />
         </div>
         <div>
@@ -136,7 +199,7 @@ export default function Customers() {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <Label>客戶類型</Label>
+          <Label>客戶類型 <span className="text-red-400">*</span></Label>
           <Select value={form.type} onValueChange={v => setForm({ ...form, type: v as CustomerType })}>
             <SelectTrigger className="bg-zinc-800 border-zinc-600"><SelectValue placeholder="選擇類型" /></SelectTrigger>
             <SelectContent>
@@ -159,8 +222,29 @@ export default function Customers() {
         <Input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} className="bg-zinc-800 border-zinc-600" />
       </div>
       <div>
-        <Label>送貨地址</Label>
-        <Input value={form.delivery_address} onChange={e => setForm({ ...form, delivery_address: e.target.value })} className="bg-zinc-800 border-zinc-600" />
+        <div className="flex items-center justify-between mb-1">
+          <Label>送貨地址</Label>
+          <Button type="button" size="sm" variant="ghost" onClick={addDeliveryAddress} className="h-6 px-2 text-xs text-amber-400 hover:text-amber-300">
+            <Plus className="w-3 h-3 mr-1" /> 新增地址
+          </Button>
+        </div>
+        <div className="space-y-2">
+          {form.delivery_addresses.map((addr, idx) => (
+            <div key={idx} className="flex gap-2">
+              <Input
+                value={addr}
+                onChange={e => updateDeliveryAddress(idx, e.target.value)}
+                placeholder={`送貨地址 ${idx + 1}`}
+                className="bg-zinc-800 border-zinc-600 flex-1"
+              />
+              {form.delivery_addresses.length > 1 && (
+                <Button type="button" size="sm" variant="ghost" onClick={() => removeDeliveryAddress(idx)} className="h-9 px-2 text-red-400 hover:text-red-300">
+                  <X className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -173,14 +257,14 @@ export default function Customers() {
         </div>
       </div>
       <div className="border-t border-zinc-700 pt-3">
-        <Label className="text-amber-400 font-semibold">聯絡人 1</Label>
+        <Label className="text-amber-400 font-semibold">聯絡人 1 <span className="text-red-400">*</span></Label>
         <div className="grid grid-cols-2 gap-3 mt-2">
           <div>
-            <Label>姓名</Label>
+            <Label>姓名 <span className="text-red-400">*</span></Label>
             <Input value={form.contact1_name} onChange={e => setForm({ ...form, contact1_name: e.target.value })} className="bg-zinc-800 border-zinc-600" />
           </div>
           <div>
-            <Label>手機</Label>
+            <Label>手機 <span className="text-red-400">*</span></Label>
             <Input value={form.contact1_phone} onChange={e => setForm({ ...form, contact1_phone: e.target.value })} className="bg-zinc-800 border-zinc-600" />
           </div>
         </div>
@@ -281,9 +365,9 @@ export default function Customers() {
 
       {/* Create Dialog */}
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg">
+        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg" onPointerDownOutside={e => e.preventDefault()}>
           <DialogHeader><DialogTitle>新增客戶</DialogTitle></DialogHeader>
-          <FormFields />
+          {formContent}
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => setIsCreateOpen(false)}>取消</Button>
             <Button onClick={handleCreate} className="bg-amber-600 hover:bg-amber-700">新增</Button>
@@ -293,9 +377,9 @@ export default function Customers() {
 
       {/* Edit Dialog */}
       <Dialog open={!!editCustomer} onOpenChange={open => { if (!open) { setEditCustomer(null); setForm(emptyForm); } }}>
-        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg">
+        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg" onPointerDownOutside={e => e.preventDefault()}>
           <DialogHeader><DialogTitle>編輯客戶</DialogTitle></DialogHeader>
-          <FormFields />
+          {formContent}
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => { setEditCustomer(null); setForm(emptyForm); }}>取消</Button>
             <Button onClick={handleEditSave} className="bg-amber-600 hover:bg-amber-700">儲存</Button>

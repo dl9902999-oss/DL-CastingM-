@@ -93,6 +93,7 @@ export function createCustomer(data: Omit<Customer, 'id' | 'customer_no' | 'crea
   const seqStr = String(seq).padStart(5, '0');
   const newCustomer: Customer = {
     ...data,
+    delivery_addresses: data.delivery_addresses || [],
     id: generateId(),
     customer_no: `CU-${seqStr}`,
     created_at: new Date().toISOString(),
