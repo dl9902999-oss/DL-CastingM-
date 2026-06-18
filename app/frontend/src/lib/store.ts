@@ -91,10 +91,11 @@ const CUSTOMER_TYPE_PREFIX_MAP: Record<string, string> = {
   '產業機械': 'A',
   '砂石產業': 'B',
   '營造工程': 'C',
-  '加工廠': 'D',
+  '汽車模具': 'D',
   '鑄造廠': 'E',
-  '貿易商': 'F',
-  '其他': 'G',
+  '加工廠': 'F',
+  '貿易商': 'G',
+  '其他': 'H',
 };
 
 export function createCustomer(data: Omit<Customer, 'id' | 'customer_no' | 'created_at' | 'updated_at'>): Customer {
