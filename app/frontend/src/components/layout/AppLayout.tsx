@@ -15,6 +15,7 @@ import {
   LogOut,
   Menu,
   Factory,
+  Users,
 } from 'lucide-react';
 
 interface NavItem {
@@ -26,6 +27,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: '總覽', path: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, roles: ['Admin', 'Production', 'QC', 'Warehouse'] },
+  { label: '客戶資料', path: '/customers', icon: <Users className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '工單管理', path: '/work-orders', icon: <ClipboardList className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '開工造模', path: '/molding', icon: <Layers className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '批次澆注', path: '/melting', icon: <Flame className="w-5 h-5" />, roles: ['Admin', 'Production'] },

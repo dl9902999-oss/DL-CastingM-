@@ -11,6 +11,29 @@ export type MoldSupply = '客戶提供' | '公司自有' | '代客製作';
 export type MoldType = '單面模' | '現板模' | '上下模' | '保模' | '其他';
 export type HeatTreatment = '退火' | '淬火' | '回火' | '正常化' | '調質' | '其他';
 
+export type CustomerType = '一般客戶' | 'VIP客戶' | '經銷商' | '代工客戶' | '其他';
+export type CustomerStatus = '啟用' | '停用';
+
+export interface Customer {
+  id: string;
+  customer_no: string;
+  name: string;
+  short_name: string;
+  type: CustomerType | '';
+  address: string;
+  delivery_address: string;
+  phone: string;
+  email: string;
+  contact1_name: string;
+  contact1_phone: string;
+  contact2_name: string;
+  contact2_phone: string;
+  status: CustomerStatus;
+  remarks: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WorkOrder {
   id: string;
   order_no: string;
@@ -67,6 +90,7 @@ export interface MeltingRecord {
 
 export interface QualityInspection {
   id: string;
+  inspection_no: string;
   batch_id: string;
   batch_no: string;
   heat_no: string;

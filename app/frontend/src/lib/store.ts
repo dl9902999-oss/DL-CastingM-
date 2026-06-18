@@ -1,4 +1,4 @@
-import { WorkOrder, MoldingBatch, MeltingRecord, QualityInspection, WarehouseEntry, ShipmentOrder, UserProfile } from './types';
+import { WorkOrder, MoldingBatch, MeltingRecord, QualityInspection, WarehouseEntry, ShipmentOrder, UserProfile, Customer } from './types';
 
 // Local storage-based store for demo/offline mode
 // Will be replaced with Supabase queries when connected
@@ -12,6 +12,8 @@ const STORAGE_KEYS = {
   SHIPMENT_ORDERS: 'foundry_shipment_orders',
   USERS: 'foundry_users',
   CURRENT_USER: 'foundry_current_user',
+  CUSTOMERS: 'foundry_customers',
+  SEQ_COUNTERS: 'foundry_seq_counters',
 };
 
 function getItems<T>(key: string): T[] {
@@ -27,11 +29,23 @@ function generateId(): string {
   return crypto.randomUUID();
 }
 
+// Sequential counter management
+function getNextSeq(prefix: string): number {
+  const countersRaw = localStorage.getItem(STORAGE_KEYS.SEQ_COUNTERS);
+  const counters: Record<string, number> = countersRaw ? JSON.parse(countersRaw) : {};
+  const current = counters[prefix] || 0;
+  const next = current + 1;
+  counters[prefix] = next;
+  localStorage.setItem(STORAGE_KEYS.SEQ_COUNTERS, JSON.stringify(counters));
+  return next;
+}
+
 function generateOrderNo(prefix: string): string {
   const date = new Date();
   const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-  const seq = Math.floor(Math.random() * 9000) + 1000;
-  return `${prefix}-${dateStr}-${seq}`;
+  const seq = getNextSeq(prefix);
+  const seqStr = String(seq).padStart(5, '0');
+  return `${prefix}-${dateStr}-A01-${seqStr}`;
 }
 
 // Initialize demo users
@@ -66,6 +80,41 @@ export function logout(): void {
 export function getCurrentUser(): UserProfile | null {
   const data = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
   return data ? JSON.parse(data) : null;
+}
+
+// Customers
+export function getCustomers(): Customer[] {
+  return getItems<Customer>(STORAGE_KEYS.CUSTOMERS);
+}
+
+export function createCustomer(data: Omit<Customer, 'id' | 'customer_no' | 'created_at' | 'updated_at'>): Customer {
+  const customers = getCustomers();
+  const seq = getNextSeq('CU');
+  const seqStr = String(seq).padStart(5, '0');
+  const newCustomer: Customer = {
+    ...data,
+    id: generateId(),
+    customer_no: `CU-${seqStr}`,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  customers.push(newCustomer);
+  setItems(STORAGE_KEYS.CUSTOMERS, customers);
+  return newCustomer;
+}
+
+export function updateCustomer(id: string, data: Partial<Customer>): Customer | null {
+  const customers = getCustomers();
+  const idx = customers.findIndex(c => c.id === id);
+  if (idx === -1) return null;
+  customers[idx] = { ...customers[idx], ...data, updated_at: new Date().toISOString() };
+  setItems(STORAGE_KEYS.CUSTOMERS, customers);
+  return customers[idx];
+}
+
+export function deleteCustomer(id: string): void {
+  const customers = getCustomers().filter(c => c.id !== id);
+  setItems(STORAGE_KEYS.CUSTOMERS, customers);
 }
 
 // Work Orders
@@ -242,11 +291,12 @@ export function getQualityInspections(): QualityInspection[] {
   return getItems<QualityInspection>(STORAGE_KEYS.QUALITY_INSPECTIONS);
 }
 
-export function createQualityInspection(data: Omit<QualityInspection, 'id' | 'created_at'>): QualityInspection {
+export function createQualityInspection(data: Omit<QualityInspection, 'id' | 'inspection_no' | 'created_at'>): QualityInspection {
   const inspections = getQualityInspections();
   const newInspection: QualityInspection = {
     ...data,
     id: generateId(),
+    inspection_no: generateOrderNo('QC'),
     created_at: new Date().toISOString(),
   };
   inspections.push(newInspection);
@@ -314,9 +364,7 @@ export function getDashboardStats(): { todayProduction: number; todayProductionK
   const todayMeltings = meltings.filter(m => m.created_at.slice(0, 10) === today);
   const todayProductionKg = todayMeltings.reduce((sum, m) => sum + m.pouring_weight, 0);
 
-  // Yield rate: last month statistics (total failed weight / total production weight)
-  // Failed weight = melting_weight - pouring_weight (loss)
-  // Yield rate = (1 - total_loss_weight / total_melting_weight) * 100
+  // Yield rate: last month statistics
   const now = new Date();
   const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()).toISOString();
   const lastMonthMeltings = meltings.filter(m => m.created_at >= oneMonthAgo);
