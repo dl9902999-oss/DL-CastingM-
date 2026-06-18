@@ -87,15 +87,28 @@ export function getCustomers(): Customer[] {
   return getItems<Customer>(STORAGE_KEYS.CUSTOMERS);
 }
 
+const CUSTOMER_TYPE_PREFIX_MAP: Record<string, string> = {
+  '產業機械': 'A',
+  '砂石產業': 'B',
+  '營造工程': 'C',
+  '加工廠': 'D',
+  '鑄造廠': 'E',
+  '貿易商': 'F',
+  '其他': 'G',
+};
+
 export function createCustomer(data: Omit<Customer, 'id' | 'customer_no' | 'created_at' | 'updated_at'>): Customer {
   const customers = getCustomers();
-  const seq = getNextSeq('CU');
-  const seqStr = String(seq).padStart(5, '0');
+  const prefix = CUSTOMER_TYPE_PREFIX_MAP[data.type] || 'G';
+  // Count existing customers with the same prefix
+  const sameTypeCount = customers.filter(c => c.customer_no.startsWith(`${prefix}-`)).length;
+  const seq = sameTypeCount + 1;
+  const seqStr = String(seq).padStart(3, '0');
   const newCustomer: Customer = {
     ...data,
     delivery_addresses: data.delivery_addresses || [],
     id: generateId(),
-    customer_no: `CU-${seqStr}`,
+    customer_no: `${prefix}-${seqStr}`,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
