@@ -411,7 +411,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                         <tbody>
                           {pouringData.map(p => {
                             const totalW = p.pouring_weights.reduce((s, w) => s + w, 0);
-                            const estPouringTotal = (p.estimated_pouring_weight || 0) * p.quantity;
+                            const estPouringTotal = p.estimated_pouring_weight || 0;
                             const avgRate = totalW > 0 && p.estimated_weight > 0
                               ? ((p.estimated_weight * p.quantity / totalW) * 100).toFixed(1)
                               : '0.0';
