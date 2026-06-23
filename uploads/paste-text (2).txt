@@ -1,0 +1,348 @@
+以下內容可直接貼到 **Lovable** 作為需求規格（Prompt）。
+
+---
+
+# 專案名稱
+
+熔解管理系統（Melting Record Management）
+
+建立一套可於 Web 與 Mobile 使用的熔解紀錄模組，支援熔解作業紀錄、能源管理、投料追蹤、化學成份管理、自動計算與資料分析。
+
+技術建議：
+
+* Frontend：Next.js + TypeScript + Tailwind
+* Backend：Supabase
+* Database：PostgreSQL
+* Authentication：角色權限（Admin／主管／生管／現場）
+
+---
+
+# 功能名稱
+
+新增「熔解紀錄（Melting Record）」功能
+
+每一筆資料代表一爐（Heat No.）。
+
+---
+
+# 畫面配置
+
+## 區塊一【基本資料】
+
+欄位：
+
+| 欄位名稱 | 型態           | 必填 |
+| ---- | ------------ | -- |
+| 日期   | Date         | 是  |
+| 材質   | Dropdown＋可輸入 | 是  |
+| 爐號   | Dropdown     | 是  |
+
+規則：
+
+* 日期預設今日
+* 材質支援歷史搜尋
+* 爐號由主資料維護
+
+---
+
+## 區塊二【熔解資訊】
+
+欄位：
+
+| 欄位名稱   | 型態          | 必填 |
+| ------ | ----------- | -- |
+| 開始送電時間 | Datetime    | 是  |
+| 出湯時間   | Datetime    | 是  |
+| 熔解時間   | Formula（分鐘） | 自動 |
+
+計算：
+
+```text
+熔解時間(分鐘)
+=
+出湯時間
+-
+開始送電時間
+```
+
+顯示格式：
+
+```text
+HH:mm
+```
+
+若出湯時間早於開始送電：
+
+```text
+顯示錯誤提示
+不可儲存
+```
+
+---
+
+## 區塊三【能源】
+
+欄位：
+
+| 欄位名稱       | 型態      |
+| ---------- | ------- |
+| 耗電(kWh)    | Decimal |
+| 總投料重量(kg)  | 自動      |
+| 能耗(kWh/kg) | 自動      |
+
+計算：
+
+總投料：
+
+```text
+SUM(首次投料)
++
+SUM(二次添加)
+```
+
+能耗：
+
+```text
+耗電(kWh)
+÷
+總投料重量
+```
+
+顯示：
+
+```text
+保留小數三位
+例如：
+
+0.842 kWh/kg
+```
+
+---
+
+## 區塊四【投料】
+
+畫面：
+
+```text
+＋新增原料
+```
+
+可新增多列。
+
+資料表：
+
+| 原料名稱 | 首次投料(kg) | 二次添加(kg) | 小計 |
+| ---- | -------: | -------: | -: |
+
+預設原料：
+
+| 原料   |   首次 | 二次 |
+| ---- | ---: | -: |
+| 回爐料  | 1200 |  0 |
+| 廢鐵   |  500 |  0 |
+| 矽鐵   |   30 | 10 |
+| 高碳錳鐵 |   20 |  5 |
+| 增碳劑  |   10 |  5 |
+| 純鎳   |   80 | 10 |
+| 430  |    0 |  0 |
+| 鉬鐵   |    0 |  0 |
+| 自行輸入 |    0 |  0 |
+
+計算：
+
+```text
+小計
+=
+首次投料
++
+二次添加
+```
+
+規則：
+
+* 原料名稱支援下拉與自由輸入
+* 數值不可負數
+* 可刪除列
+* 新增列即時更新總投料
+
+---
+
+## 區塊五【成份】
+
+建立三階段成份管理：
+
+```text
+目標
+爐中
+爐後
+```
+
+資料結構：
+
+```text
+TARGET
+IN_FURNACE
+AFTER_FURNACE
+```
+
+所有數值型態：
+
+```text
+Decimal(5,3)
+```
+
+---
+
+### 化學成份欄位
+
+| 元素 | 欄位 |
+| -- | -- |
+| 碳  | C  |
+| 矽  | Si |
+| 錳  | Mn |
+| 磷  | P  |
+| 硫  | S  |
+| 鎳  | Ni |
+| 鉻  | Cr |
+| 鉬  | Mo |
+| 銅  | Cu |
+| 鐵  | Fe |
+
+---
+
+畫面：
+
+| 階段 |  C | Si | Mn |  P |  S | Ni | Cr | Mo | Cu | Fe |
+| -- | -: | -: | -: | -: | -: | -: | -: | -: | -: | -: |
+| 目標 |    |    |    |    |    |    |    |    |    |    |
+| 爐中 |    |    |    |    |    |    |    |    |    |    |
+| 爐後 |    |    |    |    |    |    |    |    |    |    |
+
+範例：
+
+| 階段 |     C |    Si |    Mn |     P |     S |     Ni |     Cr |    Mo |    Cu |  Fe |
+| -- | ----: | ----: | ----: | ----: | ----: | -----: | -----: | ----: | ----: | --: |
+| 目標 | 0.180 | 0.600 | 0.800 | 0.030 | 0.020 | 10.500 | 16.800 | 2.100 | 0.300 | Bal |
+| 爐中 | 0.170 | 0.580 | 0.750 | 0.030 | 0.020 | 10.400 | 16.600 | 2.000 | 0.300 | Bal |
+| 爐後 | 0.180 | 0.610 | 0.800 | 0.020 | 0.010 | 10.600 | 16.900 | 2.100 | 0.300 | Bal |
+
+規則：
+
+* Fe 可允許輸入 Bal
+* 若其他元素合計存在，可提供：
+
+```text
+Fe
+=
+100
+-
+其他元素總和
+```
+
+自動計算（可切換）。
+
+---
+
+# 資料庫設計
+
+## Table：melt_records
+
+```sql
+id UUID PK
+melt_date DATE
+
+material_grade TEXT
+furnace_no TEXT
+
+power_start_time TIMESTAMP
+tap_time TIMESTAMP
+
+melt_minutes DECIMAL
+
+power_kwh DECIMAL
+
+total_charge_weight DECIMAL
+
+specific_energy DECIMAL
+
+created_at TIMESTAMP
+updated_at TIMESTAMP
+```
+
+---
+
+## Table：melt_materials
+
+```sql
+id UUID PK
+
+melt_id FK
+
+raw_material TEXT
+
+charge_weight DECIMAL
+
+secondary_weight DECIMAL
+
+subtotal DECIMAL
+```
+
+---
+
+## Table：melt_chemistry
+
+```sql
+id UUID PK
+
+melt_id FK
+
+sample_stage TEXT
+
+C DECIMAL(5,3)
+Si DECIMAL(5,3)
+Mn DECIMAL(5,3)
+
+P DECIMAL(5,3)
+S DECIMAL(5,3)
+
+Ni DECIMAL(5,3)
+Cr DECIMAL(5,3)
+
+Mo DECIMAL(5,3)
+
+Cu DECIMAL(5,3)
+
+Fe TEXT
+```
+
+---
+
+# 操作要求
+
+```text
+建立
+編輯
+刪除
+複製上一爐資料
+搜尋
+篩選
+Excel匯出
+PDF列印
+手機適配
+```
+
+---
+
+# 完成標準
+
+```text
+儲存後立即計算：
+
+熔解時間
+總投料重量
+能耗
+
+支援成份三階段輸入
+支援多筆原料新增
+畫面可於手機與電腦使用
+```
