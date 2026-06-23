@@ -281,7 +281,16 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
               <span>材質: <span className="text-zinc-200">{record.material_grade}</span></span>
               <span>爐號: <span className="text-zinc-200">{record.furnace_no}</span></span>
               <span className="flex items-center gap-1"><Zap className="w-3 h-3" />耗電: <span className="text-zinc-200">{record.power_kwh} kWh</span></span>
-              <span className="flex items-center gap-1"><Clock className="w-3 h-3" />時間: <span className="text-zinc-200">{formatMeltMinutes(record.melt_minutes)}</span></span>
+              <span className="flex items-center gap-1"><Clock className="w-3 h-3" />時間: <span className="text-zinc-200">{(() => {
+                if (record.power_start_time && record.tap_time) {
+                  const [sh, sm] = record.power_start_time.split(':').map(Number);
+                  const [eh, em] = record.tap_time.split(':').map(Number);
+                  let diff = (eh * 60 + em) - (sh * 60 + sm);
+                  if (diff < 0) diff += 24 * 60;
+                  return formatMeltMinutes(diff);
+                }
+                return formatMeltMinutes(record.melt_minutes);
+              })()}</span></span>
               <span>總投料: <span className="text-zinc-200">{record.total_charge_weight} kg</span></span>
               <span>能耗: <span className={`font-bold ${record.specific_energy > 1 ? 'text-red-400' : 'text-green-400'}`}>{record.specific_energy} kWh/kg</span></span>
               <span className="flex items-center gap-1"><Thermometer className="w-3 h-3" />出爐溫度: <span className="text-zinc-200">{record.tap_temp}℃</span></span>

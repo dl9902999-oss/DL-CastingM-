@@ -457,12 +457,14 @@ export function getMeltChemistry(meltId?: string): MeltChemistry[] {
 
 export function createMeltRecord(data: Omit<MeltRecord, 'id' | 'melt_no' | 'melt_minutes' | 'total_charge_weight' | 'specific_energy' | 'created_at' | 'updated_at'>): MeltRecord {
   const records = getMeltRecords();
-  // Calculate melt_minutes from power_start_time and tap_time
+  // Calculate melt_minutes from power_start_time and tap_time (HH:mm format)
   let meltMinutes = 0;
   if (data.power_start_time && data.tap_time) {
-    const start = new Date(data.power_start_time).getTime();
-    const end = new Date(data.tap_time).getTime();
-    meltMinutes = Math.round((end - start) / 60000);
+    const [sh, sm] = data.power_start_time.split(':').map(Number);
+    const [eh, em] = data.tap_time.split(':').map(Number);
+    let diff = (eh * 60 + em) - (sh * 60 + sm);
+    if (diff < 0) diff += 24 * 60; // cross midnight
+    meltMinutes = diff;
   }
   // total_charge_weight will be calculated from materials
   const materials = getMeltMaterials();
@@ -490,11 +492,13 @@ export function updateMeltRecord(id: string, data: Partial<Omit<MeltRecord, 'id'
   const index = records.findIndex(r => r.id === id);
   if (index === -1) return null;
   const record = { ...records[index], ...data, updated_at: new Date().toISOString() };
-  // Recalculate melt_minutes
+  // Recalculate melt_minutes from HH:mm format
   if (record.power_start_time && record.tap_time) {
-    const start = new Date(record.power_start_time).getTime();
-    const end = new Date(record.tap_time).getTime();
-    record.melt_minutes = Math.round((end - start) / 60000);
+    const [sh, sm] = record.power_start_time.split(':').map(Number);
+    const [eh, em] = record.tap_time.split(':').map(Number);
+    let diff = (eh * 60 + em) - (sh * 60 + sm);
+    if (diff < 0) diff += 24 * 60; // cross midnight
+    record.melt_minutes = diff;
   }
   // Recalculate total_charge_weight from materials
   const materials = getMeltMaterials(id);
