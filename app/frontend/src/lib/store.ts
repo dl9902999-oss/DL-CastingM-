@@ -1,4 +1,4 @@
-import { WorkOrder, MoldingBatch, MeltingRecord, QualityInspection, WarehouseEntry, ShipmentOrder, UserProfile, Customer } from './types';
+import { WorkOrder, MoldingBatch, MeltingRecord, QualityInspection, WarehouseEntry, ShipmentOrder, UserProfile, Customer, MeltRecord, MeltMaterial, MeltChemistry, SampleStage } from './types';
 
 // Local storage-based store for demo/offline mode
 // Will be replaced with Supabase queries when connected
@@ -14,6 +14,9 @@ const STORAGE_KEYS = {
   CURRENT_USER: 'foundry_current_user',
   CUSTOMERS: 'foundry_customers',
   SEQ_COUNTERS: 'foundry_seq_counters',
+  MELT_RECORDS: 'foundry_melt_records',
+  MELT_MATERIALS: 'foundry_melt_materials',
+  MELT_CHEMISTRY: 'foundry_melt_chemistry',
 };
 
 function getItems<T>(key: string): T[] {
@@ -433,4 +436,175 @@ export function traceByShipment(shipmentNo: string) {
   const inspections = getQualityInspections().filter(i => batches.some(b => b.id === i.batch_id));
   const warehouse = getWarehouseEntries().filter(w => batches.some(b => b.id === w.batch_id));
   return { orders, batches, meltings, inspections, warehouse, shipments };
+}
+
+// === 熔解管理模組 (Melting Management) ===
+
+export function getMeltRecords(): MeltRecord[] {
+  return getItems<MeltRecord>(STORAGE_KEYS.MELT_RECORDS);
+}
+
+export function getMeltMaterials(meltId?: string): MeltMaterial[] {
+  const all = getItems<MeltMaterial>(STORAGE_KEYS.MELT_MATERIALS);
+  return meltId ? all.filter(m => m.melt_id === meltId) : all;
+}
+
+export function getMeltChemistry(meltId?: string): MeltChemistry[] {
+  const all = getItems<MeltChemistry>(STORAGE_KEYS.MELT_CHEMISTRY);
+  return meltId ? all.filter(c => c.melt_id === meltId) : all;
+}
+
+export function createMeltRecord(data: Omit<MeltRecord, 'id' | 'melt_no' | 'melt_minutes' | 'total_charge_weight' | 'specific_energy' | 'created_at' | 'updated_at'>): MeltRecord {
+  const records = getMeltRecords();
+  // Calculate melt_minutes from power_start_time and tap_time
+  let meltMinutes = 0;
+  if (data.power_start_time && data.tap_time) {
+    const start = new Date(data.power_start_time).getTime();
+    const end = new Date(data.tap_time).getTime();
+    meltMinutes = Math.round((end - start) / 60000);
+  }
+  // total_charge_weight will be calculated from materials
+  const materials = getMeltMaterials();
+  // For new record, no materials yet, so 0
+  const totalChargeWeight = 0;
+  const specificEnergy = totalChargeWeight > 0 ? Math.round((data.power_kwh / totalChargeWeight) * 1000) / 1000 : 0;
+
+  const newRecord: MeltRecord = {
+    ...data,
+    id: generateId(),
+    melt_no: generateOrderNo('ML'),
+    melt_minutes: meltMinutes,
+    total_charge_weight: totalChargeWeight,
+    specific_energy: specificEnergy,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  records.push(newRecord);
+  setItems(STORAGE_KEYS.MELT_RECORDS, records);
+  return newRecord;
+}
+
+export function updateMeltRecord(id: string, data: Partial<Omit<MeltRecord, 'id' | 'melt_no' | 'created_at'>>): MeltRecord | null {
+  const records = getMeltRecords();
+  const index = records.findIndex(r => r.id === id);
+  if (index === -1) return null;
+  const record = { ...records[index], ...data, updated_at: new Date().toISOString() };
+  // Recalculate melt_minutes
+  if (record.power_start_time && record.tap_time) {
+    const start = new Date(record.power_start_time).getTime();
+    const end = new Date(record.tap_time).getTime();
+    record.melt_minutes = Math.round((end - start) / 60000);
+  }
+  // Recalculate total_charge_weight from materials
+  const materials = getMeltMaterials(id);
+  record.total_charge_weight = materials.reduce((sum, m) => sum + m.subtotal, 0);
+  // Recalculate specific_energy
+  record.specific_energy = record.total_charge_weight > 0
+    ? Math.round((record.power_kwh / record.total_charge_weight) * 1000) / 1000
+    : 0;
+  records[index] = record;
+  setItems(STORAGE_KEYS.MELT_RECORDS, records);
+  return record;
+}
+
+export function deleteMeltRecord(id: string): boolean {
+  const records = getMeltRecords();
+  const filtered = records.filter(r => r.id !== id);
+  if (filtered.length === records.length) return false;
+  setItems(STORAGE_KEYS.MELT_RECORDS, filtered);
+  // Also delete related materials and chemistry
+  const materials = getItems<MeltMaterial>(STORAGE_KEYS.MELT_MATERIALS).filter(m => m.melt_id !== id);
+  setItems(STORAGE_KEYS.MELT_MATERIALS, materials);
+  const chemistry = getItems<MeltChemistry>(STORAGE_KEYS.MELT_CHEMISTRY).filter(c => c.melt_id !== id);
+  setItems(STORAGE_KEYS.MELT_CHEMISTRY, chemistry);
+  return true;
+}
+
+// Recalculate totals for a melt record based on its materials
+export function recalcMeltRecord(meltId: string): MeltRecord | null {
+  const materials = getMeltMaterials(meltId);
+  const totalChargeWeight = materials.reduce((sum, m) => sum + m.subtotal, 0);
+  const records = getMeltRecords();
+  const index = records.findIndex(r => r.id === meltId);
+  if (index === -1) return null;
+  records[index].total_charge_weight = totalChargeWeight;
+  records[index].specific_energy = totalChargeWeight > 0
+    ? Math.round((records[index].power_kwh / totalChargeWeight) * 1000) / 1000
+    : 0;
+  records[index].updated_at = new Date().toISOString();
+  setItems(STORAGE_KEYS.MELT_RECORDS, records);
+  return records[index];
+}
+
+// Melt Materials CRUD
+export function createMeltMaterial(data: Omit<MeltMaterial, 'id' | 'subtotal'>): MeltMaterial {
+  const materials = getItems<MeltMaterial>(STORAGE_KEYS.MELT_MATERIALS);
+  const newMaterial: MeltMaterial = {
+    ...data,
+    id: generateId(),
+    subtotal: data.charge_weight + data.secondary_weight,
+  };
+  materials.push(newMaterial);
+  setItems(STORAGE_KEYS.MELT_MATERIALS, materials);
+  // Recalculate parent record
+  recalcMeltRecord(data.melt_id);
+  return newMaterial;
+}
+
+export function updateMeltMaterial(id: string, data: Partial<Omit<MeltMaterial, 'id' | 'subtotal'>>): MeltMaterial | null {
+  const materials = getItems<MeltMaterial>(STORAGE_KEYS.MELT_MATERIALS);
+  const index = materials.findIndex(m => m.id === id);
+  if (index === -1) return null;
+  const material = { ...materials[index], ...data };
+  material.subtotal = material.charge_weight + material.secondary_weight;
+  materials[index] = material;
+  setItems(STORAGE_KEYS.MELT_MATERIALS, materials);
+  recalcMeltRecord(material.melt_id);
+  return material;
+}
+
+export function deleteMeltMaterial(id: string): boolean {
+  const materials = getItems<MeltMaterial>(STORAGE_KEYS.MELT_MATERIALS);
+  const material = materials.find(m => m.id === id);
+  const filtered = materials.filter(m => m.id !== id);
+  if (filtered.length === materials.length) return false;
+  setItems(STORAGE_KEYS.MELT_MATERIALS, filtered);
+  if (material) recalcMeltRecord(material.melt_id);
+  return true;
+}
+
+// Melt Chemistry CRUD
+export function createMeltChemistry(data: Omit<MeltChemistry, 'id'>): MeltChemistry {
+  const chemistry = getItems<MeltChemistry>(STORAGE_KEYS.MELT_CHEMISTRY);
+  // Calculate Fe as balance
+  const otherElements = data.C + data.Si + data.Mn + data.P + data.S + data.Ni + data.Cr + data.Mo + data.Cu;
+  const newChemistry: MeltChemistry = {
+    ...data,
+    id: generateId(),
+    Fe: Math.round((100 - otherElements) * 1000) / 1000,
+  };
+  chemistry.push(newChemistry);
+  setItems(STORAGE_KEYS.MELT_CHEMISTRY, chemistry);
+  return newChemistry;
+}
+
+export function updateMeltChemistry(id: string, data: Partial<Omit<MeltChemistry, 'id'>>): MeltChemistry | null {
+  const chemistry = getItems<MeltChemistry>(STORAGE_KEYS.MELT_CHEMISTRY);
+  const index = chemistry.findIndex(c => c.id === id);
+  if (index === -1) return null;
+  const record = { ...chemistry[index], ...data };
+  // Recalculate Fe
+  const otherElements = record.C + record.Si + record.Mn + record.P + record.S + record.Ni + record.Cr + record.Mo + record.Cu;
+  record.Fe = Math.round((100 - otherElements) * 1000) / 1000;
+  chemistry[index] = record;
+  setItems(STORAGE_KEYS.MELT_CHEMISTRY, chemistry);
+  return record;
+}
+
+export function deleteMeltChemistry(id: string): boolean {
+  const chemistry = getItems<MeltChemistry>(STORAGE_KEYS.MELT_CHEMISTRY);
+  const filtered = chemistry.filter(c => c.id !== id);
+  if (filtered.length === chemistry.length) return false;
+  setItems(STORAGE_KEYS.MELT_CHEMISTRY, filtered);
+  return true;
 }

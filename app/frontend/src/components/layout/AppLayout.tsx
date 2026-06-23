@@ -31,6 +31,7 @@ const navItems: NavItem[] = [
   { label: '工單管理', path: '/work-orders', icon: <ClipboardList className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '開工造模', path: '/molding', icon: <Layers className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '批次澆注', path: '/melting', icon: <Flame className="w-5 h-5" />, roles: ['Admin', 'Production'] },
+  { label: '熔解管理', path: '/melting-management', icon: <Flame className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '品質檢驗', path: '/quality', icon: <CheckCircle className="w-5 h-5" />, roles: ['Admin', 'QC'] },
   { label: '入庫', path: '/warehouse', icon: <Warehouse className="w-5 h-5" />, roles: ['Admin', 'Warehouse'] },
   { label: '出貨', path: '/shipment', icon: <Truck className="w-5 h-5" />, roles: ['Admin', 'Warehouse'] },

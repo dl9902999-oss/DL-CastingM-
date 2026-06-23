@@ -88,6 +88,53 @@ export interface MeltingRecord {
   updated_at: string;
 }
 
+// === 熔解管理模組 (Melting Management) ===
+export type SampleStage = 'TARGET' | 'IN_FURNACE' | 'AFTER_FURNACE';
+
+export interface MeltRecord {
+  id: string;
+  melt_no: string;
+  melt_date: string;
+  material_grade: string;
+  furnace_no: string;
+  power_kwh: number;
+  power_start_time: string;
+  tap_time: string;
+  melt_minutes: number;
+  tap_temp: number;
+  total_charge_weight: number;
+  specific_energy: number;
+  created_by: string;
+  remark: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MeltMaterial {
+  id: string;
+  melt_id: string;
+  raw_material: string;
+  charge_weight: number;
+  secondary_weight: number;
+  subtotal: number;
+}
+
+export interface MeltChemistry {
+  id: string;
+  melt_id: string;
+  sample_stage: SampleStage;
+  C: number;
+  Si: number;
+  Mn: number;
+  P: number;
+  S: number;
+  Ni: number;
+  Cr: number;
+  Mo: number;
+  Cu: number;
+  Fe: number;
+}
+
 export interface QualityInspection {
   id: string;
   inspection_no: string;
