@@ -10,11 +10,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { MeltRecord, MeltMaterial, MeltChemistry, SampleStage } from '@/lib/types';
 import {
   getMeltRecords, createMeltRecord, updateMeltRecord, deleteMeltRecord,
-  getMeltMaterials, createMeltMaterial, updateMeltMaterial, deleteMeltMaterial,
-  getMeltChemistry, createMeltChemistry, updateMeltChemistry, deleteMeltChemistry,
+  getMeltMaterials, createMeltMaterial, deleteMeltMaterial,
+  getMeltChemistry, createMeltChemistry, deleteMeltChemistry,
   recalcMeltRecord,
 } from '@/lib/store';
-import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText } from 'lucide-react';
+import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const SAMPLE_STAGE_LABELS: Record<SampleStage, string> = {
@@ -25,20 +25,46 @@ const SAMPLE_STAGE_LABELS: Record<SampleStage, string> = {
 
 const CHEMISTRY_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu', 'Fe'] as const;
 
-const DEFAULT_MATERIALS = [
-  { raw_material: '回爐料', charge_weight: 1200, secondary_weight: 0 },
-  { raw_material: '廢鐵', charge_weight: 500, secondary_weight: 0 },
-  { raw_material: '矽鐵', charge_weight: 30, secondary_weight: 10 },
-  { raw_material: '高碳錳鐵', charge_weight: 20, secondary_weight: 5 },
-  { raw_material: '增碳劑', charge_weight: 10, secondary_weight: 5 },
-  { raw_material: '純鎳', charge_weight: 80, secondary_weight: 10 },
-  { raw_material: '430', charge_weight: 0, secondary_weight: 0 },
-  { raw_material: '鉬鐵', charge_weight: 0, secondary_weight: 0 },
-];
-
 const MATERIAL_OPTIONS = ['回爐料', '廢鐵', '矽鐵', '高碳錳鐵', '增碳劑', '純鎳', '430', '鉬鐵', '廢鋼', 'FeSi', 'FeMn', 'FeCr', 'FeMo', '生鐵', '不鏽鋼廢料'];
 
-const FURNACE_OPTIONS = ['F-01', 'F-02', 'F-03'];
+const FURNACE_OPTIONS = ['1-1', '1-2', '1-3', '1-4', '2-1', '2-2', '2-3', '2-4', '3-1', '3-2', '3-3', '3-4', '3-5'];
+
+// === Preset Recipe Types & Storage ===
+interface PresetRecipe {
+  id: string;
+  name: string;
+  materials: Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>;
+  created_at: string;
+}
+
+const PRESET_RECIPES_KEY = 'melt_preset_recipes';
+
+function getPresetRecipes(): PresetRecipe[] {
+  const data = localStorage.getItem(PRESET_RECIPES_KEY);
+  return data ? JSON.parse(data) : [];
+}
+
+function savePresetRecipes(recipes: PresetRecipe[]) {
+  localStorage.setItem(PRESET_RECIPES_KEY, JSON.stringify(recipes));
+}
+
+function createPresetRecipe(name: string, materials: Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>): PresetRecipe {
+  const recipes = getPresetRecipes();
+  const newRecipe: PresetRecipe = {
+    id: crypto.randomUUID(),
+    name,
+    materials,
+    created_at: new Date().toISOString(),
+  };
+  recipes.push(newRecipe);
+  savePresetRecipes(recipes);
+  return newRecipe;
+}
+
+function deletePresetRecipe(id: string) {
+  const recipes = getPresetRecipes().filter(r => r.id !== id);
+  savePresetRecipes(recipes);
+}
 
 export default function MeltingManagement() {
   const [records, setRecords] = useState<MeltRecord[]>([]);
@@ -48,6 +74,7 @@ export default function MeltingManagement() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMaterial, setFilterMaterial] = useState('');
   const [filterFurnace, setFilterFurnace] = useState('');
+  const [showPresetManager, setShowPresetManager] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -135,6 +162,9 @@ export default function MeltingManagement() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">熔解管理</h1>
           <div className="flex flex-wrap gap-2">
+            <Button onClick={() => setShowPresetManager(true)} variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 text-xs h-8">
+              <Settings className="w-3.5 h-3.5 mr-1" />預設配比
+            </Button>
             <Button onClick={handleCopyLast} variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 text-xs h-8">
               <Copy className="w-3.5 h-3.5 mr-1" />複製上一爐
             </Button>
@@ -208,6 +238,12 @@ export default function MeltingManagement() {
           onSaved={() => { refreshRecords(); }}
           onSavedAndNew={() => { refreshRecords(); setEditingRecord(null); }}
           existingMaterials={uniqueMaterials}
+        />
+
+        {/* Preset Recipe Manager Dialog */}
+        <PresetRecipeManager
+          open={showPresetManager}
+          onOpenChange={setShowPresetManager}
         />
       </div>
     </AppLayout>
@@ -308,6 +344,150 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
   );
 }
 
+// === Preset Recipe Manager ===
+function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [recipes, setRecipes] = useState<PresetRecipe[]>([]);
+  const [isAdding, setIsAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newMaterials, setNewMaterials] = useState<Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>>([]);
+  const [addRow, setAddRow] = useState({ raw_material: '', charge_weight: 0, secondary_weight: 0, custom: '' });
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (open) setRecipes(getPresetRecipes());
+  }, [open]);
+
+  const handleAddMaterialRow = () => {
+    const name = addRow.raw_material === '__custom__' ? addRow.custom : addRow.raw_material;
+    if (!name) { toast({ title: '請選擇或輸入原料', variant: 'destructive' }); return; }
+    setNewMaterials([...newMaterials, { raw_material: name, charge_weight: addRow.charge_weight, secondary_weight: addRow.secondary_weight }]);
+    setAddRow({ raw_material: '', charge_weight: 0, secondary_weight: 0, custom: '' });
+  };
+
+  const handleSaveRecipe = () => {
+    if (!newName.trim()) { toast({ title: '請輸入配比名稱', variant: 'destructive' }); return; }
+    if (newMaterials.length === 0) { toast({ title: '請至少新增一項原料', variant: 'destructive' }); return; }
+    createPresetRecipe(newName.trim(), newMaterials);
+    setRecipes(getPresetRecipes());
+    setNewName('');
+    setNewMaterials([]);
+    setIsAdding(false);
+    toast({ title: '預設配比已建立' });
+  };
+
+  const handleDeleteRecipe = (id: string) => {
+    if (!window.confirm('確定要刪除此預設配比？')) return;
+    deletePresetRecipe(id);
+    setRecipes(getPresetRecipes());
+    toast({ title: '預設配比已刪除' });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="bg-zinc-800 border-zinc-700 max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-zinc-100 flex items-center gap-2">
+            <Package className="w-5 h-5 text-blue-400" />
+            預設投料配比管理
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Existing Recipes */}
+          {recipes.length === 0 && !isAdding && (
+            <p className="text-sm text-zinc-400 text-center py-4">尚無預設配比，點擊下方按鈕新增</p>
+          )}
+
+          {recipes.map(recipe => (
+            <Card key={recipe.id} className="bg-zinc-700/30 border-zinc-700">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-amber-400">{recipe.name}</span>
+                  <Button size="sm" variant="ghost" onClick={() => handleDeleteRecipe(recipe.id)} className="text-zinc-400 hover:text-red-400 h-6 w-6 p-0">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1">原料</th><th className="text-right py-1">首次(kg)</th><th className="text-right py-1">二次(kg)</th><th className="text-right py-1">小計</th></tr></thead>
+                    <tbody>
+                      {recipe.materials.map((m, i) => (
+                        <tr key={i} className="text-zinc-300 border-b border-zinc-700/50"><td className="py-1">{m.raw_material}</td><td className="text-right py-1">{m.charge_weight}</td><td className="text-right py-1">{m.secondary_weight}</td><td className="text-right py-1 font-medium">{m.charge_weight + m.secondary_weight}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-zinc-500 mt-1">總重: {recipe.materials.reduce((s, m) => s + m.charge_weight + m.secondary_weight, 0)} kg</p>
+              </CardContent>
+            </Card>
+          ))}
+
+          {/* Add New Recipe */}
+          {isAdding ? (
+            <Card className="bg-zinc-700/20 border-zinc-600 border-dashed">
+              <CardContent className="p-3 space-y-3">
+                <div>
+                  <Label className="text-zinc-400 text-xs">配比名稱 *</Label>
+                  <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="例: SCM440 標準配比" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
+                </div>
+
+                {newMaterials.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1">原料</th><th className="text-right py-1">首次(kg)</th><th className="text-right py-1">二次(kg)</th><th className="text-right py-1">小計</th><th className="w-6"></th></tr></thead>
+                      <tbody>
+                        {newMaterials.map((m, i) => (
+                          <tr key={i} className="text-zinc-300 border-b border-zinc-700/50">
+                            <td className="py-1">{m.raw_material}</td>
+                            <td className="text-right py-1">{m.charge_weight}</td>
+                            <td className="text-right py-1">{m.secondary_weight}</td>
+                            <td className="text-right py-1 font-medium">{m.charge_weight + m.secondary_weight}</td>
+                            <td className="py-1"><Button size="sm" variant="ghost" onClick={() => setNewMaterials(newMaterials.filter((_, idx) => idx !== i))} className="text-zinc-400 hover:text-red-400 h-5 w-5 p-0"><Trash2 className="w-3 h-3" /></Button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Add material to recipe */}
+                <div className="flex flex-col sm:flex-row gap-2 items-end">
+                  <div className="flex-1">
+                    <Select value={addRow.raw_material} onValueChange={v => setAddRow({ ...addRow, raw_material: v })}>
+                      <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs"><SelectValue placeholder="選擇原料" /></SelectTrigger>
+                      <SelectContent className="bg-zinc-700 border-zinc-600">
+                        {MATERIAL_OPTIONS.map(m => (<SelectItem key={m} value={m} className="text-zinc-100">{m}</SelectItem>))}
+                        <SelectItem value="__custom__" className="text-zinc-100">自行輸入</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {addRow.raw_material === '__custom__' && (
+                      <Input value={addRow.custom} onChange={e => setAddRow({ ...addRow, custom: e.target.value })} placeholder="原料名稱" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs mt-1" />
+                    )}
+                  </div>
+                  <Input type="number" min="0" value={addRow.charge_weight || ''} onChange={e => setAddRow({ ...addRow, charge_weight: Math.max(0, Number(e.target.value)) })} placeholder="首次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-24" />
+                  <Input type="number" min="0" value={addRow.secondary_weight || ''} onChange={e => setAddRow({ ...addRow, secondary_weight: Math.max(0, Number(e.target.value)) })} placeholder="二次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-24" />
+                  <Button size="sm" onClick={handleAddMaterialRow} className="bg-blue-500 hover:bg-blue-600 text-white h-7 text-xs">
+                    <Plus className="w-3 h-3 mr-1" />加入
+                  </Button>
+                </div>
+
+                <div className="flex gap-2 justify-end">
+                  <Button size="sm" variant="ghost" onClick={() => { setIsAdding(false); setNewName(''); setNewMaterials([]); }} className="text-zinc-400 h-7 text-xs">取消</Button>
+                  <Button size="sm" onClick={handleSaveRecipe} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-7 text-xs">儲存配比</Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Button onClick={() => setIsAdding(true)} variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 w-full h-9">
+              <Plus className="w-4 h-4 mr-2" />新增預設配比
+            </Button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // === Single Page Form Dialog (No Tabs) ===
 function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew, existingMaterials }: {
   open: boolean;
@@ -350,9 +530,13 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
   const [materialsOpen, setMaterialsOpen] = useState(true);
   const [chemistryOpen, setChemistryOpen] = useState(true);
 
+  // Preset recipes
+  const [presetRecipes, setPresetRecipes] = useState<PresetRecipe[]>([]);
+
   // Load data when dialog opens
   useEffect(() => {
     if (open) {
+      setPresetRecipes(getPresetRecipes());
       if (editRecord) {
         setForm({
           melt_date: editRecord.melt_date,
@@ -365,10 +549,8 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
           created_by: editRecord.created_by,
           remark: editRecord.remark,
         });
-        // Load materials
         const mats = getMeltMaterials(editRecord.id);
         setMaterials(mats.map(m => ({ id: m.id, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight })));
-        // Load chemistry
         const chem = getMeltChemistry(editRecord.id);
         const newChemRows: Record<SampleStage, Record<string, number>> = {
           TARGET: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
@@ -409,17 +591,23 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
 
   const validateTime = (startTime: string, tapTime: string): boolean => {
     if (!startTime || !tapTime) { setTimeError(''); return true; }
-    const start = new Date(startTime).getTime();
-    const end = new Date(tapTime).getTime();
+    const start = new Date(`2000-01-01T${startTime}`).getTime();
+    const end = new Date(`2000-01-01T${tapTime}`).getTime();
     if (end <= start) { setTimeError('出湯時間不可早於或等於開始送電時間'); return false; }
     setTimeError('');
     return true;
   };
 
   // Calculated fields
-  const meltMinutes = (form.power_start_time && form.tap_time && !timeError)
-    ? Math.round((new Date(form.tap_time).getTime() - new Date(form.power_start_time).getTime()) / 60000)
-    : 0;
+  const calcMeltMinutes = (): number => {
+    if (!form.power_start_time || !form.tap_time || timeError) return 0;
+    const [sh, sm] = form.power_start_time.split(':').map(Number);
+    const [eh, em] = form.tap_time.split(':').map(Number);
+    let diff = (eh * 60 + em) - (sh * 60 + sm);
+    if (diff < 0) diff += 24 * 60; // cross midnight
+    return diff;
+  };
+  const meltMinutes = calcMeltMinutes();
   const totalChargeWeight = materials.reduce((s, m) => s + m.charge_weight + m.secondary_weight, 0);
   const specificEnergy = totalChargeWeight > 0 ? Math.round((form.power_kwh / totalChargeWeight) * 1000) / 1000 : 0;
 
@@ -436,10 +624,11 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
     setNewMaterialRow({ raw_material: '', charge_weight: 0, secondary_weight: 0, custom: '' });
   };
 
-  const loadDefaults = () => {
-    const defaults = DEFAULT_MATERIALS.filter(d => d.charge_weight > 0 || d.secondary_weight > 0)
-      .map(d => ({ raw_material: d.raw_material, charge_weight: d.charge_weight, secondary_weight: d.secondary_weight }));
-    setMaterials([...materials, ...defaults]);
+  const loadPresetRecipe = (recipeId: string) => {
+    const recipe = presetRecipes.find(r => r.id === recipeId);
+    if (!recipe) return;
+    setMaterials([...materials, ...recipe.materials.map(m => ({ raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight }))]);
+    toast({ title: `已載入配比「${recipe.name}」` });
   };
 
   const removeMaterialRow = (idx: number) => {
@@ -466,7 +655,6 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
     let recordId: string;
 
     if (isEdit && editRecord) {
-      // Update existing record
       updateMeltRecord(editRecord.id, {
         melt_date: form.melt_date,
         material_grade: form.material_grade,
@@ -479,15 +667,11 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
         remark: form.remark,
       });
       recordId = editRecord.id;
-
-      // Delete old materials and re-create
       const oldMats = getMeltMaterials(recordId);
       oldMats.forEach(m => deleteMeltMaterial(m.id));
-      // Delete old chemistry and re-create
       const oldChem = getMeltChemistry(recordId);
       oldChem.forEach(c => deleteMeltChemistry(c.id));
     } else {
-      // Create new record
       const newRec = createMeltRecord({
         melt_date: form.melt_date,
         material_grade: form.material_grade,
@@ -502,12 +686,10 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
       recordId = newRec.id;
     }
 
-    // Save materials
     materials.forEach(m => {
       createMeltMaterial({ melt_id: recordId, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
     });
 
-    // Save chemistry (only rows with data)
     const stages: SampleStage[] = ['TARGET', 'IN_FURNACE', 'AFTER_FURNACE'];
     stages.forEach(stage => {
       const row = chemRows[stage];
@@ -525,9 +707,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
       }
     });
 
-    // Recalculate
     recalcMeltRecord(recordId);
-
     toast({ title: isEdit ? '熔解紀錄已更新' : '熔解紀錄已建立' });
 
     if (andNew) {
@@ -580,12 +760,12 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
                   <Input type="number" value={form.tap_temp || ''} onChange={e => setForm({ ...form, tap_temp: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" placeholder="1600" />
                 </div>
                 <div>
-                  <Label className="text-zinc-400 text-xs">開始送電時間 *</Label>
-                  <Input type="datetime-local" value={form.power_start_time} onChange={e => { setForm({ ...form, power_start_time: e.target.value }); validateTime(e.target.value, form.tap_time); }} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
+                  <Label className="text-zinc-400 text-xs">開始送電時間 * (24小時制)</Label>
+                  <Input type="time" value={form.power_start_time} onChange={e => { setForm({ ...form, power_start_time: e.target.value }); validateTime(e.target.value, form.tap_time); }} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
                 </div>
                 <div>
-                  <Label className="text-zinc-400 text-xs">出湯時間 *</Label>
-                  <Input type="datetime-local" value={form.tap_time} onChange={e => { setForm({ ...form, tap_time: e.target.value }); validateTime(form.power_start_time, e.target.value); }} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
+                  <Label className="text-zinc-400 text-xs">出湯時間 * (24小時制)</Label>
+                  <Input type="time" value={form.tap_time} onChange={e => { setForm({ ...form, tap_time: e.target.value }); validateTime(form.power_start_time, e.target.value); }} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
                 </div>
               </div>
               {timeError && <p className="text-xs text-red-400 mt-2">⚠️ {timeError}</p>}
@@ -639,6 +819,19 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <CardContent className="p-3 pt-0 space-y-2">
+                  {/* Load preset recipe */}
+                  {presetRecipes.length > 0 && (
+                    <div className="flex items-center gap-2 mb-2">
+                      <Label className="text-zinc-400 text-xs whitespace-nowrap">載入配比：</Label>
+                      <Select onValueChange={loadPresetRecipe}>
+                        <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs flex-1"><SelectValue placeholder="選擇預設配比" /></SelectTrigger>
+                        <SelectContent className="bg-zinc-700 border-zinc-600">
+                          {presetRecipes.map(r => (<SelectItem key={r.id} value={r.id} className="text-zinc-100">{r.name} ({r.materials.length}項)</SelectItem>))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
                   {/* Materials table */}
                   {materials.length > 0 && (
                     <div className="overflow-x-auto">
@@ -698,12 +891,6 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
                       <Plus className="w-3 h-3 mr-1" />新增
                     </Button>
                   </div>
-
-                  {materials.length === 0 && (
-                    <Button size="sm" onClick={loadDefaults} variant="outline" className="border-zinc-600 text-zinc-300 h-7 text-xs w-full">
-                      載入預設投料
-                    </Button>
-                  )}
                 </CardContent>
               </CollapsibleContent>
             </Card>
