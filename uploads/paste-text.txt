@@ -1,0 +1,449 @@
+以下是一份可直接貼到 **Lovable** 的需求規格（Prompt），目標是在既有 **生產管理系統 → 熔解管理模組** 基礎上新增 **熔解 KPI Dashboard**。
+
+---
+
+# 專案名稱
+
+新增「熔解管理 KPI 看板（Melting KPI Dashboard）」
+
+---
+
+# 功能目標
+
+在既有熔解紀錄模組資料基礎上，自動計算並視覺化以下 KPI：
+
+1. 每爐 kWh/kg 趨勢
+2. 材質別平均能耗
+3. 爐號效率排行
+4. 成份命中率
+5. 二次添加率
+6. 熔解時間異常警示
+
+系統需支援：
+
+* Web
+* Mobile
+* 即時刷新
+* 日期篩選
+* 材質篩選
+* 爐號篩選
+* 匯出 Excel／PDF
+
+---
+
+# 資料來源
+
+## Table：melt_records
+
+```sql
+id
+melt_date
+material_grade
+furnace_no
+power_kwh
+power_start_time
+tap_time
+melt_minutes
+tap_temp
+total_charge_weight
+specific_energy
+```
+
+---
+
+## Table：melt_materials
+
+```sql
+id
+melt_id
+raw_material
+charge_weight
+secondary_weight
+subtotal
+```
+
+---
+
+## Table：melt_chemistry
+
+```sql
+id
+melt_id
+sample_stage
+
+C
+Si
+Mn
+P
+S
+Ni
+Cr
+Mo
+Cu
+Fe
+```
+
+sample_stage：
+
+```text
+TARGET
+IN_FURNACE
+AFTER_FURNACE
+```
+
+---
+
+# KPI 1：每爐 kWh/kg 趨勢
+
+目的：
+觀察熔解效率變化。
+
+公式：
+
+```text
+kWh/kg =
+power_kwh
+÷
+total_charge_weight
+```
+
+顯示：
+
+```text
+折線圖
+X=日期
+Y=kWh/kg
+```
+
+功能：
+
+* 點擊查看該爐詳細資訊
+* 顯示平均線
+* 顯示近30日趨勢
+
+異常條件：
+
+```text
+高於近30日平均10%
+標示紅色
+```
+
+---
+
+# KPI 2：材質別平均能耗
+
+目的：
+
+比較不同材質耗電差異。
+
+公式：
+
+```text
+AVG(power_kwh/total_charge_weight)
+GROUP BY material_grade
+```
+
+顯示：
+
+```text
+長條圖
+```
+
+欄位：
+
+```text
+材質
+平均能耗
+最高
+最低
+爐數
+```
+
+排序：
+
+```text
+高→低
+```
+
+---
+
+# KPI 3：爐號效率排行
+
+目的：
+
+分析各熔解爐效率。
+
+公式：
+
+```text
+平均能耗=
+AVG(kWh/kg)
+```
+
+顯示：
+
+```text
+排行榜
+```
+
+欄位：
+
+```text
+排名
+爐號
+熔解次數
+平均kWh/kg
+平均熔解時間
+```
+
+標示：
+
+```text
+TOP3 綠色
+BOTTOM3 紅色
+```
+
+---
+
+# KPI 4：成份命中率
+
+目的：
+
+分析出爐成份與目標差異。
+
+比較：
+
+```text
+TARGET
+VS
+AFTER_FURNACE
+```
+
+計算：
+
+元素逐項比較：
+
+ABS(
+實際−目標
+)
+
+若在允收範圍：
+
+命中
+
+否則：
+
+未命中
+
+預設允收：
+
+```text
+C ±0.03
+Si ±0.05
+Mn ±0.05
+P ±0.01
+S ±0.01
+Ni ±0.20
+Cr ±0.20
+Mo ±0.05
+Cu ±0.05
+Fe 自動平衡
+```
+
+公式：
+
+```text
+命中率=
+命中元素數
+/
+總元素數
+×100
+```
+
+顯示：
+
+```text
+儀表板
+百分比
+```
+
+附：
+
+元素差異熱圖。
+
+---
+
+# KPI 5：二次添加率
+
+目的：
+
+評估配料穩定性。
+
+公式：
+
+```text
+二次添加率=
+SUM(secondary_weight)
+/
+SUM(charge_weight)
+×100
+```
+
+顯示：
+
+```text
+圓餅圖
+```
+
+附表：
+
+```text
+材質
+二次添加率
+平均補料量
+```
+
+警示：
+
+```text
+>8%
+顯示異常
+```
+
+---
+
+# KPI 6：熔解時間異常警示
+
+目的：
+
+找出效率異常。
+
+公式：
+
+```text
+熔解時間=
+tap_time
+-
+power_start_time
+```
+
+基準：
+
+```text
+同材質近30爐平均
+```
+
+警示：
+
+```text
+超過平均15%
+
+標示異常
+```
+
+顯示：
+
+```text
+日期
+爐號
+材質
+實際時間
+標準時間
+偏差%
+```
+
+支援：
+
+```text
+通知
+Email
+APP推播
+```
+
+---
+
+# Dashboard 首頁配置
+
+```text
+第一列
+KPI卡片
+①平均kWh/kg
+②平均熔解時間
+③成份命中率
+④二次添加率
+
+第二列
+每爐能耗趨勢
+材質能耗比較
+
+第三列
+爐號排行
+異常警示
+
+第四列
+成份熱圖
+```
+
+---
+
+# 篩選條件
+
+```text
+日期區間
+材質
+爐號
+操作員
+產品
+```
+
+---
+
+# API
+
+```text
+GET /dashboard/melting
+
+GET /dashboard/energy
+
+GET /dashboard/chemistry
+
+GET /dashboard/alerts
+```
+
+---
+
+# 技術要求
+
+```text
+Frontend:
+Next.js
+TypeScript
+Tailwind
+
+Backend:
+Supabase
+
+Chart:
+Recharts
+
+Auth:
+Role Permission
+
+Admin
+主管
+生管
+品保
+```
+
+---
+
+# 完成標準
+
+```text
+所有 KPI 自動更新
+可手機查看
+支援 Excel/PDF 匯出
+頁面載入<3秒
+```
+
+請依此規格直接建立資料表、API、Dashboard UI、計算邏輯與權限控制。
