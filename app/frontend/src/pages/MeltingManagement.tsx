@@ -446,6 +446,8 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
   const [newName, setNewName] = useState('');
   const [newMaterials, setNewMaterials] = useState<Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>>([]);
   const [addRow, setAddRow] = useState({ raw_material: '', charge_weight: 0, secondary_weight: 0, custom: '' });
+  const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
+  const [editingMaterials, setEditingMaterials] = useState<Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>>([]);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -477,6 +479,36 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
     toast({ title: '預設配比已刪除' });
   };
 
+  const handleStartEdit = (recipe: PresetRecipe) => {
+    setEditingRecipeId(recipe.id);
+    setEditingMaterials(recipe.materials.map(m => ({ ...m })));
+  };
+
+  const handleCancelEdit = () => {
+    setEditingRecipeId(null);
+    setEditingMaterials([]);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingRecipeId) return;
+    const allRecipes = getPresetRecipes();
+    const idx = allRecipes.findIndex(r => r.id === editingRecipeId);
+    if (idx >= 0) {
+      allRecipes[idx].materials = editingMaterials;
+      savePresetRecipes(allRecipes);
+      setRecipes(allRecipes);
+      toast({ title: '配比已更新' });
+    }
+    setEditingRecipeId(null);
+    setEditingMaterials([]);
+  };
+
+  const handleEditMaterialChange = (index: number, field: 'charge_weight' | 'secondary_weight', value: number) => {
+    const updated = [...editingMaterials];
+    updated[index] = { ...updated[index], [field]: value };
+    setEditingMaterials(updated);
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-zinc-800 border-zinc-700 max-w-2xl max-h-[85vh] overflow-y-auto">
@@ -498,21 +530,50 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
               <CardContent className="p-3">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium text-amber-400">{recipe.name}</span>
-                  <Button size="sm" variant="ghost" onClick={() => handleDeleteRecipe(recipe.id)} className="text-zinc-400 hover:text-red-400 h-6 w-6 p-0">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    {editingRecipeId === recipe.id ? (
+                      <>
+                        <Button size="sm" variant="ghost" onClick={handleCancelEdit} className="text-zinc-400 hover:text-zinc-200 h-6 px-2 text-xs">取消</Button>
+                        <Button size="sm" onClick={handleSaveEdit} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-6 px-2 text-xs">儲存</Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button size="sm" variant="ghost" onClick={() => handleStartEdit(recipe)} className="text-zinc-400 hover:text-blue-400 h-6 w-6 p-0">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => handleDeleteRecipe(recipe.id)} className="text-zinc-400 hover:text-red-400 h-6 w-6 p-0">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1">原料</th><th className="text-right py-1">首次(kg)</th><th className="text-right py-1">二次(kg)</th><th className="text-right py-1">小計</th></tr></thead>
                     <tbody>
-                      {recipe.materials.map((m, i) => (
-                        <tr key={i} className="text-zinc-300 border-b border-zinc-700/50"><td className="py-1">{m.raw_material}</td><td className="text-right py-1">{m.charge_weight}</td><td className="text-right py-1">{m.secondary_weight}</td><td className="text-right py-1 font-medium">{m.charge_weight + m.secondary_weight}</td></tr>
-                      ))}
+                      {editingRecipeId === recipe.id ? (
+                        editingMaterials.map((m, i) => (
+                          <tr key={i} className="text-zinc-300 border-b border-zinc-700/50">
+                            <td className="py-1">{m.raw_material}</td>
+                            <td className="text-right py-1">
+                              <Input type="number" min="0" value={m.charge_weight || ''} onChange={e => handleEditMaterialChange(i, 'charge_weight', Math.max(0, Number(e.target.value)))} className="bg-zinc-600 border-zinc-500 text-zinc-100 h-6 text-xs w-20 ml-auto text-right" />
+                            </td>
+                            <td className="text-right py-1">
+                              <Input type="number" min="0" value={m.secondary_weight || ''} onChange={e => handleEditMaterialChange(i, 'secondary_weight', Math.max(0, Number(e.target.value)))} className="bg-zinc-600 border-zinc-500 text-zinc-100 h-6 text-xs w-20 ml-auto text-right" />
+                            </td>
+                            <td className="text-right py-1 font-medium">{m.charge_weight + m.secondary_weight}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        recipe.materials.map((m, i) => (
+                          <tr key={i} className="text-zinc-300 border-b border-zinc-700/50"><td className="py-1">{m.raw_material}</td><td className="text-right py-1">{m.charge_weight}</td><td className="text-right py-1">{m.secondary_weight}</td><td className="text-right py-1 font-medium">{m.charge_weight + m.secondary_weight}</td></tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-zinc-500 mt-1">總重: {recipe.materials.reduce((s, m) => s + m.charge_weight + m.secondary_weight, 0)} kg</p>
+                <p className="text-xs text-zinc-500 mt-1">總重: {editingRecipeId === recipe.id ? editingMaterials.reduce((s, m) => s + m.charge_weight + m.secondary_weight, 0) : recipe.materials.reduce((s, m) => s + m.charge_weight + m.secondary_weight, 0)} kg</p>
               </CardContent>
             </Card>
           ))}
