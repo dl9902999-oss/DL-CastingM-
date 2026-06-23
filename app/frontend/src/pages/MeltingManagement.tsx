@@ -333,19 +333,33 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                       {[...chemistry].sort((a, b) => { const o: Record<SampleStage, number> = { TARGET: 0, IN_FURNACE: 1, AFTER_FURNACE: 2 }; return o[a.sample_stage] - o[b.sample_stage]; }).map(c => (
                         <tr key={c.id} className="text-zinc-300 border-b border-zinc-700/50">
                           <td className="py-1 pr-2 font-medium">{SAMPLE_STAGE_LABELS[c.sample_stage]}</td>
-                          {CHEMISTRY_ELEMENTS.map(el => (
-                            <td key={el} className="text-right py-1 px-1">
-                              {el === 'Fe' ? (
-                                <span className="text-zinc-500">Bal</span>
-                              ) : c.sample_stage === 'TARGET' && targetRangeData ? (
-                                <span className="text-zinc-300 text-[10px] whitespace-nowrap">
-                                  {(targetRangeData[`${el}_min`] || 0).toFixed(3)}~{(targetRangeData[`${el}_max`] || 0).toFixed(3)}
-                                </span>
-                              ) : (
-                                <span className="text-zinc-300">{(c[el as keyof MeltChemistry] as number)?.toFixed(3) || '0.000'}</span>
-                              )}
-                            </td>
-                          ))}
+                          {CHEMISTRY_ELEMENTS.map(el => {
+                            if (el === 'Fe') return <td key={el} className="text-right py-1 px-1"><span className="text-zinc-500">Bal</span></td>;
+                            if (c.sample_stage === 'TARGET' && targetRangeData) {
+                              return (
+                                <td key={el} className="text-right py-1 px-1">
+                                  <span className="text-zinc-300 text-[10px] whitespace-nowrap">
+                                    {(targetRangeData[`${el}_min`] || 0).toFixed(3)}~{(targetRangeData[`${el}_max`] || 0).toFixed(3)}
+                                  </span>
+                                </td>
+                              );
+                            }
+                            // For IN_FURNACE and AFTER_FURNACE, check against target range
+                            const val = (c[el as keyof MeltChemistry] as number) || 0;
+                            let isOutOfRange = false;
+                            if (targetRangeData && (c.sample_stage === 'IN_FURNACE' || c.sample_stage === 'AFTER_FURNACE')) {
+                              const minVal = targetRangeData[`${el}_min`] || 0;
+                              const maxVal = targetRangeData[`${el}_max`] || 0;
+                              if (minVal > 0 || maxVal > 0) {
+                                isOutOfRange = val < minVal || val > maxVal;
+                              }
+                            }
+                            return (
+                              <td key={el} className="text-right py-1 px-1">
+                                <span className={isOutOfRange ? 'text-red-400 font-bold' : 'text-zinc-300'}>{val.toFixed(3)}</span>
+                              </td>
+                            );
+                          })}
                         </tr>
                       ))}
                     </tbody>
@@ -372,7 +386,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
-                        <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-2">批次</th><th className="text-left py-1 pr-2">客戶</th><th className="text-left py-1 pr-2">品名</th><th className="text-right py-1 pr-2">數量</th><th className="text-right py-1 pr-2">合計澆注(kg)</th><th className="text-right py-1">平均成品率</th></tr></thead>
+                        <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-2">批次</th><th className="text-left py-1 pr-2">客戶</th><th className="text-left py-1 pr-2">品名</th><th className="text-left py-1 pr-2">材質</th><th className="text-right py-1 pr-2">數量</th><th className="text-right py-1 pr-2">預計澆注(kg)</th><th className="text-right py-1 pr-2">合計澆注(kg)</th><th className="text-right py-1">平均成品率</th></tr></thead>
                         <tbody>
                           {pouringData.map(p => {
                             const totalW = p.pouring_weights.reduce((s, w) => s + w, 0);
@@ -384,7 +398,9 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                                 <td className="py-1 pr-2 font-mono text-amber-400">{p.batch_no}</td>
                                 <td className="py-1 pr-2">{p.customer}</td>
                                 <td className="py-1 pr-2">{p.product_name}</td>
+                                <td className="py-1 pr-2">{p.material}</td>
                                 <td className="text-right py-1 pr-2">{p.quantity}</td>
+                                <td className="text-right py-1 pr-2">{p.estimated_weight * p.quantity}</td>
                                 <td className="text-right py-1 pr-2">{totalW}</td>
                                 <td className={`text-right py-1 font-bold ${Number(avgRate) >= 80 ? 'text-green-400' : Number(avgRate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{avgRate}%</td>
                               </tr>
