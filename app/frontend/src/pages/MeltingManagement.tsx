@@ -294,18 +294,6 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
               <span>總投料: <span className="text-zinc-200">{record.total_charge_weight} kg</span></span>
               <span>能耗: <span className={`font-bold ${record.specific_energy > 1 ? 'text-red-400' : 'text-green-400'}`}>{record.specific_energy} kWh/kg</span></span>
               <span className="flex items-center gap-1"><Thermometer className="w-3 h-3" />出爐溫度: <span className="text-zinc-200">{record.tap_temp}℃</span></span>
-              <span>平均實際澆注: <span className="text-zinc-200">{(() => {
-                const pouringKey = `melt_pouring_${record.id}`;
-                const saved = localStorage.getItem(pouringKey);
-                if (!saved) return '-';
-                try {
-                  const data = JSON.parse(saved) as Array<{ pouring_weights: number[] }>;
-                  const allWeights = data.flatMap(p => p.pouring_weights).filter(w => w > 0);
-                  if (allWeights.length === 0) return '-';
-                  const avg = allWeights.reduce((s, w) => s + w, 0) / allWeights.length;
-                  return `${avg.toFixed(1)} kg`;
-                } catch { return '-'; }
-              })()}</span></span>
               <span>建立人: <span className="text-zinc-200">{record.created_by || '-'}</span></span>
             </div>
           </div>
@@ -407,11 +395,15 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
-                        <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-2">批次</th><th className="text-left py-1 pr-2">客戶</th><th className="text-left py-1 pr-2">品名</th><th className="text-left py-1 pr-2">材質</th><th className="text-right py-1 pr-2">數量</th><th className="text-right py-1 pr-2">預估成品重量(kg)</th><th className="text-right py-1 pr-2">預計澆注重量(kg)</th><th className="text-right py-1 pr-2">總澆注重量(kg)</th><th className="text-right py-1">平均成品率</th></tr></thead>
+                        <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-2">批次</th><th className="text-left py-1 pr-2">客戶</th><th className="text-left py-1 pr-2">品名</th><th className="text-left py-1 pr-2">材質</th><th className="text-right py-1 pr-2">數量</th><th className="text-right py-1 pr-2">預估成品重量(kg)</th><th className="text-right py-1 pr-2">預計澆注重量(kg)</th><th className="text-right py-1 pr-2">平均實際澆注重量(kg)</th><th className="text-right py-1 pr-2">總澆注重量(kg)</th><th className="text-right py-1">平均成品率</th></tr></thead>
                         <tbody>
                           {pouringData.map(p => {
                             const totalW = p.pouring_weights.reduce((s, w) => s + w, 0);
                             const estPouringTotal = p.estimated_pouring_weight || 0;
+                            const validWeights = p.pouring_weights.filter(w => w > 0);
+                            const avgActualPouring = validWeights.length > 0
+                              ? (validWeights.reduce((s, w) => s + w, 0) / validWeights.length).toFixed(1)
+                              : '-';
                             const avgRate = totalW > 0 && p.estimated_weight > 0
                               ? ((p.estimated_weight * p.quantity / totalW) * 100).toFixed(1)
                               : '0.0';
@@ -424,6 +416,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                                 <td className="text-right py-1 pr-2">{p.quantity}</td>
                                 <td className="text-right py-1 pr-2">{p.estimated_weight}</td>
                                 <td className="text-right py-1 pr-2">{estPouringTotal || '-'}</td>
+                                <td className="text-right py-1 pr-2">{avgActualPouring}</td>
                                 <td className="text-right py-1 pr-2">{totalW}</td>
                                 <td className={`text-right py-1 font-bold ${Number(avgRate) >= 80 ? 'text-green-400' : Number(avgRate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{avgRate}%</td>
                               </tr>
