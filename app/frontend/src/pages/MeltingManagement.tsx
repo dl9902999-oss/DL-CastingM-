@@ -375,7 +375,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
               try {
                 const pouringData = JSON.parse(savedPouring) as Array<{
                   batch_id: string; batch_no: string; customer: string; product_name: string;
-                  material: string; quantity: number; estimated_weight: number; pouring_weights: number[];
+                  material: string; quantity: number; estimated_weight: number; estimated_pouring_weight?: number; pouring_weights: number[];
                 }>;
                 if (pouringData.length === 0) return null;
                 return (
@@ -386,10 +386,11 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
-                        <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-2">批次</th><th className="text-left py-1 pr-2">客戶</th><th className="text-left py-1 pr-2">品名</th><th className="text-left py-1 pr-2">材質</th><th className="text-right py-1 pr-2">數量</th><th className="text-right py-1 pr-2">預估重量(kg)</th><th className="text-right py-1 pr-2">預估澆注重量(kg)</th><th className="text-right py-1 pr-2">實際澆注重量(kg)</th><th className="text-right py-1">平均成品率</th></tr></thead>
+                        <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-2">批次</th><th className="text-left py-1 pr-2">客戶</th><th className="text-left py-1 pr-2">品名</th><th className="text-left py-1 pr-2">材質</th><th className="text-right py-1 pr-2">數量</th><th className="text-right py-1 pr-2">預估成品重量(kg)</th><th className="text-right py-1 pr-2">預計澆注重量(kg)</th><th className="text-right py-1 pr-2">總澆注重量(kg)</th><th className="text-right py-1">平均成品率</th></tr></thead>
                         <tbody>
                           {pouringData.map(p => {
                             const totalW = p.pouring_weights.reduce((s, w) => s + w, 0);
+                            const estPouringTotal = (p.estimated_pouring_weight || 0) * p.quantity;
                             const avgRate = totalW > 0 && p.estimated_weight > 0
                               ? ((p.estimated_weight * p.quantity / totalW) * 100).toFixed(1)
                               : '0.0';
@@ -401,7 +402,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                                 <td className="py-1 pr-2">{p.material}</td>
                                 <td className="text-right py-1 pr-2">{p.quantity}</td>
                                 <td className="text-right py-1 pr-2">{p.estimated_weight}</td>
-                                <td className="text-right py-1 pr-2">{p.estimated_weight * p.quantity}</td>
+                                <td className="text-right py-1 pr-2">{estPouringTotal || '-'}</td>
                                 <td className="text-right py-1 pr-2">{totalW}</td>
                                 <td className={`text-right py-1 font-bold ${Number(avgRate) >= 80 ? 'text-green-400' : Number(avgRate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{avgRate}%</td>
                               </tr>
@@ -629,6 +630,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
     material: string;
     quantity: number;
     estimated_weight: number;
+    estimated_pouring_weight: number;
     pouring_weights: number[];
   }>>([]);
 
@@ -1114,6 +1116,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
                                     material: b.material || '',
                                     quantity: b.quantity_planned,
                                     estimated_weight: estWeight,
+                                    estimated_pouring_weight: b.estimated_pouring_weight || 0,
                                     pouring_weights: new Array(b.quantity_planned).fill(0),
                                   }]);
                                   setPouringBatchSearch('');
@@ -1121,7 +1124,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
                                 className="w-full text-left p-1.5 rounded hover:bg-zinc-600 text-xs"
                               >
                                 <span className="font-mono text-amber-400">{b.batch_no}</span>
-                                <span className="text-zinc-400 ml-2">客戶: {b.customer || '-'} | 品名: {b.product_name || '-'} | 材質: {b.material || '-'} | 數量: {b.quantity_planned} | 預估重量: {estWeight}kg</span>
+                                <span className="text-zinc-400 ml-2">客戶: {b.customer || '-'} | 品名: {b.product_name || '-'} | 材質: {b.material || '-'} | 數量: {b.quantity_planned} | 預估成品重量: {estWeight}kg | 預計澆注: {b.estimated_pouring_weight || 0}kg</span>
                               </button>
                             );
                           })}
@@ -1148,7 +1151,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
                               </Button>
                             </div>
                             <div className="text-xs text-zinc-400">
-                              數量: <span className="text-zinc-200">{sp.quantity}</span> | 預估重量: <span className="text-zinc-200">{sp.estimated_weight} kg</span>
+                              數量: <span className="text-zinc-200">{sp.quantity}</span> | 預估成品重量: <span className="text-zinc-200">{sp.estimated_weight} kg</span> | 預計澆注重量: <span className="text-zinc-200">{sp.estimated_pouring_weight} kg</span>
                             </div>
                             <div className="space-y-1">
                               {sp.pouring_weights.map((w, wIdx) => {
@@ -1184,7 +1187,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
                                 : '0.0';
                               return (
                                 <div className="flex gap-3 text-[10px] text-zinc-400 pt-1 border-t border-zinc-600/50">
-                                  <span>合計澆注: <span className="text-zinc-200 font-medium">{totalPouring} kg</span></span>
+                                  <span>總澆注重量: <span className="text-zinc-200 font-medium">{totalPouring} kg</span></span>
                                   <span>平均成品率: <span className={`font-bold ${Number(avgRate) >= 80 ? 'text-green-400' : Number(avgRate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{avgRate}%</span></span>
                                 </div>
                               );
