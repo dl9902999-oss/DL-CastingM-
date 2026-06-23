@@ -7,7 +7,6 @@ import Login from '@/pages/Login';
 import Dashboard from '@/pages/Dashboard';
 import WorkOrders from '@/pages/WorkOrders';
 import Molding from '@/pages/Molding';
-import Melting from '@/pages/Melting';
 import MeltingManagement from '@/pages/MeltingManagement';
 import Quality from '@/pages/Quality';
 import WarehousePage from '@/pages/WarehousePage';
@@ -37,7 +36,6 @@ const AppRoutes = () => (
     <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
     <Route path="/work-orders" element={<ProtectedRoute><WorkOrders /></ProtectedRoute>} />
     <Route path="/molding" element={<ProtectedRoute><Molding /></ProtectedRoute>} />
-    <Route path="/melting" element={<ProtectedRoute><Melting /></ProtectedRoute>} />
     <Route path="/melting-management" element={<ProtectedRoute><MeltingManagement /></ProtectedRoute>} />
     <Route path="/quality" element={<ProtectedRoute><Quality /></ProtectedRoute>} />
     <Route path="/warehouse" element={<ProtectedRoute><WarehousePage /></ProtectedRoute>} />

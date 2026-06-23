@@ -7,12 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { MeltRecord, MeltMaterial, MeltChemistry, SampleStage } from '@/lib/types';
+import { MeltRecord, MeltMaterial, MeltChemistry, SampleStage, MoldingBatch, WorkOrder } from '@/lib/types';
 import {
   getMeltRecords, createMeltRecord, updateMeltRecord, deleteMeltRecord,
   getMeltMaterials, createMeltMaterial, deleteMeltMaterial,
   getMeltChemistry, createMeltChemistry, deleteMeltChemistry,
   recalcMeltRecord, getMeltTargetRange, saveMeltTargetRange,
+  getMoldingBatches, getWorkOrders,
 } from '@/lib/store';
 import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -175,7 +176,7 @@ export default function MeltingManagement() {
               <FileText className="w-3.5 h-3.5 mr-1" />列印
             </Button>
             <Button onClick={() => { setEditingRecord(null); setIsFormOpen(true); }} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 text-xs h-8">
-              <Plus className="w-3.5 h-3.5 mr-1" />新增熔解
+              <Plus className="w-3.5 h-3.5 mr-1" />新增熔解批次
             </Button>
           </div>
         </div>
@@ -352,6 +353,50 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                 </div>
               )}
             </div>
+            {/* Pouring summary */}
+            {(() => {
+              const pouringKey = `melt_pouring_${record.id}`;
+              const savedPouring = localStorage.getItem(pouringKey);
+              if (!savedPouring) return null;
+              try {
+                const pouringData = JSON.parse(savedPouring) as Array<{
+                  batch_id: string; batch_no: string; customer: string; product_name: string;
+                  material: string; quantity: number; estimated_weight: number; pouring_weights: number[];
+                }>;
+                if (pouringData.length === 0) return null;
+                return (
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Flame className="w-3.5 h-3.5 text-orange-400" />
+                      <span className="text-xs font-medium text-zinc-300">澆注紀錄 ({pouringData.length} 批次)</span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-2">批次</th><th className="text-left py-1 pr-2">客戶</th><th className="text-left py-1 pr-2">品名</th><th className="text-right py-1 pr-2">數量</th><th className="text-right py-1 pr-2">合計澆注(kg)</th><th className="text-right py-1">平均成品率</th></tr></thead>
+                        <tbody>
+                          {pouringData.map(p => {
+                            const totalW = p.pouring_weights.reduce((s, w) => s + w, 0);
+                            const avgRate = totalW > 0 && p.estimated_weight > 0
+                              ? ((p.estimated_weight * p.quantity / totalW) * 100).toFixed(1)
+                              : '0.0';
+                            return (
+                              <tr key={p.batch_id} className="text-zinc-300 border-b border-zinc-700/50">
+                                <td className="py-1 pr-2 font-mono text-amber-400">{p.batch_no}</td>
+                                <td className="py-1 pr-2">{p.customer}</td>
+                                <td className="py-1 pr-2">{p.product_name}</td>
+                                <td className="text-right py-1 pr-2">{p.quantity}</td>
+                                <td className="text-right py-1 pr-2">{totalW}</td>
+                                <td className={`text-right py-1 font-bold ${Number(avgRate) >= 80 ? 'text-green-400' : Number(avgRate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{avgRate}%</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              } catch { return null; }
+            })()}
             {record.remark && <p className="text-xs text-zinc-400">備註: {record.remark}</p>}
           </div>
         )}
@@ -550,15 +595,41 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
   // Collapsible states
   const [materialsOpen, setMaterialsOpen] = useState(true);
   const [chemistryOpen, setChemistryOpen] = useState(true);
+  const [pouringOpen, setPouringOpen] = useState(true);
 
   // Preset recipes
   const [presetRecipes, setPresetRecipes] = useState<PresetRecipe[]>([]);
+
+  // Pouring section - select completed molding batches
+  const [allBatches, setAllBatches] = useState<MoldingBatch[]>([]);
+  const [allWorkOrders, setAllWorkOrders] = useState<WorkOrder[]>([]);
+  const [pouringBatchSearch, setPouringBatchSearch] = useState('');
+  const [selectedPouringBatches, setSelectedPouringBatches] = useState<Array<{
+    batch_id: string;
+    batch_no: string;
+    customer: string;
+    product_name: string;
+    material: string;
+    quantity: number;
+    estimated_weight: number;
+    pouring_weights: number[];
+  }>>([]);
 
   // Load data when dialog opens
   useEffect(() => {
     if (open) {
       setPresetRecipes(getPresetRecipes());
+      setAllBatches(getMoldingBatches());
+      setAllWorkOrders(getWorkOrders());
       if (editRecord) {
+        // Load pouring data
+        const pouringKey = `melt_pouring_${editRecord.id}`;
+        const savedPouring = localStorage.getItem(pouringKey);
+        if (savedPouring) {
+          try { setSelectedPouringBatches(JSON.parse(savedPouring)); } catch { setSelectedPouringBatches([]); }
+        } else {
+          setSelectedPouringBatches([]);
+        }
         setForm({
           melt_date: editRecord.melt_date,
           material_grade: editRecord.material_grade,
@@ -631,6 +702,8 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
       IN_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
       AFTER_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
     });
+    setSelectedPouringBatches([]);
+    setPouringBatchSearch('');
     setTimeError('');
   };
 
@@ -772,6 +845,14 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
         });
       }
     });
+
+    // Save pouring batches data
+    const pouringKey = `melt_pouring_${recordId}`;
+    if (selectedPouringBatches.length > 0) {
+      localStorage.setItem(pouringKey, JSON.stringify(selectedPouringBatches));
+    } else {
+      localStorage.removeItem(pouringKey);
+    }
 
     recalcMeltRecord(recordId);
     toast({ title: isEdit ? '熔解紀錄已更新' : '熔解紀錄已建立' });
@@ -962,7 +1043,150 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
             </Card>
           </Collapsible>
 
-          {/* 區塊三：成份紀錄 (Collapsible) */}
+          {/* 區塊三：澆注紀錄 (Collapsible) - Select completed batches */}
+          <Collapsible open={pouringOpen} onOpenChange={setPouringOpen}>
+            <Card className="bg-zinc-700/20 border-zinc-700">
+              <CollapsibleTrigger asChild>
+                <CardHeader className="p-3 pb-2 cursor-pointer hover:bg-zinc-700/30 rounded-t-lg">
+                  <CardTitle className="text-sm text-zinc-300 flex items-center justify-between">
+                    <span className="flex items-center gap-2"><Flame className="w-4 h-4 text-orange-400" />澆注紀錄（已完成造模批次）</span>
+                    {pouringOpen ? <ChevronUp className="w-4 h-4 text-zinc-500" /> : <ChevronDown className="w-4 h-4 text-zinc-500" />}
+                  </CardTitle>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="p-3 pt-0 space-y-3">
+                  {/* Search completed batches */}
+                  <div className="space-y-2">
+                    <Label className="text-zinc-400 text-xs">搜尋已完成造模批次（客戶、材質、品名）</Label>
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1.5 w-3.5 h-3.5 text-zinc-500" />
+                      <Input
+                        value={pouringBatchSearch}
+                        onChange={e => setPouringBatchSearch(e.target.value)}
+                        placeholder="輸入客戶、材質或品名搜尋..."
+                        className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs pl-7"
+                      />
+                    </div>
+                    {pouringBatchSearch && (() => {
+                      const keyword = pouringBatchSearch.toLowerCase();
+                      const completedBatches = allBatches.filter(b =>
+                        b.status === 'Completed' &&
+                        !selectedPouringBatches.some(sp => sp.batch_id === b.id) &&
+                        (
+                          (b.customer || '').toLowerCase().includes(keyword) ||
+                          (b.material || '').toLowerCase().includes(keyword) ||
+                          (b.product_name || '').toLowerCase().includes(keyword) ||
+                          b.batch_no.toLowerCase().includes(keyword)
+                        )
+                      );
+                      return completedBatches.length > 0 ? (
+                        <div className="max-h-32 overflow-y-auto border border-zinc-600 rounded-md p-1 space-y-0.5">
+                          {completedBatches.map(b => {
+                            const wo = allWorkOrders.find(w => w.id === b.work_order_id);
+                            const estWeight = wo?.estimated_weight || 0;
+                            return (
+                              <button
+                                key={b.id}
+                                onClick={() => {
+                                  setSelectedPouringBatches([...selectedPouringBatches, {
+                                    batch_id: b.id,
+                                    batch_no: b.batch_no,
+                                    customer: b.customer || '',
+                                    product_name: b.product_name || '',
+                                    material: b.material || '',
+                                    quantity: b.quantity_planned,
+                                    estimated_weight: estWeight,
+                                    pouring_weights: new Array(b.quantity_planned).fill(0),
+                                  }]);
+                                  setPouringBatchSearch('');
+                                }}
+                                className="w-full text-left p-1.5 rounded hover:bg-zinc-600 text-xs"
+                              >
+                                <span className="font-mono text-amber-400">{b.batch_no}</span>
+                                <span className="text-zinc-400 ml-2">客戶: {b.customer || '-'} | 品名: {b.product_name || '-'} | 材質: {b.material || '-'} | 數量: {b.quantity_planned} | 預估重量: {estWeight}kg</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-zinc-500 p-2 text-center border border-zinc-600 rounded-md">無符合的已完成批次</p>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Selected batches with pouring weight inputs */}
+                  {selectedPouringBatches.length > 0 && (
+                    <div className="space-y-3">
+                      {selectedPouringBatches.map((sp, spIdx) => (
+                        <Card key={sp.batch_id} className="bg-zinc-700/30 border-zinc-600">
+                          <CardContent className="p-2 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs">
+                                <span className="font-mono text-amber-400">{sp.batch_no}</span>
+                                <span className="text-zinc-400 ml-2">客戶: {sp.customer} | 品名: {sp.product_name} | 材質: {sp.material}</span>
+                              </div>
+                              <Button size="sm" variant="ghost" onClick={() => setSelectedPouringBatches(selectedPouringBatches.filter((_, i) => i !== spIdx))} className="text-zinc-400 hover:text-red-400 h-5 w-5 p-0">
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                            <div className="text-xs text-zinc-400">
+                              數量: <span className="text-zinc-200">{sp.quantity}</span> | 預估重量: <span className="text-zinc-200">{sp.estimated_weight} kg</span>
+                            </div>
+                            <div className="space-y-1">
+                              {sp.pouring_weights.map((w, wIdx) => {
+                                const yieldRate = w > 0 && sp.estimated_weight > 0 ? ((sp.estimated_weight / w) * 100).toFixed(1) : '0.0';
+                                return (
+                                  <div key={wIdx} className="flex items-center gap-2">
+                                    <span className="text-[10px] text-zinc-400 w-12">第{wIdx + 1}件</span>
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="0.1"
+                                      value={w || ''}
+                                      onChange={e => {
+                                        const updated = [...selectedPouringBatches];
+                                        updated[spIdx].pouring_weights[wIdx] = Math.max(0, Number(e.target.value));
+                                        setSelectedPouringBatches(updated);
+                                      }}
+                                      placeholder="實際澆注(kg)"
+                                      className="bg-zinc-700 border-zinc-600 text-zinc-100 h-6 text-xs w-24"
+                                    />
+                                    <span className={`text-[10px] font-bold ${Number(yieldRate) >= 80 ? 'text-green-400' : Number(yieldRate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>
+                                      成品率: {yieldRate}%
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {/* Summary for this batch */}
+                            {(() => {
+                              const totalPouring = sp.pouring_weights.reduce((s, w) => s + w, 0);
+                              const avgRate = totalPouring > 0 && sp.estimated_weight > 0
+                                ? ((sp.estimated_weight * sp.quantity / totalPouring) * 100).toFixed(1)
+                                : '0.0';
+                              return (
+                                <div className="flex gap-3 text-[10px] text-zinc-400 pt-1 border-t border-zinc-600/50">
+                                  <span>合計澆注: <span className="text-zinc-200 font-medium">{totalPouring} kg</span></span>
+                                  <span>平均成品率: <span className={`font-bold ${Number(avgRate) >= 80 ? 'text-green-400' : Number(avgRate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{avgRate}%</span></span>
+                                </div>
+                              );
+                            })()}
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+
+                  {selectedPouringBatches.length === 0 && (
+                    <p className="text-xs text-zinc-500 text-center py-2">尚未選取批次，請搜尋並選取已完成的造模批次</p>
+                  )}
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+
+          {/* 區塊四：成份紀錄 (Collapsible) */}
           <Collapsible open={chemistryOpen} onOpenChange={setChemistryOpen}>
             <Card className="bg-zinc-700/20 border-zinc-700">
               <CollapsibleTrigger asChild>
