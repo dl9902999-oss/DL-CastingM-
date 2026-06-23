@@ -294,6 +294,18 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
               <span>總投料: <span className="text-zinc-200">{record.total_charge_weight} kg</span></span>
               <span>能耗: <span className={`font-bold ${record.specific_energy > 1 ? 'text-red-400' : 'text-green-400'}`}>{record.specific_energy} kWh/kg</span></span>
               <span className="flex items-center gap-1"><Thermometer className="w-3 h-3" />出爐溫度: <span className="text-zinc-200">{record.tap_temp}℃</span></span>
+              <span>平均實際澆注: <span className="text-zinc-200">{(() => {
+                const pouringKey = `melt_pouring_${record.id}`;
+                const saved = localStorage.getItem(pouringKey);
+                if (!saved) return '-';
+                try {
+                  const data = JSON.parse(saved) as Array<{ pouring_weights: number[] }>;
+                  const allWeights = data.flatMap(p => p.pouring_weights).filter(w => w > 0);
+                  if (allWeights.length === 0) return '-';
+                  const avg = allWeights.reduce((s, w) => s + w, 0) / allWeights.length;
+                  return `${avg.toFixed(1)} kg`;
+                } catch { return '-'; }
+              })()}</span></span>
               <span>建立人: <span className="text-zinc-200">{record.created_by || '-'}</span></span>
             </div>
           </div>
