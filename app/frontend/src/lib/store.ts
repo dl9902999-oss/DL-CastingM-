@@ -17,6 +17,7 @@ const STORAGE_KEYS = {
   MELT_RECORDS: 'foundry_melt_records',
   MELT_MATERIALS: 'foundry_melt_materials',
   MELT_CHEMISTRY: 'foundry_melt_chemistry',
+  MELT_TARGET_RANGES: 'foundry_melt_target_ranges',
 };
 
 function getItems<T>(key: string): T[] {
@@ -607,4 +608,41 @@ export function deleteMeltChemistry(id: string): boolean {
   if (filtered.length === chemistry.length) return false;
   setItems(STORAGE_KEYS.MELT_CHEMISTRY, filtered);
   return true;
+}
+
+// Target Range storage (min/max for TARGET chemistry)
+export interface MeltTargetRange {
+  melt_id: string;
+  [key: string]: number | string; // e.g., C_min, C_max, Si_min, Si_max, ...
+}
+
+export function getMeltTargetRange(meltId: string): Record<string, number> | null {
+  const all = getItems<MeltTargetRange>(STORAGE_KEYS.MELT_TARGET_RANGES);
+  const found = all.find(r => r.melt_id === meltId);
+  if (!found) return null;
+  const result: Record<string, number> = {};
+  Object.keys(found).forEach(k => {
+    if (k !== 'melt_id' && typeof found[k] === 'number') {
+      result[k] = found[k] as number;
+    }
+  });
+  return result;
+}
+
+export function saveMeltTargetRange(meltId: string, range: Record<string, number>): void {
+  const all = getItems<MeltTargetRange>(STORAGE_KEYS.MELT_TARGET_RANGES);
+  const idx = all.findIndex(r => r.melt_id === meltId);
+  const entry: MeltTargetRange = { melt_id: meltId, ...range };
+  if (idx >= 0) {
+    all[idx] = entry;
+  } else {
+    all.push(entry);
+  }
+  setItems(STORAGE_KEYS.MELT_TARGET_RANGES, all);
+}
+
+export function deleteMeltTargetRange(meltId: string): void {
+  const all = getItems<MeltTargetRange>(STORAGE_KEYS.MELT_TARGET_RANGES);
+  const filtered = all.filter(r => r.melt_id !== meltId);
+  setItems(STORAGE_KEYS.MELT_TARGET_RANGES, filtered);
 }

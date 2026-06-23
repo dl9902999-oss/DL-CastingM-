@@ -12,7 +12,7 @@ import {
   getMeltRecords, createMeltRecord, updateMeltRecord, deleteMeltRecord,
   getMeltMaterials, createMeltMaterial, deleteMeltMaterial,
   getMeltChemistry, createMeltChemistry, deleteMeltChemistry,
-  recalcMeltRecord,
+  recalcMeltRecord, getMeltTargetRange, saveMeltTargetRange,
 } from '@/lib/store';
 import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -264,6 +264,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
 }) {
   const materials = getMeltMaterials(record.id);
   const chemistry = getMeltChemistry(record.id);
+  const targetRangeData = expanded ? getMeltTargetRange(record.id) : null;
 
   return (
     <Card className="bg-zinc-800 border-zinc-700">
@@ -329,7 +330,22 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                     <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-2">階段</th>{CHEMISTRY_ELEMENTS.map(el => (<th key={el} className="text-right py-1 px-1">{el}</th>))}</tr></thead>
                     <tbody>
                       {[...chemistry].sort((a, b) => { const o: Record<SampleStage, number> = { TARGET: 0, IN_FURNACE: 1, AFTER_FURNACE: 2 }; return o[a.sample_stage] - o[b.sample_stage]; }).map(c => (
-                        <tr key={c.id} className="text-zinc-300 border-b border-zinc-700/50"><td className="py-1 pr-2 font-medium">{SAMPLE_STAGE_LABELS[c.sample_stage]}</td>{CHEMISTRY_ELEMENTS.map(el => (<td key={el} className="text-right py-1 px-1">{el === 'Fe' ? <span className="text-zinc-500">Bal</span> : (c[el as keyof MeltChemistry] as number)?.toFixed(3)}</td>))}</tr>
+                        <tr key={c.id} className="text-zinc-300 border-b border-zinc-700/50">
+                          <td className="py-1 pr-2 font-medium">{SAMPLE_STAGE_LABELS[c.sample_stage]}</td>
+                          {CHEMISTRY_ELEMENTS.map(el => (
+                            <td key={el} className="text-right py-1 px-1">
+                              {el === 'Fe' ? (
+                                <span className="text-zinc-500">Bal</span>
+                              ) : c.sample_stage === 'TARGET' && targetRangeData ? (
+                                <span className="text-zinc-300 text-[10px] whitespace-nowrap">
+                                  {(targetRangeData[`${el}_min`] || 0).toFixed(3)}~{(targetRangeData[`${el}_max`] || 0).toFixed(3)}
+                                </span>
+                              ) : (
+                                <span className="text-zinc-300">{(c[el as keyof MeltChemistry] as number)?.toFixed(3) || '0.000'}</span>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
                       ))}
                     </tbody>
                   </table>
@@ -518,9 +534,14 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
   const [materials, setMaterials] = useState<Array<{ id?: string; raw_material: string; charge_weight: number; secondary_weight: number }>>([]);
   const [newMaterialRow, setNewMaterialRow] = useState({ raw_material: '', charge_weight: 0, secondary_weight: 0, custom: '' });
 
-  // Chemistry state - always show 3 rows
-  const [chemRows, setChemRows] = useState<Record<SampleStage, Record<string, number>>>({
-    TARGET: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
+  // Chemistry state - TARGET uses min/max range, others use single value
+  // TARGET stores as: { C_min, C_max, Si_min, Si_max, ... }
+  const [targetRange, setTargetRange] = useState<Record<string, number>>({
+    C_min: 0, C_max: 0, Si_min: 0, Si_max: 0, Mn_min: 0, Mn_max: 0,
+    P_min: 0, P_max: 0, S_min: 0, S_max: 0, Ni_min: 0, Ni_max: 0,
+    Cr_min: 0, Cr_max: 0, Mo_min: 0, Mo_max: 0, Cu_min: 0, Cu_max: 0,
+  });
+  const [chemRows, setChemRows] = useState<Record<'IN_FURNACE' | 'AFTER_FURNACE', Record<string, number>>>({
     IN_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
     AFTER_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
   });
@@ -552,15 +573,35 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
         const mats = getMeltMaterials(editRecord.id);
         setMaterials(mats.map(m => ({ id: m.id, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight })));
         const chem = getMeltChemistry(editRecord.id);
-        const newChemRows: Record<SampleStage, Record<string, number>> = {
-          TARGET: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
+        const loadedChemRows: Record<'IN_FURNACE' | 'AFTER_FURNACE', Record<string, number>> = {
           IN_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
           AFTER_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
         };
+        // Try loading target range from dedicated storage first
+        const savedRange = getMeltTargetRange(editRecord.id);
+        let loadedTarget: Record<string, number> = {
+          C_min: 0, C_max: 0, Si_min: 0, Si_max: 0, Mn_min: 0, Mn_max: 0,
+          P_min: 0, P_max: 0, S_min: 0, S_max: 0, Ni_min: 0, Ni_max: 0,
+          Cr_min: 0, Cr_max: 0, Mo_min: 0, Mo_max: 0, Cu_min: 0, Cu_max: 0,
+        };
+        if (savedRange) {
+          loadedTarget = savedRange;
+        }
         chem.forEach(c => {
-          newChemRows[c.sample_stage] = { C: c.C, Si: c.Si, Mn: c.Mn, P: c.P, S: c.S, Ni: c.Ni, Cr: c.Cr, Mo: c.Mo, Cu: c.Cu };
+          if (c.sample_stage === 'TARGET' && !savedRange) {
+            // Fallback: load from old format (use value as both min and max)
+            const elements = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
+            elements.forEach(el => {
+              const val = c[el as keyof MeltChemistry] as number;
+              loadedTarget[`${el}_min`] = val;
+              loadedTarget[`${el}_max`] = val;
+            });
+          } else if (c.sample_stage === 'IN_FURNACE' || c.sample_stage === 'AFTER_FURNACE') {
+            loadedChemRows[c.sample_stage] = { C: c.C, Si: c.Si, Mn: c.Mn, P: c.P, S: c.S, Ni: c.Ni, Cr: c.Cr, Mo: c.Mo, Cu: c.Cu };
+          }
         });
-        setChemRows(newChemRows);
+        setTargetRange(loadedTarget);
+        setChemRows(loadedChemRows);
       } else {
         resetFormState();
       }
@@ -581,8 +622,12 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
       remark: '',
     });
     setMaterials([]);
+    setTargetRange({
+      C_min: 0, C_max: 0, Si_min: 0, Si_max: 0, Mn_min: 0, Mn_max: 0,
+      P_min: 0, P_max: 0, S_min: 0, S_max: 0, Ni_min: 0, Ni_max: 0,
+      Cr_min: 0, Cr_max: 0, Mo_min: 0, Mo_max: 0, Cu_min: 0, Cu_max: 0,
+    });
     setChemRows({
-      TARGET: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
       IN_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
       AFTER_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
     });
@@ -690,8 +735,29 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
       createMeltMaterial({ melt_id: recordId, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
     });
 
-    const stages: SampleStage[] = ['TARGET', 'IN_FURNACE', 'AFTER_FURNACE'];
-    stages.forEach(stage => {
+    // Save TARGET as range (store max values for compatibility, min/max in separate storage)
+    const targetHasData = Object.values(targetRange).some(v => v > 0);
+    if (targetHasData) {
+      // Store TARGET using max values in the standard fields (for backward compat)
+      const elements = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
+      const targetRow: Record<string, number> = {};
+      elements.forEach(el => { targetRow[el] = targetRange[`${el}_max`] || 0; });
+      const fe = autoCalcFe ? calcFe(targetRow) : 0;
+      createMeltChemistry({
+        melt_id: recordId,
+        sample_stage: 'TARGET',
+        C: targetRow.C, Si: targetRow.Si, Mn: targetRow.Mn,
+        P: targetRow.P, S: targetRow.S, Ni: targetRow.Ni,
+        Cr: targetRow.Cr, Mo: targetRow.Mo, Cu: targetRow.Cu,
+        Fe: fe,
+      });
+      // Save the full min/max range separately
+      saveMeltTargetRange(recordId, targetRange);
+    }
+
+    // Save IN_FURNACE and AFTER_FURNACE
+    const otherStages: Array<'IN_FURNACE' | 'AFTER_FURNACE'> = ['IN_FURNACE', 'AFTER_FURNACE'];
+    otherStages.forEach(stage => {
       const row = chemRows[stage];
       const hasData = Object.values(row).some(v => v > 0);
       if (hasData) {
@@ -926,7 +992,42 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
                         </tr>
                       </thead>
                       <tbody>
-                        {(['TARGET', 'IN_FURNACE', 'AFTER_FURNACE'] as SampleStage[]).map(stage => (
+                        {/* TARGET row - range inputs (min~max) */}
+                        <tr className="border-b border-zinc-700/50">
+                          <td className="py-1.5 pr-2 text-amber-400 font-medium whitespace-nowrap">目標</td>
+                          {CHEMISTRY_ELEMENTS.map(el => (
+                            <td key={el} className="py-1 px-0.5">
+                              {el === 'Fe' ? (
+                                <div className="h-10 flex items-center justify-center text-zinc-500 text-xs bg-zinc-900/30 rounded border border-zinc-700">
+                                  Bal
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-0.5">
+                                  <Input
+                                    type="number"
+                                    step="0.001"
+                                    min="0"
+                                    value={targetRange[`${el}_min`] || ''}
+                                    onChange={e => setTargetRange({ ...targetRange, [`${el}_min`]: Number(e.target.value) })}
+                                    placeholder="min"
+                                    className="bg-zinc-700 border-zinc-600 text-zinc-100 h-5 text-[10px] text-center w-full px-0.5"
+                                  />
+                                  <Input
+                                    type="number"
+                                    step="0.001"
+                                    min="0"
+                                    value={targetRange[`${el}_max`] || ''}
+                                    onChange={e => setTargetRange({ ...targetRange, [`${el}_max`]: Number(e.target.value) })}
+                                    placeholder="max"
+                                    className="bg-zinc-700 border-zinc-600 text-zinc-100 h-5 text-[10px] text-center w-full px-0.5"
+                                  />
+                                </div>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                        {/* IN_FURNACE and AFTER_FURNACE rows - single value */}
+                        {(['IN_FURNACE', 'AFTER_FURNACE'] as const).map(stage => (
                           <tr key={stage} className="border-b border-zinc-700/50">
                             <td className="py-1.5 pr-2 text-amber-400 font-medium whitespace-nowrap">{SAMPLE_STAGE_LABELS[stage]}</td>
                             {CHEMISTRY_ELEMENTS.map(el => (
