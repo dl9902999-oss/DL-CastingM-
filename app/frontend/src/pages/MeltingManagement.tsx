@@ -387,6 +387,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                   material: string; quantity: number; estimated_weight: number; estimated_pouring_weight?: number; pouring_weights: number[];
                 }>;
                 if (pouringData.length === 0) return null;
+                const currentBatches = getMoldingBatches();
                 return (
                   <div>
                     <div className="flex items-center gap-2 mb-1">
@@ -399,7 +400,8 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                         <tbody>
                           {pouringData.map(p => {
                             const totalW = p.pouring_weights.reduce((s, w) => s + w, 0);
-                            const estPouringTotal = p.estimated_pouring_weight || 0;
+                            const currentBatch = currentBatches.find(b => b.id === p.batch_id);
+                            const estPouringTotal = currentBatch ? currentBatch.estimated_pouring_weight : (p.estimated_pouring_weight || 0);
                             const validWeights = p.pouring_weights.filter(w => w > 0);
                             const avgActualPouring = validWeights.length > 0
                               ? (validWeights.reduce((s, w) => s + w, 0) / validWeights.length).toFixed(1)
