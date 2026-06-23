@@ -386,7 +386,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
-                        <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-2">批次</th><th className="text-left py-1 pr-2">客戶</th><th className="text-left py-1 pr-2">品名</th><th className="text-left py-1 pr-2">材質</th><th className="text-right py-1 pr-2">數量</th><th className="text-right py-1 pr-2">預計澆注(kg)</th><th className="text-right py-1 pr-2">合計澆注(kg)</th><th className="text-right py-1">平均成品率</th></tr></thead>
+                        <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-2">批次</th><th className="text-left py-1 pr-2">客戶</th><th className="text-left py-1 pr-2">品名</th><th className="text-left py-1 pr-2">材質</th><th className="text-right py-1 pr-2">數量</th><th className="text-right py-1 pr-2">預估重量(kg)</th><th className="text-right py-1 pr-2">預估澆注重量(kg)</th><th className="text-right py-1 pr-2">實際澆注重量(kg)</th><th className="text-right py-1">平均成品率</th></tr></thead>
                         <tbody>
                           {pouringData.map(p => {
                             const totalW = p.pouring_weights.reduce((s, w) => s + w, 0);
@@ -400,6 +400,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                                 <td className="py-1 pr-2">{p.product_name}</td>
                                 <td className="py-1 pr-2">{p.material}</td>
                                 <td className="text-right py-1 pr-2">{p.quantity}</td>
+                                <td className="text-right py-1 pr-2">{p.estimated_weight}</td>
                                 <td className="text-right py-1 pr-2">{p.estimated_weight * p.quantity}</td>
                                 <td className="text-right py-1 pr-2">{totalW}</td>
                                 <td className={`text-right py-1 font-bold ${Number(avgRate) >= 80 ? 'text-green-400' : Number(avgRate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{avgRate}%</td>
