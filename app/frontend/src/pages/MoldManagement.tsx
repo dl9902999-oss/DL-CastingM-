@@ -387,7 +387,7 @@ export default function MoldManagement() {
                             {p.material && <span>材質: {p.material}</span>}
                             {p.cavities > 0 && <span>模穴: {p.cavities}件/模</span>}
                             {p.template_count > 0 && <span>模板: {p.template_count}</span>}
-                            {p.sand_core_count > 0 && <span>砂心: {p.sand_core_count}</span>}
+                            <span>砂心: {p.sand_core_count ?? 0}</span>
                             {p.cost >= 0 && <span>成本: NT${p.cost.toLocaleString()}</span>}
                           </div>
                           {p.photos && p.photos.length > 0 && (
@@ -714,7 +714,7 @@ export default function MoldManagement() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-zinc-300 text-xs">砂心數</Label>
-                  <Input type="number" value={form.sand_core_count || ''} onChange={e => setForm({ ...form, sand_core_count: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  <Input type="number" min={0} value={form.sand_core_count} onChange={e => setForm({ ...form, sand_core_count: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-zinc-300 text-xs">重量(kg)</Label>
