@@ -425,6 +425,28 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                             );
                           })}
                         </tbody>
+                        <tfoot>
+                          {(() => {
+                            const sumQty = pouringData.reduce((s, p) => s + p.quantity, 0);
+                            const sumEstProduct = pouringData.reduce((s, p) => s + (p.estimated_weight * p.quantity), 0);
+                            const sumEstPouring = pouringData.reduce((s, p) => {
+                              const batch = currentBatches.find(b => b.id === p.batch_id);
+                              return s + (batch ? batch.estimated_pouring_weight : (p.estimated_pouring_weight || 0));
+                            }, 0);
+                            const sumActualPouring = pouringData.reduce((s, p) => s + p.pouring_weights.reduce((a, w) => a + w, 0), 0);
+                            return (
+                              <tr className="text-amber-300 font-bold border-t-2 border-zinc-600">
+                                <td className="py-1.5 pr-2" colSpan={4}>合計</td>
+                                <td className="text-right py-1.5 pr-2">{sumQty}</td>
+                                <td className="text-right py-1.5 pr-2">{sumEstProduct}</td>
+                                <td className="text-right py-1.5 pr-2">{sumEstPouring || '-'}</td>
+                                <td className="text-right py-1.5 pr-2">-</td>
+                                <td className="text-right py-1.5 pr-2">{sumActualPouring}</td>
+                                <td className="text-right py-1.5">-</td>
+                              </tr>
+                            );
+                          })()}
+                        </tfoot>
                       </table>
                     </div>
                   </div>
