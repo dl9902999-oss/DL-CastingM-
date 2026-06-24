@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllUsers, createUser, updateUser, deleteUser } from '@/lib/store';
 import { UserProfile, UserRole } from '@/lib/types';
@@ -9,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Pencil, Trash2, Users, Key, Shield } from 'lucide-react';
+import { Plus, Pencil, Trash2, Users, Key, Shield, ArrowLeft } from 'lucide-react';
 
 const ROLE_LABELS: Record<UserRole, string> = {
   Admin: '管理員',
@@ -20,6 +21,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
 
 export default function UserManagement() {
   const { user: currentUser } = useAuth();
+  const navigate = useNavigate();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
@@ -148,6 +150,9 @@ export default function UserManagement() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate('/dashboard')} className="text-zinc-400 hover:text-zinc-100 h-8 w-8" title="返回主頁">
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
           <Users className="w-6 h-6 text-blue-400" />
           <h1 className="text-xl font-bold text-zinc-100">帳號管理</h1>
           <span className="text-sm text-zinc-500">({users.length} 個帳號)</span>
