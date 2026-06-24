@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, Pencil, Trash2, Users, Key, Shield, ArrowLeft } from 'lucide-react';
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -19,6 +20,19 @@ const ROLE_LABELS: Record<UserRole, string> = {
   QC: '品管',
   Warehouse: '倉管',
 };
+
+const PERMISSION_ITEMS = [
+  { path: '/dashboard', label: '總覽' },
+  { path: '/customers', label: '客戶資料' },
+  { path: '/work-orders', label: '工單管理' },
+  { path: '/molding', label: '開工造模' },
+  { path: '/melting-management', label: '熔解管理' },
+  { path: '/quality', label: '品質檢驗' },
+  { path: '/warehouse', label: '入庫' },
+  { path: '/shipment', label: '出貨' },
+  { path: '/traceability', label: '生產追溯' },
+  { path: '/user-management', label: '帳號管理' },
+];
 
 export default function UserManagement() {
   const { user: currentUser } = useAuth();
@@ -36,6 +50,7 @@ export default function UserManagement() {
     name: '',
     password: '',
     role: 'Production' as UserRole,
+    permissions: ['/dashboard', '/traceability'] as string[],
   });
 
   useEffect(() => {
@@ -48,13 +63,13 @@ export default function UserManagement() {
 
   const handleOpenCreate = () => {
     setEditingUser(null);
-    setForm({ employee_id: '', name: '', password: '', role: 'Production' });
+    setForm({ employee_id: '', name: '', password: '', role: 'Production', permissions: ['/dashboard', '/traceability'] });
     setDialogOpen(true);
   };
 
   const handleOpenEdit = (u: UserProfile) => {
     setEditingUser(u);
-    setForm({ employee_id: u.employee_id, name: u.name, password: '', role: u.role });
+    setForm({ employee_id: u.employee_id, name: u.name, password: '', role: u.role, permissions: u.permissions || [] });
     setDialogOpen(true);
   };
 
@@ -74,6 +89,7 @@ export default function UserManagement() {
         employee_id: form.employee_id.trim(),
         name: form.name.trim(),
         role: form.role,
+        permissions: form.permissions,
       };
       // Check duplicate employee_id
       const existing = users.find(u => u.employee_id === form.employee_id.trim() && u.id !== editingUser.id);
@@ -100,6 +116,7 @@ export default function UserManagement() {
         name: form.name.trim(),
         password: form.password.trim(),
         role: form.role,
+        permissions: form.permissions,
       });
       toast({ title: '帳號已建立' });
     }
@@ -185,6 +202,16 @@ export default function UserManagement() {
                       )}
                     </div>
                     <p className="text-xs text-zinc-500 mt-0.5">員工編號: {u.employee_id}</p>
+                    {u.permissions && u.permissions.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {u.permissions.map(p => {
+                          const item = PERMISSION_ITEMS.find(pi => pi.path === p);
+                          return item ? (
+                            <span key={p} className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700/80 text-zinc-400">{item.label}</span>
+                          ) : null;
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
@@ -246,7 +273,7 @@ export default function UserManagement() {
               </div>
             )}
             <div className="space-y-2">
-              <Label className="text-zinc-300">權限角色 *</Label>
+              <Label className="text-zinc-300">權限角色</Label>
               <Select value={form.role} onValueChange={v => setForm({ ...form, role: v as UserRole })}>
                 <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
                   <SelectValue />
@@ -258,6 +285,27 @@ export default function UserManagement() {
                   <SelectItem value="Warehouse" className="text-zinc-100">倉管</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-zinc-300">頁面權限（勾選可存取的功能）</Label>
+              <div className="grid grid-cols-2 gap-2 p-3 rounded bg-zinc-700/50 border border-zinc-600 max-h-48 overflow-y-auto">
+                {PERMISSION_ITEMS.map(item => (
+                  <label key={item.path} className="flex items-center gap-2 cursor-pointer py-1">
+                    <Checkbox
+                      checked={form.permissions.includes(item.path)}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setForm({ ...form, permissions: [...form.permissions, item.path] });
+                        } else {
+                          setForm({ ...form, permissions: form.permissions.filter(p => p !== item.path) });
+                        }
+                      }}
+                      className="border-zinc-500 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
+                    />
+                    <span className="text-sm text-zinc-300">{item.label}</span>
+                  </label>
+                ))}
+              </div>
             </div>
             <div className="flex gap-2 justify-end pt-2">
               <Button variant="ghost" onClick={() => setDialogOpen(false)} className="text-zinc-400">取消</Button>

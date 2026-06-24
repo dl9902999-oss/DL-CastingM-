@@ -45,7 +45,14 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [open, setOpen] = useState(false);
 
-  const filteredNavItems = navItems.filter(item => user && item.roles.includes(user.role));
+  const filteredNavItems = navItems.filter(item => {
+    if (!user) return false;
+    // Use permissions array if available, otherwise fall back to role-based
+    if (user.permissions && user.permissions.length > 0) {
+      return user.permissions.includes(item.path);
+    }
+    return item.roles.includes(user.role);
+  });
 
   const NavContent = () => (
     <div className="flex flex-col h-full">

@@ -7,6 +7,7 @@ export interface UserProfile {
   email?: string;
   role: UserRole;
   name: string;
+  permissions?: string[]; // list of allowed path keys e.g. ['/dashboard', '/customers', ...]
 }
 
 export type MoldSupply = '客戶提供' | '公司自有' | '代客製作';
