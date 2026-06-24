@@ -196,8 +196,11 @@ export interface Pattern {
   pattern_type: PatternType;
   material: string;
   cavities: number;
+  template_count: number;
+  sand_core_count: number;
   dimensions: string;
   weight: number;
+  photos: string[];
   open_date: string;
   supplier: string;
   cost: number;

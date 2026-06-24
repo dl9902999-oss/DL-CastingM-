@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,7 +18,45 @@ import {
   getPatternHistory, getPatternMaintenance, createPatternMaintenance,
   getPatternLoans, createPatternLoan, returnPatternLoan,
 } from '@/lib/store';
-import { Plus, Search, Edit, Trash2, Wrench, History, MapPin, ArrowLeftRight, BarChart3, AlertTriangle } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Wrench, History, MapPin, ArrowLeftRight, BarChart3, AlertTriangle, Image as ImageIcon, X } from 'lucide-react';
+
+function MoldImageUpload({ images, onChange }: { images: string[]; onChange: (imgs: string[]) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const result = ev.target?.result as string;
+        if (result) onChange([...images, result]);
+      };
+      reader.readAsDataURL(file);
+    });
+    if (inputRef.current) inputRef.current.value = '';
+  };
+  return (
+    <div className="space-y-1">
+      <Label className="text-zinc-300 text-xs flex items-center gap-1"><ImageIcon className="w-3 h-3 text-blue-400" />模具照片</Label>
+      <input ref={inputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-1">
+          {images.map((img, i) => (
+            <div key={i} className="relative w-16 h-16 rounded border border-zinc-600 overflow-hidden group">
+              <img src={img} alt="" className="w-full h-full object-cover" />
+              <button onClick={() => onChange(images.filter((_, idx) => idx !== i))} className="absolute top-0 right-0 bg-red-600/80 rounded-bl p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <X className="w-3 h-3 text-white" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <Button type="button" variant="outline" size="sm" onClick={() => inputRef.current?.click()} className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 h-7 text-xs">
+        <Plus className="w-3 h-3 mr-1" />上傳照片
+      </Button>
+    </div>
+  );
+}
 
 const PATTERN_TYPES: PatternType[] = ['上下模', '單面模', '現板模', '保模', '中板模', '砂心模', '其他'];
 const PATTERN_STATUSES: PatternStatus[] = ['待驗收', '可生產', '維修中', '停用', '報廢'];
@@ -55,14 +93,17 @@ export default function MoldManagement() {
   const { toast } = useToast();
 
   const [form, setForm] = useState({
+    customer: '',
     name: '',
     product_no: '',
-    customer: '',
     pattern_type: '上下模' as PatternType,
     material: '',
     cavities: 0,
+    template_count: 0,
+    sand_core_count: 0,
     dimensions: '',
     weight: 0,
+    photos: [] as string[],
     open_date: '',
     supplier: '',
     cost: 0,
@@ -116,8 +157,9 @@ export default function MoldManagement() {
   const handleOpenCreate = () => {
     setEditPattern(null);
     setForm({
-      name: '', product_no: '', customer: '', pattern_type: '上下模', material: '',
-      cavities: 0, dimensions: '', weight: 0, open_date: '', supplier: '', cost: 0,
+      customer: '', name: '', product_no: '', pattern_type: '上下模', material: '',
+      cavities: 0, template_count: 0, sand_core_count: 0, dimensions: '', weight: 0,
+      photos: [], open_date: '', supplier: '', cost: 0,
       lifetime_count: 0, status: '可生產', location_warehouse: '', location_area: '',
       location_shelf: '', location_status: '在庫', remarks: '',
     });
@@ -127,13 +169,15 @@ export default function MoldManagement() {
   const handleOpenEdit = (p: Pattern) => {
     setEditPattern(p);
     setForm({
-      name: p.name, product_no: p.product_no, customer: p.customer,
+      customer: p.customer, name: p.name, product_no: p.product_no,
       pattern_type: p.pattern_type, material: p.material, cavities: p.cavities,
-      dimensions: p.dimensions, weight: p.weight, open_date: p.open_date,
-      supplier: p.supplier, cost: p.cost, lifetime_count: p.lifetime_count,
-      status: p.status, location_warehouse: p.location_warehouse,
-      location_area: p.location_area, location_shelf: p.location_shelf,
-      location_status: p.location_status, remarks: p.remarks,
+      template_count: p.template_count || 0, sand_core_count: p.sand_core_count || 0,
+      dimensions: p.dimensions, weight: p.weight, photos: p.photos || [],
+      open_date: p.open_date, supplier: p.supplier, cost: p.cost,
+      lifetime_count: p.lifetime_count, status: p.status,
+      location_warehouse: p.location_warehouse, location_area: p.location_area,
+      location_shelf: p.location_shelf, location_status: p.location_status,
+      remarks: p.remarks,
     });
     setDialogOpen(true);
   };
@@ -337,12 +381,25 @@ export default function MoldManagement() {
                             <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_COLORS[p.status]}`}>{p.status}</span>
                           </div>
                           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-400">
+                            <span>客戶: {p.customer || '-'}</span>
                             <span>類型: {p.pattern_type}</span>
                             <span>產品: {p.product_no || '-'}</span>
-                            <span>客戶: {p.customer || '-'}</span>
                             {p.material && <span>材質: {p.material}</span>}
-                            {p.cavities > 0 && <span>模穴: {p.cavities}</span>}
+                            {p.cavities > 0 && <span>模穴: {p.cavities}件/模</span>}
+                            {p.template_count > 0 && <span>模板: {p.template_count}</span>}
+                            {p.sand_core_count > 0 && <span>砂心: {p.sand_core_count}</span>}
+                            {p.cost >= 0 && <span>成本: NT${p.cost.toLocaleString()}</span>}
                           </div>
+                          {p.photos && p.photos.length > 0 && (
+                            <div className="flex gap-1 mt-1">
+                              {p.photos.slice(0, 4).map((img, i) => (
+                                <div key={i} className="w-10 h-10 rounded border border-zinc-600 overflow-hidden">
+                                  <img src={img} alt="" className="w-full h-full object-cover" />
+                                </div>
+                              ))}
+                              {p.photos.length > 4 && <span className="text-xs text-zinc-500 self-center">+{p.photos.length - 4}</span>}
+                            </div>
+                          )}
                           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-400">
                             <span>使用: <span className="text-zinc-200 font-medium">{p.usage_count}</span> 次</span>
                             {p.lifetime_count > 0 && (
@@ -407,7 +464,7 @@ export default function MoldManagement() {
                           <td className="p-2">{m.maintenance_date}</td>
                           <td className="p-2">{m.type}</td>
                           <td className="p-2 max-w-[200px] truncate">{m.content}</td>
-                          <td className="p-2 text-right">{m.cost > 0 ? `$${m.cost.toLocaleString()}` : '-'}</td>
+                          <td className="p-2 text-right">{m.cost > 0 ? `NT$${m.cost.toLocaleString()}` : '-'}</td>
                           <td className="p-2">{m.next_maintenance_date || '-'}</td>
                         </tr>
                       );
@@ -562,7 +619,7 @@ export default function MoldManagement() {
                       </tr>
                     </thead>
                     <tbody>
-                      {patterns.filter(p => p.cost > 0).sort((a, b) => {
+                      {patterns.filter(p => p.cost >= 0).sort((a, b) => {
                         const costA = a.usage_count > 0 ? a.cost / a.usage_count : a.cost;
                         const costB = b.usage_count > 0 ? b.cost / b.usage_count : b.cost;
                         return costB - costA;
@@ -576,9 +633,9 @@ export default function MoldManagement() {
                               <span className="text-amber-400 font-mono text-xs">{p.pattern_no}</span>
                               <span className="ml-2">{p.name}</span>
                             </td>
-                            <td className="p-2 text-right">${p.cost.toLocaleString()}</td>
+                            <td className="p-2 text-right">NT${p.cost.toLocaleString()}</td>
                             <td className="p-2 text-right">{p.usage_count}</td>
-                            <td className="p-2 text-right font-medium">${Math.round(unitCost).toLocaleString()}</td>
+                            <td className="p-2 text-right font-medium">NT${Math.round(unitCost).toLocaleString()}</td>
                             <td className="p-2">
                               {lifePct >= 0 ? (
                                 <div className="flex items-center gap-2">
@@ -599,8 +656,8 @@ export default function MoldManagement() {
                       })}
                     </tbody>
                   </table>
-                  {patterns.filter(p => p.cost > 0).length === 0 && (
-                    <p className="text-zinc-500 text-sm text-center py-4">尚無成本資料（請在模具建檔時填入採購成本）</p>
+                  {patterns.length === 0 && (
+                    <p className="text-zinc-500 text-sm text-center py-4">尚無模具資料</p>
                   )}
                 </div>
               </CardContent>
@@ -617,18 +674,18 @@ export default function MoldManagement() {
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label className="text-zinc-300 text-xs">模具名稱 *</Label>
-                  <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" placeholder="模具名稱" />
+                  <Label className="text-zinc-300 text-xs">客戶名稱 *</Label>
+                  <Input value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" placeholder="客戶" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-zinc-300 text-xs">產品料號</Label>
-                  <Input value={form.product_no} onChange={e => setForm({ ...form, product_no: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" placeholder="產品料號" />
+                  <Label className="text-zinc-300 text-xs">模具名稱 *</Label>
+                  <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" placeholder="模具名稱" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label className="text-zinc-300 text-xs">客戶名稱</Label>
-                  <Input value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" placeholder="客戶" />
+                  <Label className="text-zinc-300 text-xs">產品料號</Label>
+                  <Input value={form.product_no} onChange={e => setForm({ ...form, product_no: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" placeholder="產品料號" />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-zinc-300 text-xs">模具類型 *</Label>
@@ -640,14 +697,24 @@ export default function MoldManagement() {
                   </Select>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-zinc-300 text-xs">材質</Label>
                   <Input value={form.material} onChange={e => setForm({ ...form, material: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-zinc-300 text-xs">模穴數</Label>
+                  <Label className="text-zinc-300 text-xs">模穴數(件/模)</Label>
                   <Input type="number" value={form.cavities || ''} onChange={e => setForm({ ...form, cavities: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-zinc-300 text-xs">模板數</Label>
+                  <Input type="number" value={form.template_count || ''} onChange={e => setForm({ ...form, template_count: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-zinc-300 text-xs">砂心數</Label>
+                  <Input type="number" value={form.sand_core_count || ''} onChange={e => setForm({ ...form, sand_core_count: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-zinc-300 text-xs">重量(kg)</Label>
@@ -670,8 +737,11 @@ export default function MoldManagement() {
                   <Input value={form.supplier} onChange={e => setForm({ ...form, supplier: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-zinc-300 text-xs">採購成本</Label>
-                  <Input type="number" value={form.cost || ''} onChange={e => setForm({ ...form, cost: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  <Label className="text-zinc-300 text-xs">採購成本 (NT)</Label>
+                  <div className="relative">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 text-xs">NT$</span>
+                    <Input type="number" min={0} value={form.cost} onChange={e => setForm({ ...form, cost: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100 pl-10" />
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -712,6 +782,7 @@ export default function MoldManagement() {
                   </SelectContent>
                 </Select>
               </div>
+              <MoldImageUpload images={form.photos} onChange={(imgs) => setForm({ ...form, photos: imgs })} />
               <div className="space-y-1">
                 <Label className="text-zinc-300 text-xs">備註</Label>
                 <Textarea value={form.remarks} onChange={e => setForm({ ...form, remarks: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" rows={2} />
