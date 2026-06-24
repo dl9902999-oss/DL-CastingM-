@@ -179,3 +179,80 @@ export interface DashboardStats {
   wipQuantity: number;
   pendingShipment: number;
 }
+
+// === 模具管理模組 (Pattern/Mold Management) ===
+export type PatternType = '木模' | '樹脂模' | '金屬模' | '砂模' | '殼模' | '芯盒' | '其他';
+export type PatternStatus = '待驗收' | '可生產' | '維修中' | '停用' | '報廢';
+export type PatternLocationStatus = '在庫' | '借出' | '維修' | '使用中';
+export type MaintenanceType = '清潔' | '補修' | '加工' | '翻修' | '更換';
+
+export interface Pattern {
+  id: string;
+  pattern_no: string;
+  name: string;
+  product_no: string;
+  customer: string;
+  pattern_type: PatternType;
+  material: string;
+  cavities: number;
+  dimensions: string;
+  weight: number;
+  open_date: string;
+  supplier: string;
+  cost: number;
+  lifetime_count: number;
+  usage_count: number;
+  status: PatternStatus;
+  location_warehouse: string;
+  location_area: string;
+  location_shelf: string;
+  location_status: PatternLocationStatus;
+  remarks: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PatternVersion {
+  id: string;
+  pattern_id: string;
+  version: string;
+  change_date: string;
+  change_content: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface PatternHistory {
+  id: string;
+  pattern_id: string;
+  date: string;
+  work_order_id: string;
+  order_no: string;
+  product_name: string;
+  quantity: number;
+  molding_count: number;
+  operator: string;
+  created_at: string;
+}
+
+export interface PatternMaintenance {
+  id: string;
+  pattern_id: string;
+  maintenance_date: string;
+  type: MaintenanceType;
+  content: string;
+  cost: number;
+  next_maintenance_date: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface PatternLoan {
+  id: string;
+  pattern_id: string;
+  borrower: string;
+  borrow_date: string;
+  return_date: string;
+  purpose: string;
+  created_at: string;
+}

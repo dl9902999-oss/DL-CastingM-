@@ -1,4 +1,4 @@
-import { WorkOrder, MoldingBatch, MeltingRecord, QualityInspection, WarehouseEntry, ShipmentOrder, UserProfile, Customer, MeltRecord, MeltMaterial, MeltChemistry, SampleStage } from './types';
+import { WorkOrder, MoldingBatch, MeltingRecord, QualityInspection, WarehouseEntry, ShipmentOrder, UserProfile, Customer, MeltRecord, MeltMaterial, MeltChemistry, SampleStage, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
 
 // Local storage-based store for demo/offline mode
 // Will be replaced with Supabase queries when connected
@@ -18,6 +18,11 @@ const STORAGE_KEYS = {
   MELT_MATERIALS: 'foundry_melt_materials',
   MELT_CHEMISTRY: 'foundry_melt_chemistry',
   MELT_TARGET_RANGES: 'foundry_melt_target_ranges',
+  PATTERNS: 'foundry_patterns',
+  PATTERN_VERSIONS: 'foundry_pattern_versions',
+  PATTERN_HISTORY: 'foundry_pattern_history',
+  PATTERN_MAINTENANCE: 'foundry_pattern_maintenance',
+  PATTERN_LOANS: 'foundry_pattern_loans',
 };
 
 function getItems<T>(key: string): T[] {
@@ -687,4 +692,111 @@ export function deleteMeltTargetRange(meltId: string): void {
   const all = getItems<MeltTargetRange>(STORAGE_KEYS.MELT_TARGET_RANGES);
   const filtered = all.filter(r => r.melt_id !== meltId);
   setItems(STORAGE_KEYS.MELT_TARGET_RANGES, filtered);
+}
+
+// === Pattern/Mold Management ===
+
+export function getPatterns(): Pattern[] {
+  return getItems<Pattern>(STORAGE_KEYS.PATTERNS);
+}
+
+export function createPattern(data: Omit<Pattern, 'id' | 'pattern_no' | 'usage_count' | 'created_at' | 'updated_at'>): Pattern {
+  const patterns = getPatterns();
+  const no = generateOrderNo('MD');
+  const pattern: Pattern = {
+    ...data,
+    id: generateId(),
+    pattern_no: no,
+    usage_count: 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  patterns.push(pattern);
+  setItems(STORAGE_KEYS.PATTERNS, patterns);
+  return pattern;
+}
+
+export function updatePattern(id: string, updates: Partial<Pattern>): void {
+  const patterns = getPatterns();
+  const idx = patterns.findIndex(p => p.id === id);
+  if (idx >= 0) {
+    patterns[idx] = { ...patterns[idx], ...updates, updated_at: new Date().toISOString() };
+    setItems(STORAGE_KEYS.PATTERNS, patterns);
+  }
+}
+
+export function deletePattern(id: string): void {
+  const patterns = getPatterns().filter(p => p.id !== id);
+  setItems(STORAGE_KEYS.PATTERNS, patterns);
+}
+
+export function getPatternVersions(patternId: string): PatternVersion[] {
+  return getItems<PatternVersion>(STORAGE_KEYS.PATTERN_VERSIONS).filter(v => v.pattern_id === patternId);
+}
+
+export function createPatternVersion(data: Omit<PatternVersion, 'id' | 'created_at'>): PatternVersion {
+  const all = getItems<PatternVersion>(STORAGE_KEYS.PATTERN_VERSIONS);
+  const ver: PatternVersion = { ...data, id: generateId(), created_at: new Date().toISOString() };
+  all.push(ver);
+  setItems(STORAGE_KEYS.PATTERN_VERSIONS, all);
+  return ver;
+}
+
+export function getPatternHistory(patternId?: string): PatternHistory[] {
+  const all = getItems<PatternHistory>(STORAGE_KEYS.PATTERN_HISTORY);
+  return patternId ? all.filter(h => h.pattern_id === patternId) : all;
+}
+
+export function createPatternHistory(data: Omit<PatternHistory, 'id' | 'created_at'>): PatternHistory {
+  const all = getItems<PatternHistory>(STORAGE_KEYS.PATTERN_HISTORY);
+  const entry: PatternHistory = { ...data, id: generateId(), created_at: new Date().toISOString() };
+  all.push(entry);
+  setItems(STORAGE_KEYS.PATTERN_HISTORY, all);
+  // Auto-increment usage count
+  const patterns = getPatterns();
+  const idx = patterns.findIndex(p => p.id === data.pattern_id);
+  if (idx >= 0) {
+    patterns[idx].usage_count += 1;
+    patterns[idx].updated_at = new Date().toISOString();
+    setItems(STORAGE_KEYS.PATTERNS, patterns);
+  }
+  return entry;
+}
+
+export function getPatternMaintenance(patternId?: string): PatternMaintenance[] {
+  const all = getItems<PatternMaintenance>(STORAGE_KEYS.PATTERN_MAINTENANCE);
+  return patternId ? all.filter(m => m.pattern_id === patternId) : all;
+}
+
+export function createPatternMaintenance(data: Omit<PatternMaintenance, 'id' | 'created_at'>): PatternMaintenance {
+  const all = getItems<PatternMaintenance>(STORAGE_KEYS.PATTERN_MAINTENANCE);
+  const entry: PatternMaintenance = { ...data, id: generateId(), created_at: new Date().toISOString() };
+  all.push(entry);
+  setItems(STORAGE_KEYS.PATTERN_MAINTENANCE, all);
+  return entry;
+}
+
+export function getPatternLoans(patternId?: string): PatternLoan[] {
+  const all = getItems<PatternLoan>(STORAGE_KEYS.PATTERN_LOANS);
+  return patternId ? all.filter(l => l.pattern_id === patternId) : all;
+}
+
+export function createPatternLoan(data: Omit<PatternLoan, 'id' | 'created_at'>): PatternLoan {
+  const all = getItems<PatternLoan>(STORAGE_KEYS.PATTERN_LOANS);
+  const entry: PatternLoan = { ...data, id: generateId(), created_at: new Date().toISOString() };
+  all.push(entry);
+  setItems(STORAGE_KEYS.PATTERN_LOANS, all);
+  // Update pattern location status
+  updatePattern(data.pattern_id, { location_status: '借出' });
+  return entry;
+}
+
+export function returnPatternLoan(loanId: string): void {
+  const all = getItems<PatternLoan>(STORAGE_KEYS.PATTERN_LOANS);
+  const idx = all.findIndex(l => l.id === loanId);
+  if (idx >= 0) {
+    all[idx].return_date = new Date().toISOString().slice(0, 10);
+    setItems(STORAGE_KEYS.PATTERN_LOANS, all);
+    updatePattern(all[idx].pattern_id, { location_status: '在庫' });
+  }
 }

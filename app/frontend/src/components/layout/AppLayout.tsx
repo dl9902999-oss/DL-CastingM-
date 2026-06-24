@@ -17,6 +17,7 @@ import {
   Factory,
   Users,
   Shield,
+  Box,
 } from 'lucide-react';
 
 interface NavItem {
@@ -35,6 +36,7 @@ const navItems: NavItem[] = [
   { label: '品質檢驗', path: '/quality', icon: <CheckCircle className="w-5 h-5" />, roles: ['Admin', 'QC'] },
   { label: '入庫', path: '/warehouse', icon: <Warehouse className="w-5 h-5" />, roles: ['Admin', 'Warehouse'] },
   { label: '出貨', path: '/shipment', icon: <Truck className="w-5 h-5" />, roles: ['Admin', 'Warehouse'] },
+  { label: '模具管理', path: '/mold-management', icon: <Box className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '生產追溯', path: '/traceability', icon: <Search className="w-5 h-5" />, roles: ['Admin', 'Production', 'QC', 'Warehouse'] },
   { label: '帳號管理', path: '/user-management', icon: <Shield className="w-5 h-5" />, roles: ['Admin'] },
 ];
