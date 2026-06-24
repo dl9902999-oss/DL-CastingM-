@@ -55,26 +55,63 @@ function generateOrderNo(prefix: string): string {
 // Initialize demo users
 export function initDemoUsers(): void {
   const users = getItems<UserProfile>(STORAGE_KEYS.USERS);
-  if (users.length === 0) {
+  // Migrate: if existing users lack employee_id, reset to new format
+  const needsMigration = users.length === 0 || (users.length > 0 && !users[0].employee_id);
+  if (needsMigration) {
     const demoUsers: UserProfile[] = [
-      { id: '1', email: 'admin@foundry.com', role: 'Admin', name: 'Admin' },
-      { id: '2', email: 'production@foundry.com', role: 'Production', name: '生產員' },
-      { id: '3', email: 'qc@foundry.com', role: 'QC', name: '品管員' },
-      { id: '4', email: 'warehouse@foundry.com', role: 'Warehouse', name: '倉管員' },
+      { id: '1', employee_id: 'A001', password: 'admin123', role: 'Admin', name: '管理員' },
+      { id: '2', employee_id: 'P001', password: '1234', role: 'Production', name: '生產員' },
+      { id: '3', employee_id: 'Q001', password: '1234', role: 'QC', name: '品管員' },
+      { id: '4', employee_id: 'W001', password: '1234', role: 'Warehouse', name: '倉管員' },
     ];
     setItems(STORAGE_KEYS.USERS, demoUsers);
+    // Clear current user session since format changed
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
   }
 }
 
 // Auth
-export function login(email: string, _password: string): UserProfile | null {
+export function login(employeeId: string, password: string): UserProfile | null {
   const users = getItems<UserProfile>(STORAGE_KEYS.USERS);
-  const user = users.find(u => u.email === email);
+  const user = users.find(u => u.employee_id === employeeId && u.password === password);
   if (user) {
     localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
     return user;
   }
   return null;
+}
+
+// User Management (Admin)
+export function getAllUsers(): UserProfile[] {
+  return getItems<UserProfile>(STORAGE_KEYS.USERS);
+}
+
+export function createUser(userData: Omit<UserProfile, 'id'>): UserProfile {
+  const users = getItems<UserProfile>(STORAGE_KEYS.USERS);
+  const newUser: UserProfile = {
+    id: crypto.randomUUID(),
+    ...userData,
+  };
+  users.push(newUser);
+  setItems(STORAGE_KEYS.USERS, users);
+  return newUser;
+}
+
+export function updateUser(id: string, updates: Partial<Omit<UserProfile, 'id'>>): UserProfile | null {
+  const users = getItems<UserProfile>(STORAGE_KEYS.USERS);
+  const idx = users.findIndex(u => u.id === id);
+  if (idx < 0) return null;
+  users[idx] = { ...users[idx], ...updates };
+  setItems(STORAGE_KEYS.USERS, users);
+  return users[idx];
+}
+
+export function deleteUser(id: string): boolean {
+  const users = getItems<UserProfile>(STORAGE_KEYS.USERS);
+  const filtered = users.filter(u => u.id !== id);
+  if (filtered.length === users.length) return false;
+  setItems(STORAGE_KEYS.USERS, filtered);
+  return true;
 }
 
 export function logout(): void {

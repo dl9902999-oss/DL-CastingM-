@@ -2,7 +2,9 @@ export type UserRole = 'Admin' | 'Production' | 'QC' | 'Warehouse';
 
 export interface UserProfile {
   id: string;
-  email: string;
+  employee_id: string;
+  password: string;
+  email?: string;
   role: UserRole;
   name: string;
 }

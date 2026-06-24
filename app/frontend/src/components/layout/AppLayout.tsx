@@ -16,6 +16,7 @@ import {
   Menu,
   Factory,
   Users,
+  Shield,
 } from 'lucide-react';
 
 interface NavItem {
@@ -35,6 +36,7 @@ const navItems: NavItem[] = [
   { label: '入庫', path: '/warehouse', icon: <Warehouse className="w-5 h-5" />, roles: ['Admin', 'Warehouse'] },
   { label: '出貨', path: '/shipment', icon: <Truck className="w-5 h-5" />, roles: ['Admin', 'Warehouse'] },
   { label: '生產追溯', path: '/traceability', icon: <Search className="w-5 h-5" />, roles: ['Admin', 'Production', 'QC', 'Warehouse'] },
+  { label: '帳號管理', path: '/user-management', icon: <Shield className="w-5 h-5" />, roles: ['Admin'] },
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
@@ -71,7 +73,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium text-zinc-200">{user?.name}</p>
-            <p className="text-xs text-zinc-400">{user?.role}</p>
+            <p className="text-xs text-zinc-400">{user?.employee_id} · {user?.role}</p>
           </div>
           <Button variant="ghost" size="icon" onClick={logout} className="text-zinc-400 hover:text-zinc-100">
             <LogOut className="w-4 h-4" />

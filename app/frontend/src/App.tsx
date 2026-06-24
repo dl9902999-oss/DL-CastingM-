@@ -13,6 +13,7 @@ import WarehousePage from '@/pages/WarehousePage';
 import Shipment from '@/pages/Shipment';
 import Traceability from '@/pages/Traceability';
 import Customers from '@/pages/Customers';
+import UserManagement from '@/pages/UserManagement';
 
 const queryClient = new QueryClient();
 
@@ -42,6 +43,7 @@ const AppRoutes = () => (
     <Route path="/shipment" element={<ProtectedRoute><Shipment /></ProtectedRoute>} />
     <Route path="/traceability" element={<ProtectedRoute><Traceability /></ProtectedRoute>} />
     <Route path="/customers" element={<ProtectedRoute><Customers /></ProtectedRoute>} />
+    <Route path="/user-management" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
     <Route path="/" element={<Navigate to="/dashboard" replace />} />
     <Route path="*" element={<Navigate to="/dashboard" replace />} />
   </Routes>

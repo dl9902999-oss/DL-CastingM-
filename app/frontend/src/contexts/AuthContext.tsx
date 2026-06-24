@@ -4,7 +4,7 @@ import { getCurrentUser, login as storeLogin, logout as storeLogout, initDemoUse
 
 interface AuthContextType {
   user: UserProfile | null;
-  login: (email: string, password: string) => boolean;
+  login: (employeeId: string, password: string) => boolean;
   logout: () => void;
   isLoading: boolean;
 }
@@ -22,8 +22,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(false);
   }, []);
 
-  const login = (email: string, password: string): boolean => {
-    const loggedInUser = storeLogin(email, password);
+  const login = (employeeId: string, password: string): boolean => {
+    const loggedInUser = storeLogin(employeeId, password);
     if (loggedInUser) {
       setUser(loggedInUser);
       return true;
