@@ -20,7 +20,7 @@ import {
 } from '@/lib/store';
 import { Plus, Search, Edit, Trash2, Wrench, History, MapPin, ArrowLeftRight, BarChart3, AlertTriangle } from 'lucide-react';
 
-const PATTERN_TYPES: PatternType[] = ['木模', '樹脂模', '金屬模', '砂模', '殼模', '芯盒', '其他'];
+const PATTERN_TYPES: PatternType[] = ['上下模', '單面模', '現板模', '保模', '中板模', '砂心模', '其他'];
 const PATTERN_STATUSES: PatternStatus[] = ['待驗收', '可生產', '維修中', '停用', '報廢'];
 const LOCATION_STATUSES: PatternLocationStatus[] = ['在庫', '借出', '維修', '使用中'];
 const MAINTENANCE_TYPES: MaintenanceType[] = ['清潔', '補修', '加工', '翻修', '更換'];
@@ -58,7 +58,7 @@ export default function MoldManagement() {
     name: '',
     product_no: '',
     customer: '',
-    pattern_type: '木模' as PatternType,
+    pattern_type: '上下模' as PatternType,
     material: '',
     cavities: 0,
     dimensions: '',
@@ -116,7 +116,7 @@ export default function MoldManagement() {
   const handleOpenCreate = () => {
     setEditPattern(null);
     setForm({
-      name: '', product_no: '', customer: '', pattern_type: '木模', material: '',
+      name: '', product_no: '', customer: '', pattern_type: '上下模', material: '',
       cavities: 0, dimensions: '', weight: 0, open_date: '', supplier: '', cost: 0,
       lifetime_count: 0, status: '可生產', location_warehouse: '', location_area: '',
       location_shelf: '', location_status: '在庫', remarks: '',

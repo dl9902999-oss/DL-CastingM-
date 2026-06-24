@@ -181,7 +181,7 @@ export interface DashboardStats {
 }
 
 // === 模具管理模組 (Pattern/Mold Management) ===
-export type PatternType = '木模' | '樹脂模' | '金屬模' | '砂模' | '殼模' | '芯盒' | '其他';
+export type PatternType = '上下模' | '單面模' | '現板模' | '保模' | '中板模' | '砂心模' | '其他';
 export type PatternStatus = '待驗收' | '可生產' | '維修中' | '停用' | '報廢';
 export type PatternLocationStatus = '在庫' | '借出' | '維修' | '使用中';
 export type MaintenanceType = '清潔' | '補修' | '加工' | '翻修' | '更換';
