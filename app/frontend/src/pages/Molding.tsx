@@ -71,6 +71,7 @@ export default function Molding() {
   const [editBatch, setEditBatch] = useState<MoldingBatch | null>(null);
   const { toast } = useToast();
 
+  const [searchTerm, setSearchTerm] = useState('');
   const [woSearch, setWoSearch] = useState('');
   const [selectedWo, setSelectedWo] = useState<WorkOrder | null>(null);
   const [form, setForm] = useState({
@@ -186,7 +187,7 @@ export default function Molding() {
           <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) { setSelectedWo(null); setWoSearch(''); } }}>
             <DialogTrigger asChild>
               <Button className="bg-amber-500 hover:bg-amber-600 text-zinc-900">
-                <Plus className="w-4 h-4 mr-2" />新增批次
+                <Plus className="w-4 h-4 mr-2" />新增造模批次
               </Button>
             </DialogTrigger>
             <DialogContent className="bg-zinc-800 border-zinc-700 max-w-md max-h-[90vh] overflow-y-auto">
@@ -281,14 +282,47 @@ export default function Molding() {
           </Dialog>
         </div>
 
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+          <Input
+            placeholder="搜尋批次號、工單號、客戶、品名..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            className="pl-10 bg-zinc-800 border-zinc-700 text-zinc-100 placeholder:text-zinc-500"
+          />
+        </div>
+
         {/* Batches List */}
         <div className="space-y-3">
-          {batches.length === 0 ? (
+          {batches.filter(b => {
+            if (!searchTerm.trim()) return true;
+            const term = searchTerm.toLowerCase();
+            const info = getWoInfo(b);
+            return (
+              b.batch_no.toLowerCase().includes(term) ||
+              b.order_no.toLowerCase().includes(term) ||
+              info.customer.toLowerCase().includes(term) ||
+              info.product_name.toLowerCase().includes(term) ||
+              info.material.toLowerCase().includes(term)
+            );
+          }).length === 0 ? (
             <Card className="bg-zinc-800 border-zinc-700">
               <CardContent className="p-8 text-center text-zinc-400">尚無造模批次</CardContent>
             </Card>
           ) : (
-            batches.map(batch => (
+            batches.filter(b => {
+              if (!searchTerm.trim()) return true;
+              const term = searchTerm.toLowerCase();
+              const info = getWoInfo(b);
+              return (
+                b.batch_no.toLowerCase().includes(term) ||
+                b.order_no.toLowerCase().includes(term) ||
+                info.customer.toLowerCase().includes(term) ||
+                info.product_name.toLowerCase().includes(term) ||
+                info.material.toLowerCase().includes(term)
+              );
+            }).map(batch => (
               <Card key={batch.id} className="bg-zinc-800 border-zinc-700">
                 <CardContent className="p-4">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
