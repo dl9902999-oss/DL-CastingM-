@@ -702,11 +702,27 @@ export function getPatterns(): Pattern[] {
 
 export function createPattern(data: Omit<Pattern, 'id' | 'pattern_no' | 'usage_count' | 'created_at' | 'updated_at'>): Pattern {
   const patterns = getPatterns();
-  const no = generateOrderNo('MD');
+  // Generate pattern_no: MD-YYYYMMDD-{customerCode}-{seq}
+  // customerCode derived from customer_no (e.g. "A-001" -> "A01")
+  const customers = getCustomers();
+  const matchedCustomer = customers.find(c => c.name === data.customer || c.short_name === data.customer);
+  let customerCode = 'X00';
+  if (matchedCustomer && matchedCustomer.customer_no) {
+    // customer_no format: "A-001" -> "A01", "B-012" -> "B12"
+    const parts = matchedCustomer.customer_no.replace(/-/g, '');
+    customerCode = parts.length >= 3 ? parts.slice(0, 3) : parts.padEnd(3, '0');
+  }
+  // Sequential number per customer (5 digits)
+  const customerPatterns = patterns.filter(p => p.customer === data.customer);
+  const seq = customerPatterns.length + 1;
+  const seqStr = String(seq).padStart(5, '0');
+  const date = new Date();
+  const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+  const patternNo = `MD-${dateStr}-${customerCode}-${seqStr}`;
   const pattern: Pattern = {
     ...data,
     id: generateId(),
-    pattern_no: no,
+    pattern_no: patternNo,
     usage_count: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

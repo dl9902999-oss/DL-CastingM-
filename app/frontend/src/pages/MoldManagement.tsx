@@ -11,12 +11,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import {
   Pattern, PatternType, PatternStatus, PatternLocationStatus, MaintenanceType,
-  PatternMaintenance, PatternHistory, PatternLoan,
+  PatternMaintenance, PatternHistory, PatternLoan, Customer,
 } from '@/lib/types';
 import {
   getPatterns, createPattern, updatePattern, deletePattern,
   getPatternHistory, getPatternMaintenance, createPatternMaintenance,
   getPatternLoans, createPatternLoan, returnPatternLoan,
+  getCustomers,
 } from '@/lib/store';
 import { Plus, Search, Edit, Trash2, Wrench, History, MapPin, ArrowLeftRight, BarChart3, AlertTriangle, Image as ImageIcon, X } from 'lucide-react';
 
@@ -81,6 +82,7 @@ const LIFE_COLOR = (remaining: number, total: number) => {
 
 export default function MoldManagement() {
   const [patterns, setPatterns] = useState<Pattern[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [history, setHistory] = useState<PatternHistory[]>([]);
   const [maintenance, setMaintenance] = useState<PatternMaintenance[]>([]);
   const [loans, setLoans] = useState<PatternLoan[]>([]);
@@ -137,6 +139,7 @@ export default function MoldManagement() {
 
   const loadData = () => {
     setPatterns(getPatterns());
+    setCustomers(getCustomers());
     setHistory(getPatternHistory());
     setMaintenance(getPatternMaintenance());
     setLoans(getPatternLoans());
@@ -675,7 +678,18 @@ export default function MoldManagement() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-zinc-300 text-xs">客戶名稱 *</Label>
-                  <Input value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" placeholder="客戶" />
+                  <Select value={form.customer} onValueChange={v => setForm({ ...form, customer: v })}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
+                      <SelectValue placeholder="選擇客戶" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-800 border-zinc-700">
+                      {customers.map(c => (
+                        <SelectItem key={c.id} value={c.name} className="text-zinc-100">
+                          {c.customer_no} - {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-zinc-300 text-xs">模具名稱 *</Label>
