@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,9 +8,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment, Pattern } from '@/lib/types';
-import { getWorkOrders, createWorkOrder, updateWorkOrder, deleteWorkOrder, getMoldingBatches, getPatterns } from '@/lib/store';
-import { Plus, Search, Edit, Image, FileImage, X, Trash2 } from 'lucide-react';
+import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment, Pattern, Customer } from '@/lib/types';
+import { getWorkOrders, createWorkOrder, updateWorkOrder, deleteWorkOrder, getMoldingBatches, getPatterns, getCustomers } from '@/lib/store';
+import { Plus, Search, Edit, Image, FileImage, X, Trash2, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const MOLD_SUPPLY_OPTIONS: MoldSupply[] = ['客戶提供', '公司自有', '代客製作'];
@@ -63,9 +64,91 @@ function ImageUpload({ label, images, onChange, icon }: { label: string; images:
   );
 }
 
+function CustomerAutocomplete({ value, onChange, customers, onAddCustomer }: {
+  value: string;
+  onChange: (val: string) => void;
+  customers: Customer[];
+  onAddCustomer: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [inputValue, setInputValue] = useState(value);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setInputValue(value);
+  }, [value]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filtered = customers.filter(c => {
+    if (!inputValue.trim()) return true;
+    const term = inputValue.toLowerCase();
+    return c.name.toLowerCase().includes(term) || c.short_name.toLowerCase().includes(term) || c.customer_no.toLowerCase().includes(term);
+  });
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <Input
+        value={inputValue}
+        onChange={e => {
+          setInputValue(e.target.value);
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder="輸入客戶名稱搜尋..."
+        className="bg-zinc-700 border-zinc-600 text-zinc-100"
+      />
+      {open && (
+        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-zinc-800 border border-zinc-600 rounded-md shadow-lg max-h-48 overflow-y-auto">
+          {filtered.length > 0 ? (
+            filtered.map(c => (
+              <button
+                key={c.id}
+                type="button"
+                className="w-full text-left px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-700 flex justify-between items-center"
+                onClick={() => {
+                  onChange(c.name);
+                  setInputValue(c.name);
+                  setOpen(false);
+                }}
+              >
+                <span>{c.name}</span>
+                <span className="text-zinc-500 text-xs">{c.customer_no}</span>
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-2 text-sm text-zinc-400">找不到符合的客戶</div>
+          )}
+          <button
+            type="button"
+            className="w-full text-left px-3 py-2 text-sm text-amber-400 hover:bg-zinc-700 flex items-center gap-1.5 border-t border-zinc-700"
+            onClick={() => {
+              setOpen(false);
+              onAddCustomer();
+            }}
+          >
+            <UserPlus className="w-3.5 h-3.5" />新增客戶
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WorkOrders() {
+  const navigate = useNavigate();
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<WorkOrder | null>(null);
@@ -93,6 +176,7 @@ export default function WorkOrders() {
     setOrders(getWorkOrders());
     setBatches(getMoldingBatches());
     setPatternList(getPatterns());
+    setCustomers(getCustomers());
   }, []);
 
   const getStartedQty = (orderId: string) => {
@@ -170,7 +254,12 @@ export default function WorkOrders() {
               <div className="space-y-3">
                 <div>
                   <Label className="text-zinc-300">客戶</Label>
-                  <Input value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  <CustomerAutocomplete
+                    value={form.customer}
+                    onChange={(val) => setForm({ ...form, customer: val })}
+                    customers={customers}
+                    onAddCustomer={() => navigate('/customers')}
+                  />
                 </div>
                 <div>
                   <Label className="text-zinc-300">品名</Label>
@@ -365,7 +454,12 @@ export default function WorkOrders() {
               <div className="space-y-3">
                 <div>
                   <Label className="text-zinc-300">客戶</Label>
-                  <Input value={editOrder.customer} onChange={e => setEditOrder({ ...editOrder, customer: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  <CustomerAutocomplete
+                    value={editOrder.customer}
+                    onChange={(val) => setEditOrder({ ...editOrder, customer: val })}
+                    customers={customers}
+                    onAddCustomer={() => navigate('/customers')}
+                  />
                 </div>
                 <div>
                   <Label className="text-zinc-300">品名</Label>

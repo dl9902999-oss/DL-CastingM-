@@ -186,6 +186,25 @@ export function getWorkOrders(): WorkOrder[] {
 
 export function createWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' | 'status' | 'created_at' | 'updated_at'>): WorkOrder {
   const orders = getWorkOrders();
+  const customers = getCustomers();
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+  // Find customer_no from customer name
+  const matchedCustomer = customers.find(c => c.name === data.customer || c.short_name === data.customer);
+  const customerCode = matchedCustomer && matchedCustomer.customer_no
+    ? matchedCustomer.customer_no.replace(/-/g, '')
+    : 'X00';
+
+  // Count today's orders for this customer to determine daily sequence
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayCustomerOrders = orders.filter(o => {
+    return o.order_no.includes(`-${customerCode}-`) && o.created_at.startsWith(todayStr);
+  });
+  const dailySeq = todayCustomerOrders.length + 1;
+  const seqStr = String(dailySeq).padStart(3, '0');
+
+  const orderNo = `WO-${today}-${customerCode}-${seqStr}`;
+
   const newOrder: WorkOrder = {
     ...data,
     mold_photos: data.mold_photos || [],
@@ -195,7 +214,7 @@ export function createWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' | 'statu
     mold_type: data.mold_type || '',
     heat_treatment: data.heat_treatment || '',
     id: generateId(),
-    order_no: generateOrderNo('WO'),
+    order_no: orderNo,
     status: 'Open',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
