@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import AppLayout from '@/components/layout/AppLayout';
 import { getAllUsers, createUser, updateUser, deleteUser } from '@/lib/store';
 import { UserProfile, UserRole } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -138,14 +139,17 @@ export default function UserManagement() {
 
   if (currentUser?.role !== 'Admin') {
     return (
-      <div className="p-6 text-center text-zinc-400">
-        <Shield className="w-12 h-12 mx-auto mb-4 text-zinc-600" />
-        <p className="text-lg">僅管理員可存取此頁面</p>
-      </div>
+      <AppLayout>
+        <div className="p-6 text-center text-zinc-400">
+          <Shield className="w-12 h-12 mx-auto mb-4 text-zinc-600" />
+          <p className="text-lg">僅管理員可存取此頁面</p>
+        </div>
+      </AppLayout>
     );
   }
 
   return (
+    <AppLayout>
     <div className="p-4 md:p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -293,5 +297,6 @@ export default function UserManagement() {
         </DialogContent>
       </Dialog>
     </div>
+    </AppLayout>
   );
 }
