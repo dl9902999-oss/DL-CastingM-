@@ -7,13 +7,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment } from '@/lib/types';
-import { getWorkOrders, createWorkOrder, updateWorkOrder, deleteWorkOrder, getMoldingBatches } from '@/lib/store';
+import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment, Pattern } from '@/lib/types';
+import { getWorkOrders, createWorkOrder, updateWorkOrder, deleteWorkOrder, getMoldingBatches, getPatterns } from '@/lib/store';
 import { Plus, Search, Edit, Image, FileImage, X, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const MOLD_SUPPLY_OPTIONS: MoldSupply[] = ['客戶提供', '公司自有', '代客製作'];
-const MOLD_TYPE_OPTIONS: MoldType[] = ['單面模', '現板模', '上下模', '保模', '其他'];
+const MOLD_TYPE_OPTIONS: MoldType[] = ['上下模', '單面模', '現板模', '保模', '中板模', '砂心模', '其他'];
 const HEAT_TREATMENT_OPTIONS: HeatTreatment[] = ['退火', '淬火', '回火', '正常化', '調質', '其他'];
 
 function ImageUpload({ label, images, onChange, icon }: { label: string; images: string[]; onChange: (imgs: string[]) => void; icon: React.ReactNode }) {
@@ -80,16 +80,19 @@ export default function WorkOrders() {
     estimated_weight: 0,
     mold_supply: '' as MoldSupply | '',
     mold_type: '' as MoldType | '',
+    pattern_id: '',
     heat_treatment: '' as HeatTreatment | '',
     due_date: '',
     remarks: '',
     mold_photos: [] as string[],
     drawing_photos: [] as string[],
   });
+  const [patternList, setPatternList] = useState<Pattern[]>([]);
 
   useEffect(() => {
     setOrders(getWorkOrders());
     setBatches(getMoldingBatches());
+    setPatternList(getPatterns());
   }, []);
 
   const getStartedQty = (orderId: string) => {
@@ -109,7 +112,7 @@ export default function WorkOrders() {
 
   const resetForm = () => setForm({
     customer: '', product_name: '', material: '', quantity: 0,
-    estimated_weight: 0, mold_supply: '', mold_type: '', heat_treatment: '',
+    estimated_weight: 0, mold_supply: '', mold_type: '', pattern_id: '', heat_treatment: '',
     due_date: '', remarks: '', mold_photos: [], drawing_photos: []
   });
 
@@ -209,6 +212,27 @@ export default function WorkOrders() {
                     <SelectContent className="bg-zinc-700 border-zinc-600">
                       {MOLD_TYPE_OPTIONS.map(opt => (
                         <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">帶入模具</Label>
+                  <Select value={form.pattern_id} onValueChange={val => {
+                    const selected = patternList.find(p => p.id === val);
+                    if (selected) {
+                      setForm({ ...form, pattern_id: val, mold_type: selected.pattern_type as MoldType });
+                    } else {
+                      setForm({ ...form, pattern_id: val });
+                    }
+                  }}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
+                      <SelectValue placeholder="選擇模具管理清單中的模具" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">
+                      <SelectItem value="__none__">不帶入</SelectItem>
+                      {patternList.filter(p => p.status === '可生產').map(p => (
+                        <SelectItem key={p.id} value={p.id}>{p.pattern_no} - {p.name} ({p.pattern_type})</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -383,6 +407,27 @@ export default function WorkOrders() {
                     <SelectContent className="bg-zinc-700 border-zinc-600">
                       {MOLD_TYPE_OPTIONS.map(opt => (
                         <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">帶入模具</Label>
+                  <Select value={editOrder.pattern_id || '__none__'} onValueChange={val => {
+                    const selected = patternList.find(p => p.id === val);
+                    if (selected) {
+                      setEditOrder({ ...editOrder, pattern_id: val, mold_type: selected.pattern_type as MoldType });
+                    } else {
+                      setEditOrder({ ...editOrder, pattern_id: val === '__none__' ? '' : val });
+                    }
+                  }}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
+                      <SelectValue placeholder="選擇模具管理清單中的模具" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">
+                      <SelectItem value="__none__">不帶入</SelectItem>
+                      {patternList.filter(p => p.status === '可生產').map(p => (
+                        <SelectItem key={p.id} value={p.id}>{p.pattern_no} - {p.name} ({p.pattern_type})</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

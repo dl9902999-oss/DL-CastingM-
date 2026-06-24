@@ -11,7 +11,7 @@ export interface UserProfile {
 }
 
 export type MoldSupply = '客戶提供' | '公司自有' | '代客製作';
-export type MoldType = '單面模' | '現板模' | '上下模' | '保模' | '其他';
+export type MoldType = '上下模' | '單面模' | '現板模' | '保模' | '中板模' | '砂心模' | '其他';
 export type HeatTreatment = '退火' | '淬火' | '回火' | '正常化' | '調質' | '其他';
 
 export type CustomerType = '產業機械' | '砂石產業' | '營造工程' | '汽車模具' | '鑄造廠' | '加工廠' | '貿易商' | '其他';
@@ -47,6 +47,7 @@ export interface WorkOrder {
   estimated_weight: number;
   mold_supply: MoldSupply | '';
   mold_type: MoldType | '';
+  pattern_id: string;
   heat_treatment: HeatTreatment | '';
   due_date: string;
   remarks: string;
