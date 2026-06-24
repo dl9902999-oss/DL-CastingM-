@@ -61,12 +61,12 @@ function generateOrderNo(prefix: string): string {
 export function initDemoUsers(): void {
   const users = getItems<UserProfile>(STORAGE_KEYS.USERS);
   // Migrate: if existing users lack employee_id, reset to new format
-  const ALL_PATHS = ['/dashboard', '/customers', '/work-orders', '/molding', '/melting-management', '/quality', '/warehouse', '/shipment', '/traceability', '/user-management'];
-  const needsMigration = users.length === 0 || (users.length > 0 && !users[0].employee_id) || (users.length > 0 && !users[0].permissions);
+  const ALL_PATHS = ['/dashboard', '/customers', '/work-orders', '/molding', '/melting-management', '/quality', '/warehouse', '/shipment', '/mold-management', '/traceability', '/user-management'];
+  const needsMigration = users.length === 0 || (users.length > 0 && !users[0].employee_id) || (users.length > 0 && !users[0].permissions) || (users.length > 0 && users[0].permissions && !users[0].permissions.includes('/mold-management'));
   if (needsMigration) {
     const demoUsers: UserProfile[] = [
       { id: '1', employee_id: 'A001', password: 'admin123', role: 'Admin', name: '管理員', permissions: ALL_PATHS },
-      { id: '2', employee_id: 'P001', password: '1234', role: 'Production', name: '生產員', permissions: ['/dashboard', '/customers', '/work-orders', '/molding', '/melting-management', '/traceability'] },
+      { id: '2', employee_id: 'P001', password: '1234', role: 'Production', name: '生產員', permissions: ['/dashboard', '/customers', '/work-orders', '/molding', '/melting-management', '/mold-management', '/traceability'] },
       { id: '3', employee_id: 'Q001', password: '1234', role: 'QC', name: '品管員', permissions: ['/dashboard', '/quality', '/traceability'] },
       { id: '4', employee_id: 'W001', password: '1234', role: 'Warehouse', name: '倉管員', permissions: ['/dashboard', '/warehouse', '/shipment', '/traceability'] },
     ];
