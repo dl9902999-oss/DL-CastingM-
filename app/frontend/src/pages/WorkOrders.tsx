@@ -150,6 +150,10 @@ export default function WorkOrders() {
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterCustomer, setFilterCustomer] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<WorkOrder | null>(null);
   const [viewImages, setViewImages] = useState<{ title: string; images: string[] } | null>(null);
@@ -230,11 +234,33 @@ export default function WorkOrders() {
     toast({ title: '工單已刪除' });
   };
 
-  const filtered = orders.filter(o =>
-    o.order_no.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    o.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    o.product_name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filtered = orders.filter(o => {
+    // Text search
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase();
+      const matchText = o.order_no.toLowerCase().includes(term) ||
+        o.customer.toLowerCase().includes(term) ||
+        o.product_name.toLowerCase().includes(term);
+      if (!matchText) return false;
+    }
+    // Customer filter
+    if (filterCustomer && filterCustomer !== '__all__' && o.customer !== filterCustomer) return false;
+    // Status filter
+    if (filterStatus && filterStatus !== '__all__') {
+      const status = getDisplayStatus(o);
+      if (status.label !== filterStatus) return false;
+    }
+    // Date range filter
+    if (filterDateFrom) {
+      const orderDate = o.created_at.slice(0, 10);
+      if (orderDate < filterDateFrom) return false;
+    }
+    if (filterDateTo) {
+      const orderDate = o.created_at.slice(0, 10);
+      if (orderDate > filterDateTo) return false;
+    }
+    return true;
+  });
 
   return (
     <AppLayout>
@@ -365,15 +391,75 @@ export default function WorkOrders() {
           </Dialog>
         </div>
 
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-          <Input
-            placeholder="搜尋工單號、客戶、品名..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="pl-10 bg-zinc-800 border-zinc-700 text-zinc-100 placeholder:text-zinc-500"
-          />
+        {/* Search & Filters */}
+        <div className="space-y-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+            <Input
+              placeholder="搜尋工單號、客戶、品名..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="pl-10 bg-zinc-800 border-zinc-700 text-zinc-100 placeholder:text-zinc-500"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2 items-end">
+            <div className="flex-1 min-w-[140px]">
+              <Label className="text-zinc-400 text-xs mb-1 block">客戶篩選</Label>
+              <Select value={filterCustomer} onValueChange={setFilterCustomer}>
+                <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-100 h-9">
+                  <SelectValue placeholder="全部客戶" />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-800 border-zinc-700">
+                  <SelectItem value="__all__" className="text-zinc-200">全部客戶</SelectItem>
+                  {[...new Set(orders.map(o => o.customer))].filter(Boolean).sort().map(c => (
+                    <SelectItem key={c} value={c} className="text-zinc-200">{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex-1 min-w-[120px]">
+              <Label className="text-zinc-400 text-xs mb-1 block">狀態篩選</Label>
+              <Select value={filterStatus} onValueChange={setFilterStatus}>
+                <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-100 h-9">
+                  <SelectValue placeholder="全部狀態" />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-800 border-zinc-700">
+                  <SelectItem value="__all__" className="text-zinc-200">全部狀態</SelectItem>
+                  <SelectItem value="待開工" className="text-zinc-200">待開工</SelectItem>
+                  <SelectItem value="部分開工" className="text-zinc-200">部分開工</SelectItem>
+                  <SelectItem value="進行中" className="text-zinc-200">進行中</SelectItem>
+                  <SelectItem value="已完成" className="text-zinc-200">已完成</SelectItem>
+                  <SelectItem value="已取消" className="text-zinc-200">已取消</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex-1 min-w-[130px]">
+              <Label className="text-zinc-400 text-xs mb-1 block">起始日期</Label>
+              <Input
+                type="date"
+                value={filterDateFrom}
+                onChange={e => setFilterDateFrom(e.target.value)}
+                className="bg-zinc-800 border-zinc-700 text-zinc-100 h-9"
+              />
+            </div>
+            <div className="flex-1 min-w-[130px]">
+              <Label className="text-zinc-400 text-xs mb-1 block">結束日期</Label>
+              <Input
+                type="date"
+                value={filterDateTo}
+                onChange={e => setFilterDateTo(e.target.value)}
+                className="bg-zinc-800 border-zinc-700 text-zinc-100 h-9"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 h-9"
+              onClick={() => { setFilterCustomer(''); setFilterStatus(''); setFilterDateFrom(''); setFilterDateTo(''); }}
+            >
+              清除篩選
+            </Button>
+          </div>
         </div>
 
         {/* Orders List */}
