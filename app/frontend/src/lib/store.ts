@@ -195,13 +195,13 @@ export function createWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' | 'statu
     ? matchedCustomer.customer_no.replace(/-/g, '')
     : 'X00';
 
-  // Count today's orders for this customer to determine daily sequence
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const todayCustomerOrders = orders.filter(o => {
-    return o.order_no.includes(`-${customerCode}-`) && o.created_at.startsWith(todayStr);
+  // Count all orders for this customer to determine cumulative sequence (0001~)
+  const customerOrders = orders.filter(o => {
+    // Match orders that contain this customer code in the order_no
+    return o.order_no.includes(`-${customerCode}-`);
   });
-  const dailySeq = todayCustomerOrders.length + 1;
-  const seqStr = String(dailySeq).padStart(3, '0');
+  const seq = customerOrders.length + 1;
+  const seqStr = String(seq).padStart(4, '0');
 
   const orderNo = `WO-${today}-${customerCode}-${seqStr}`;
 
