@@ -13,6 +13,7 @@ import {
   Plus, Search, ClipboardCheck, AlertTriangle, TrendingUp, FileText,
   CheckCircle2, XCircle, AlertCircle, Eye, Trash2, BarChart3
 } from 'lucide-react';
+import AppLayout from '@/components/layout/AppLayout';
 import {
   getQualityInspections, createQualityInspection, deleteQualityInspection,
   getDefectRecords, createDefectRecord,
@@ -309,6 +310,7 @@ export default function Quality() {
   };
 
   return (
+    <AppLayout>
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -1372,5 +1374,6 @@ export default function Quality() {
         </DialogContent>
       </Dialog>
     </div>
+    </AppLayout>
   );
 }
