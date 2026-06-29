@@ -1,4 +1,4 @@
-import { WorkOrder, MoldingBatch, MeltingRecord, QualityInspection, WarehouseEntry, ShipmentOrder, UserProfile, Customer, MeltRecord, MeltMaterial, MeltChemistry, SampleStage, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
+import { WorkOrder, MoldingBatch, MeltingRecord, QualityInspection, WarehouseEntry, ShipmentOrder, UserProfile, Customer, MeltRecord, MeltMaterial, MeltChemistry, SampleStage, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan, DefectRecord, CAPARecord } from './types';
 
 // Local storage-based store for demo/offline mode
 // Will be replaced with Supabase queries when connected
@@ -374,15 +374,78 @@ export function getQualityInspections(): QualityInspection[] {
 
 export function createQualityInspection(data: Omit<QualityInspection, 'id' | 'inspection_no' | 'created_at'>): QualityInspection {
   const inspections = getQualityInspections();
+  const prefix = data.type === 'FAI' ? 'FAI' : data.type === 'IPQC' ? 'IPQC' : data.type === 'FQC' ? 'FQC' : 'OQC';
   const newInspection: QualityInspection = {
     ...data,
     id: generateId(),
-    inspection_no: generateOrderNo('QC'),
+    inspection_no: generateOrderNo(prefix),
     created_at: new Date().toISOString(),
   };
   inspections.push(newInspection);
   setItems(STORAGE_KEYS.QUALITY_INSPECTIONS, inspections);
   return newInspection;
+}
+
+export function updateQualityInspection(id: string, data: Partial<QualityInspection>): void {
+  const inspections = getQualityInspections();
+  const idx = inspections.findIndex(i => i.id === id);
+  if (idx >= 0) {
+    inspections[idx] = { ...inspections[idx], ...data };
+    setItems(STORAGE_KEYS.QUALITY_INSPECTIONS, inspections);
+  }
+}
+
+export function deleteQualityInspection(id: string): void {
+  const inspections = getQualityInspections().filter(i => i.id !== id);
+  setItems(STORAGE_KEYS.QUALITY_INSPECTIONS, inspections);
+}
+
+// Defect Records
+export function getDefectRecords(): DefectRecord[] {
+  const key = 'foundry_defect_records';
+  const data = localStorage.getItem(key);
+  return data ? JSON.parse(data) : [];
+}
+
+export function createDefectRecord(data: Omit<DefectRecord, 'id' | 'created_at'>): DefectRecord {
+  const records = getDefectRecords();
+  const newRecord: DefectRecord = {
+    ...data,
+    id: generateId(),
+    created_at: new Date().toISOString(),
+  };
+  records.push(newRecord);
+  localStorage.setItem('foundry_defect_records', JSON.stringify(records));
+  return newRecord;
+}
+
+// CAPA Records
+export function getCAPARecords(): CAPARecord[] {
+  const key = 'foundry_capa_records';
+  const data = localStorage.getItem(key);
+  return data ? JSON.parse(data) : [];
+}
+
+export function createCAPARecord(data: Omit<CAPARecord, 'id' | 'capa_no' | 'created_at'>): CAPARecord {
+  const records = getCAPARecords();
+  const newRecord: CAPARecord = {
+    ...data,
+    id: generateId(),
+    capa_no: generateOrderNo('CAPA'),
+    created_at: new Date().toISOString(),
+  };
+  records.push(newRecord);
+  localStorage.setItem('foundry_capa_records', JSON.stringify(records));
+  return newRecord;
+}
+
+export function updateCAPARecord(id: string, data: Partial<CAPARecord>): void {
+  const records = getCAPARecords();
+  const idx = records.findIndex(r => r.id === id);
+  if (idx >= 0) {
+    records[idx] = { ...records[idx], ...data };
+    localStorage.setItem('foundry_capa_records', JSON.stringify(records));
+  }
 }
 
 // Warehouse Entries

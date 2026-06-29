@@ -139,17 +139,100 @@ export interface MeltChemistry {
   Fe: number;
 }
 
+// Quality Inspection Types
+export type InspectionType = 'FAI' | 'IPQC' | 'FQC' | 'OQC';
+export type InspectionResult = 'PASS' | 'FAIL' | 'CONDITIONAL';
+export type DefectDisposition = 'REWORK' | 'SCRAP' | 'CONCESSION' | 'RETURN';
+export type CAPAStatus = 'OPEN' | 'ANALYZING' | 'IMPLEMENTING' | 'VERIFYING' | 'CLOSED';
+
+export const DEFECT_CODES = [
+  { code: 'DIM', label: '尺寸異常' },
+  { code: 'SHR', label: '縮孔' },
+  { code: 'GAS', label: '氣孔' },
+  { code: 'SAND', label: '砂孔' },
+  { code: 'CRK', label: '裂紋' },
+  { code: 'COLD', label: '冷隔' },
+  { code: 'SLAG', label: '夾渣' },
+  { code: 'DEF', label: '變形' },
+  { code: 'MACH', label: '加工不足' },
+  { code: 'COMP', label: '成份異常' },
+  { code: 'HARD', label: '硬度異常' },
+  { code: 'OTHER', label: '其他' },
+] as const;
+
+export const INSPECTION_ITEMS_FAI = ['尺寸', '重量', '外觀', '成份', '硬度', '外觀缺陷'] as const;
+export const INSPECTION_ITEMS_IPQC = ['尺寸', '外觀', '重量', '溫度', '砂模狀況', '氣孔', '縮孔', '裂紋'] as const;
+export const INSPECTION_ITEMS_FQC = ['尺寸', '重量', '材質', '表面', '外觀', '組裝', '包裝', '文件'] as const;
+export const INSPECTION_ITEMS_OQC = ['數量', '標籤', '包裝', '外觀', '文件', '客戶要求'] as const;
+
 export interface QualityInspection {
   id: string;
   inspection_no: string;
+  type: InspectionType;
   batch_id: string;
   batch_no: string;
+  work_order_id?: string;
+  order_no?: string;
+  customer?: string;
+  product_name?: string;
+  material?: string;
+  mold_id?: string;
   heat_no: string;
-  result: 'PASS' | 'HOLD' | 'REJECT';
-  defect_count: number;
-  inspected_quantity: number;
-  remarks: string;
+  melt_record_id?: string;
+  inspection_date: string;
   inspector: string;
+  result: InspectionResult;
+  inspected_quantity: number;
+  pass_quantity: number;
+  defect_count: number;
+  yield_rate: number;
+  sampling_method?: string;
+  item_results: InspectionItemResult[];
+  defects: DefectRecord[];
+  attachments?: string[];
+  remarks: string;
+  created_at: string;
+}
+
+export interface InspectionItemResult {
+  item: string;
+  result: 'OK' | 'NG';
+  measured_value?: string;
+  standard_value?: string;
+  remarks?: string;
+}
+
+export interface DefectRecord {
+  id: string;
+  inspection_id?: string;
+  batch_id?: string;
+  batch_no?: string;
+  defect_code: string;
+  defect_label: string;
+  quantity: number;
+  cause?: string;
+  responsible_station?: string;
+  disposition: DefectDisposition;
+  remarks?: string;
+  created_at: string;
+}
+
+export interface CAPARecord {
+  id: string;
+  capa_no: string;
+  inspection_id?: string;
+  defect_id?: string;
+  status: CAPAStatus;
+  problem_description: string;
+  five_why?: string;
+  root_cause?: string;
+  corrective_action?: string;
+  preventive_action?: string;
+  responsible_person: string;
+  due_date: string;
+  verified_by?: string;
+  verified_date?: string;
+  attachments?: string[];
   created_at: string;
 }
 

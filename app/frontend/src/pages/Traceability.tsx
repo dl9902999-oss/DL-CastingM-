@@ -155,9 +155,9 @@ export default function Traceability() {
                       <div className="flex items-center gap-2">
                         <span className={`text-xs px-2 py-0.5 rounded-full ${
                           q.result === 'PASS' ? 'bg-green-500/20 text-green-400' :
-                          q.result === 'HOLD' ? 'bg-amber-500/20 text-amber-400' :
+                          q.result === 'CONDITIONAL' ? 'bg-amber-500/20 text-amber-400' :
                           'bg-red-500/20 text-red-400'
-                        }`}>{q.result}</span>
+                        }`}>{q.result === 'PASS' ? '合格' : q.result === 'FAIL' ? '不合格' : '條件放行'}</span>
                         <span className="text-xs text-zinc-400">缺陷: {q.defect_count}</span>
                       </div>
                     </div>
