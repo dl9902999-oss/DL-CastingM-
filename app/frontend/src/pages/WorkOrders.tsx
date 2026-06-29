@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment, Pattern, Customer } from '@/lib/types';
-import { getWorkOrders, createWorkOrder, updateWorkOrder, deleteWorkOrder, getMoldingBatches, getPatterns, getCustomers } from '@/lib/store';
+import { getWorkOrders, createWorkOrder, updateWorkOrder, deleteWorkOrder, getMoldingBatches, getPatterns, getCustomers, getMeltRecords } from '@/lib/store';
 import { Plus, Search, Edit, Image, FileImage, X, Trash2, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -187,11 +187,67 @@ export default function WorkOrders() {
     return batches.filter(b => b.work_order_id === orderId).reduce((sum, b) => sum + b.quantity_planned, 0);
   };
 
-  // Derive display status based on batch quantities
+  // Check if a batch has pouring records (from melt_pouring_* localStorage)
+  const getBatchPouringStatus = (batchId: string): 'none' | 'partial' | 'full' => {
+    const meltRecords = getMeltRecords();
+    for (const record of meltRecords) {
+      const pouringKey = `melt_pouring_${record.id}`;
+      const savedPouring = localStorage.getItem(pouringKey);
+      if (savedPouring) {
+        try {
+          const pouringData = JSON.parse(savedPouring) as Array<{
+            batch_id: string;
+            pouring_weights: number[];
+            quantity: number;
+          }>;
+          const batchPouring = pouringData.find(p => p.batch_id === batchId);
+          if (batchPouring) {
+            const filledWeights = batchPouring.pouring_weights.filter(w => w > 0).length;
+            if (filledWeights >= batchPouring.quantity) return 'full';
+            if (filledWeights > 0) return 'partial';
+          }
+        } catch { /* ignore parse errors */ }
+      }
+    }
+    return 'none';
+  };
+
+  // Derive display status based on batch quantities and pouring status
   const getDisplayStatus = (order: WorkOrder) => {
     const startedQty = getStartedQty(order.id);
     if (order.status === 'Cancelled') return { label: '已取消', cls: 'bg-zinc-600 text-zinc-300' };
-    if (order.status === 'Completed' || startedQty >= order.quantity) return { label: '已完成', cls: 'bg-green-500/20 text-green-400' };
+
+    // Check if all batches cover the order quantity (fully started)
+    if (order.status === 'Completed' || startedQty >= order.quantity) {
+      // Get all batches for this order
+      const orderBatches = batches.filter(b => b.work_order_id === order.id);
+      if (orderBatches.length === 0) return { label: '已完成', cls: 'bg-green-500/20 text-green-400' };
+
+      // Check pouring status for each batch
+      let allPoured = true;
+      let anyPoured = false;
+      for (const batch of orderBatches) {
+        const pouringStatus = getBatchPouringStatus(batch.id);
+        if (pouringStatus === 'full') {
+          anyPoured = true;
+        } else if (pouringStatus === 'partial') {
+          anyPoured = true;
+          allPoured = false;
+        } else {
+          allPoured = false;
+        }
+      }
+
+      if (allPoured && anyPoured) return { label: '全部澆注', cls: 'bg-emerald-500/20 text-emerald-400' };
+      if (anyPoured) return { label: '部分澆注', cls: 'bg-purple-500/20 text-purple-400' };
+
+      // Check if all batches have closing_photos (合模完成)
+      const allMoldClosed = orderBatches.every(b => b.closing_photos && b.closing_photos.length > 0);
+      if (allMoldClosed) return { label: '合模完成', cls: 'bg-teal-500/20 text-teal-400' };
+
+      return { label: '已完成', cls: 'bg-green-500/20 text-green-400' };
+    }
+
     if (startedQty > 0) return { label: '部分開工', cls: 'bg-cyan-500/20 text-cyan-400' };
     if (order.status === 'Partial') return { label: '部分開工', cls: 'bg-cyan-500/20 text-cyan-400' };
     if (order.status === 'In Progress') return { label: '進行中', cls: 'bg-amber-500/20 text-amber-400' };
@@ -428,6 +484,9 @@ export default function WorkOrders() {
                   <SelectItem value="待開工" className="text-zinc-200">待開工</SelectItem>
                   <SelectItem value="部分開工" className="text-zinc-200">部分開工</SelectItem>
                   <SelectItem value="進行中" className="text-zinc-200">進行中</SelectItem>
+                  <SelectItem value="合模完成" className="text-zinc-200">合模完成</SelectItem>
+                  <SelectItem value="部分澆注" className="text-zinc-200">部分澆注</SelectItem>
+                  <SelectItem value="全部澆注" className="text-zinc-200">全部澆注</SelectItem>
                   <SelectItem value="已完成" className="text-zinc-200">已完成</SelectItem>
                   <SelectItem value="已取消" className="text-zinc-200">已取消</SelectItem>
                 </SelectContent>
