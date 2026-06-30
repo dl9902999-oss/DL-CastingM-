@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from '@/lib/store';
 import { Customer, CustomerType, CustomerStatus } from '@/lib/types';
-import { Plus, Search, Edit, Trash2, Users, X } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Users, X, Upload } from 'lucide-react';
+import BatchImportDialog from '@/components/BatchImportDialog';
 
 const CUSTOMER_TYPES: CustomerType[] = ['產業機械', '砂石產業', '營造工程', '汽車模具', '鑄造廠', '加工廠', '貿易商', '其他'];
 const CUSTOMER_STATUSES: CustomerStatus[] = ['啟用', '停用'];
@@ -52,6 +53,9 @@ export default function Customers() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
+
+  // Batch import state
+  const [isBatchImportOpen, setIsBatchImportOpen] = useState(false);
 
   const filteredCustomers = useMemo(() => {
     if (!searchQuery.trim()) return customers;
@@ -297,9 +301,14 @@ export default function Customers() {
             <Users className="w-6 h-6 text-amber-500" />
             客戶資料
           </h1>
-          <Button onClick={() => { setForm(emptyForm); setIsCreateOpen(true); }} className="bg-amber-600 hover:bg-amber-700">
-            <Plus className="w-4 h-4 mr-1" /> 新增客戶
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={() => setIsBatchImportOpen(true)} variant="outline" className="border-amber-600 text-amber-400 hover:bg-amber-600/10">
+              <Upload className="w-4 h-4 mr-1" /> 批次匯入
+            </Button>
+            <Button onClick={() => { setForm(emptyForm); setIsCreateOpen(true); }} className="bg-amber-600 hover:bg-amber-700">
+              <Plus className="w-4 h-4 mr-1" /> 新增客戶
+            </Button>
+          </div>
         </div>
 
         {/* Search */}
@@ -386,6 +395,13 @@ export default function Customers() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Batch Import Dialog */}
+      <BatchImportDialog
+        open={isBatchImportOpen}
+        onOpenChange={setIsBatchImportOpen}
+        onImportComplete={() => setCustomers(getCustomers())}
+      />
     </AppLayout>
   );
 }
