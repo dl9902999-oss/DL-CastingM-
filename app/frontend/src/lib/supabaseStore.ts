@@ -9,9 +9,25 @@ export async function checkSupabaseConnection(): Promise<boolean> {
     const url = import.meta.env.VITE_SUPABASE_URL;
     const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
     if (!url || !key) return false;
+    // Try a simple query - if RLS blocks it, we'll get a specific error
     const { error } = await supabase.from('customers').select('id', { count: 'exact', head: true });
-    return !error;
-  } catch {
+    if (error) {
+      // If the error is about the table not existing, connection works but schema not set up
+      if (error.code === '42P01') {
+        console.warn('[Supabase] 連接成功但資料表尚未建立，請執行 SQL schema');
+        return false;
+      }
+      // RLS permission denied - connection works but policies need fixing
+      if (error.code === '42501' || error.message?.includes('permission denied')) {
+        console.warn('[Supabase] 連接成功但 RLS 政策需要更新，請執行 supabase_rls_fix.sql');
+        return false;
+      }
+      console.warn('[Supabase] 連接錯誤:', error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('[Supabase] 連接失敗:', e);
     return false;
   }
 }
