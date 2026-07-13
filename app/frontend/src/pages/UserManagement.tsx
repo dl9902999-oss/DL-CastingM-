@@ -67,6 +67,17 @@ export default function UserManagement() {
     setDialogOpen(true);
   };
 
+  // 當員工編號變更時，自動同步預設密碼（僅新增模式且密碼未手動修改時）
+  const handleEmployeeIdChange = (value: string) => {
+    const trimmed = value.trim();
+    // 如果密碼為空或等於舊的員工編號，則同步更新密碼
+    if (!editingUser && (form.password === '' || form.password === form.employee_id)) {
+      setForm({ ...form, employee_id: value, password: trimmed });
+    } else {
+      setForm({ ...form, employee_id: value });
+    }
+  };
+
   const handleOpenEdit = (u: UserProfile) => {
     setEditingUser(u);
     setForm({ employee_id: u.employee_id, name: u.name, password: '', role: u.role, permissions: u.permissions || [] });
@@ -138,7 +149,7 @@ export default function UserManagement() {
 
   const handleOpenPasswordChange = (u: UserProfile) => {
     setPasswordTarget(u);
-    setNewPassword('');
+    setNewPassword(u.password);
     setPasswordDialogOpen(true);
   };
 
@@ -201,7 +212,7 @@ export default function UserManagement() {
                         <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">目前登入</span>
                       )}
                     </div>
-                    <p className="text-xs text-zinc-500 mt-0.5">員工編號: {u.employee_id}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">員工編號: {u.employee_id} ｜ 密碼: <span className="font-mono text-zinc-400">{u.password}</span></p>
                     {u.permissions && u.permissions.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
                         {u.permissions.map(p => {
@@ -246,7 +257,7 @@ export default function UserManagement() {
               <Label className="text-zinc-300">員工編號 *</Label>
               <Input
                 value={form.employee_id}
-                onChange={e => setForm({ ...form, employee_id: e.target.value })}
+                onChange={e => editingUser ? setForm({ ...form, employee_id: e.target.value }) : handleEmployeeIdChange(e.target.value)}
                 placeholder="例: P002"
                 className="bg-zinc-700 border-zinc-600 text-zinc-100"
               />
@@ -262,13 +273,13 @@ export default function UserManagement() {
             </div>
             {!editingUser && (
               <div className="space-y-2">
-                <Label className="text-zinc-300">密碼 *</Label>
+                <Label className="text-zinc-300">密碼 *（預設與員工編號相同）</Label>
                 <Input
-                  type="password"
+                  type="text"
                   value={form.password}
                   onChange={e => setForm({ ...form, password: e.target.value })}
                   placeholder="設定密碼"
-                  className="bg-zinc-700 border-zinc-600 text-zinc-100"
+                  className="bg-zinc-700 border-zinc-600 text-zinc-100 font-mono"
                 />
               </div>
             )}
@@ -328,13 +339,19 @@ export default function UserManagement() {
               帳號: <span className="text-zinc-200 font-medium">{passwordTarget?.employee_id} - {passwordTarget?.name}</span>
             </p>
             <div className="space-y-2">
+              <Label className="text-zinc-300">目前密碼</Label>
+              <div className="px-3 py-2 rounded bg-zinc-700/50 border border-zinc-600 text-zinc-200 font-mono text-sm">
+                {passwordTarget?.password}
+              </div>
+            </div>
+            <div className="space-y-2">
               <Label className="text-zinc-300">新密碼 *</Label>
               <Input
-                type="password"
+                type="text"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
                 placeholder="輸入新密碼"
-                className="bg-zinc-700 border-zinc-600 text-zinc-100"
+                className="bg-zinc-700 border-zinc-600 text-zinc-100 font-mono"
               />
             </div>
             <div className="flex gap-2 justify-end pt-2">
