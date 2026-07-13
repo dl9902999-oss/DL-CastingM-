@@ -1,13 +1,17 @@
 import { WorkOrder, MoldingBatch, MeltingRecord, QualityInspection, WarehouseEntry, ShipmentOrder, UserProfile, Customer, MeltRecord, MeltMaterial, MeltChemistry, SampleStage, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan, DefectRecord, CAPARecord } from './types';
 
-// Local storage-based store for demo/offline mode
-// Will be replaced with Supabase queries when connected
+// Local storage-based store with background Supabase sync
+// All writes go to localStorage first (instant), then sync to Supabase in background
+
+import * as sbStore from './supabaseStore';
 
 const STORAGE_KEYS = {
   WORK_ORDERS: 'foundry_work_orders',
   MOLDING_BATCHES: 'foundry_molding_batches',
   MELTING_RECORDS: 'foundry_melting_records',
   QUALITY_INSPECTIONS: 'foundry_quality_inspections',
+  DEFECT_RECORDS: 'foundry_defect_records',
+  CAPA_RECORDS: 'foundry_capa_records',
   WAREHOUSE_ENTRIES: 'foundry_warehouse_entries',
   SHIPMENT_ORDERS: 'foundry_shipment_orders',
   USERS: 'foundry_users',
@@ -25,6 +29,110 @@ const STORAGE_KEYS = {
   PATTERN_LOANS: 'foundry_pattern_loans',
 };
 
+// ============================================================
+// Background Sync Engine
+// ============================================================
+let _bgSyncEnabled: boolean | null = null;
+let _bgSyncCheckPromise: Promise<boolean> | null = null;
+
+function initBgSync(): void {
+  if (_bgSyncCheckPromise) return;
+  _bgSyncCheckPromise = sbStore.checkSupabaseConnection().then(connected => {
+    _bgSyncEnabled = connected;
+    console.log(`[Store] Background sync ${connected ? 'ENABLED ✓' : 'DISABLED (offline mode)'}`);
+    if (connected) {
+      performFullSync();
+    }
+    return connected;
+  }).catch(() => {
+    _bgSyncEnabled = false;
+    return false;
+  });
+}
+
+async function performFullSync(): Promise<void> {
+  try {
+    console.log('[Store] Starting full sync to Supabase...');
+    const tables = [
+      'customers', 'work_orders', 'molding_batches', 'melting_records',
+      'quality_inspections', 'defect_records', 'capa_records',
+      'warehouse_entries', 'shipment_orders', 'melt_records',
+      'melt_materials', 'melt_chemistry', 'patterns',
+      'pattern_history', 'pattern_maintenance', 'pattern_loans', 'users',
+    ];
+    await Promise.allSettled(tables.map(t => bgSyncCollection(t)));
+    console.log('[Store] Full sync completed ✓');
+  } catch (e) {
+    console.error('[Store] Full sync error:', e);
+  }
+}
+
+async function bgSyncCollection(table: string): Promise<void> {
+  try {
+    const keyMap: Record<string, string> = {
+      customers: STORAGE_KEYS.CUSTOMERS,
+      work_orders: STORAGE_KEYS.WORK_ORDERS,
+      molding_batches: STORAGE_KEYS.MOLDING_BATCHES,
+      melting_records: STORAGE_KEYS.MELTING_RECORDS,
+      quality_inspections: STORAGE_KEYS.QUALITY_INSPECTIONS,
+      defect_records: STORAGE_KEYS.DEFECT_RECORDS,
+      capa_records: STORAGE_KEYS.CAPA_RECORDS,
+      warehouse_entries: STORAGE_KEYS.WAREHOUSE_ENTRIES,
+      shipment_orders: STORAGE_KEYS.SHIPMENT_ORDERS,
+      melt_records: STORAGE_KEYS.MELT_RECORDS,
+      melt_materials: STORAGE_KEYS.MELT_MATERIALS,
+      melt_chemistry: STORAGE_KEYS.MELT_CHEMISTRY,
+      patterns: STORAGE_KEYS.PATTERNS,
+      pattern_history: STORAGE_KEYS.PATTERN_HISTORY,
+      pattern_maintenance: STORAGE_KEYS.PATTERN_MAINTENANCE,
+      pattern_loans: STORAGE_KEYS.PATTERN_LOANS,
+      users: STORAGE_KEYS.USERS,
+    };
+    const storageKey = keyMap[table];
+    if (!storageKey) return;
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return;
+    const items = JSON.parse(raw);
+    if (!items || items.length === 0) return;
+    await sbStore.sbUpsertBatch(table, items);
+  } catch (e) {
+    console.warn(`[Store] bgSync ${table} failed:`, e);
+  }
+}
+
+function notifyBgSync(storageKey: string): void {
+  if (_bgSyncEnabled !== true) return;
+  const tableMap: Record<string, string> = {
+    [STORAGE_KEYS.CUSTOMERS]: 'customers',
+    [STORAGE_KEYS.WORK_ORDERS]: 'work_orders',
+    [STORAGE_KEYS.MOLDING_BATCHES]: 'molding_batches',
+    [STORAGE_KEYS.MELTING_RECORDS]: 'melting_records',
+    [STORAGE_KEYS.QUALITY_INSPECTIONS]: 'quality_inspections',
+    [STORAGE_KEYS.DEFECT_RECORDS]: 'defect_records',
+    [STORAGE_KEYS.CAPA_RECORDS]: 'capa_records',
+    [STORAGE_KEYS.WAREHOUSE_ENTRIES]: 'warehouse_entries',
+    [STORAGE_KEYS.SHIPMENT_ORDERS]: 'shipment_orders',
+    [STORAGE_KEYS.MELT_RECORDS]: 'melt_records',
+    [STORAGE_KEYS.MELT_MATERIALS]: 'melt_materials',
+    [STORAGE_KEYS.MELT_CHEMISTRY]: 'melt_chemistry',
+    [STORAGE_KEYS.PATTERNS]: 'patterns',
+    [STORAGE_KEYS.PATTERN_HISTORY]: 'pattern_history',
+    [STORAGE_KEYS.PATTERN_MAINTENANCE]: 'pattern_maintenance',
+    [STORAGE_KEYS.PATTERN_LOANS]: 'pattern_loans',
+    [STORAGE_KEYS.USERS]: 'users',
+  };
+  const table = tableMap[storageKey];
+  if (table) {
+    bgSyncCollection(table).catch(e => console.warn(`[Store] bg sync ${table}:`, e));
+  }
+}
+
+// Initialize background sync on module load
+initBgSync();
+
+// ============================================================
+// Core localStorage helpers
+// ============================================================
 function getItems<T>(key: string): T[] {
   const data = localStorage.getItem(key);
   return data ? JSON.parse(data) : [];
@@ -32,6 +140,8 @@ function getItems<T>(key: string): T[] {
 
 function setItems<T>(key: string, items: T[]): void {
   localStorage.setItem(key, JSON.stringify(items));
+  // Trigger background sync to Supabase
+  notifyBgSync(key);
 }
 
 function generateId(): string {
@@ -402,9 +512,7 @@ export function deleteQualityInspection(id: string): void {
 
 // Defect Records
 export function getDefectRecords(): DefectRecord[] {
-  const key = 'foundry_defect_records';
-  const data = localStorage.getItem(key);
-  return data ? JSON.parse(data) : [];
+  return getItems<DefectRecord>(STORAGE_KEYS.DEFECT_RECORDS);
 }
 
 export function createDefectRecord(data: Omit<DefectRecord, 'id' | 'created_at'>): DefectRecord {
@@ -415,15 +523,13 @@ export function createDefectRecord(data: Omit<DefectRecord, 'id' | 'created_at'>
     created_at: new Date().toISOString(),
   };
   records.push(newRecord);
-  localStorage.setItem('foundry_defect_records', JSON.stringify(records));
+  setItems(STORAGE_KEYS.DEFECT_RECORDS, records);
   return newRecord;
 }
 
 // CAPA Records
 export function getCAPARecords(): CAPARecord[] {
-  const key = 'foundry_capa_records';
-  const data = localStorage.getItem(key);
-  return data ? JSON.parse(data) : [];
+  return getItems<CAPARecord>(STORAGE_KEYS.CAPA_RECORDS);
 }
 
 export function createCAPARecord(data: Omit<CAPARecord, 'id' | 'capa_no' | 'created_at'>): CAPARecord {
@@ -435,7 +541,7 @@ export function createCAPARecord(data: Omit<CAPARecord, 'id' | 'capa_no' | 'crea
     created_at: new Date().toISOString(),
   };
   records.push(newRecord);
-  localStorage.setItem('foundry_capa_records', JSON.stringify(records));
+  setItems(STORAGE_KEYS.CAPA_RECORDS, records);
   return newRecord;
 }
 
@@ -444,7 +550,7 @@ export function updateCAPARecord(id: string, data: Partial<CAPARecord>): void {
   const idx = records.findIndex(r => r.id === id);
   if (idx >= 0) {
     records[idx] = { ...records[idx], ...data };
-    localStorage.setItem('foundry_capa_records', JSON.stringify(records));
+    setItems(STORAGE_KEYS.CAPA_RECORDS, records);
   }
 }
 

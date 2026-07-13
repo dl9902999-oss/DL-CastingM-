@@ -1140,3 +1140,55 @@ export async function sbReturnPatternLoan(loanId: string): Promise<void> {
   await supabase.from('pattern_loans').update({ return_date: new Date().toISOString().slice(0, 10) }).eq('id', loanId);
   if (data) await sbUpdatePattern(data.pattern_id as string, { location_status: '在庫' });
 }
+
+// ============================================================
+// Background Sync - Batch Upsert
+// ============================================================
+export async function sbUpsertBatch(table: string, items: Record<string, unknown>[]): Promise<void> {
+  if (!items || items.length === 0) return;
+  
+  // Map internal table names to Supabase table names
+  const tableNameMap: Record<string, string> = {
+    customers: 'customers',
+    work_orders: 'work_orders',
+    molding_batches: 'molding_batches',
+    melting_records: 'melting_records',
+    quality_inspections: 'quality_inspections',
+    defect_records: 'defect_records',
+    capa_records: 'capa_records',
+    warehouse_entries: 'warehouse_entries',
+    shipment_orders: 'shipment_orders',
+    melt_records: 'melt_records',
+    melt_materials: 'melt_materials',
+    melt_chemistry: 'melt_chemistry',
+    patterns: 'patterns',
+    pattern_history: 'pattern_history',
+    pattern_maintenance: 'pattern_maintenance',
+    pattern_loans: 'pattern_loans',
+    users: 'user_profiles',
+  };
+
+  const supabaseTable = tableNameMap[table];
+  if (!supabaseTable) {
+    console.warn(`[sbUpsertBatch] Unknown table: ${table}`);
+    return;
+  }
+
+  try {
+    // Upsert in batches of 50 to avoid payload limits
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < items.length; i += BATCH_SIZE) {
+      const batch = items.slice(i, i + BATCH_SIZE);
+      const { error } = await supabase
+        .from(supabaseTable)
+        .upsert(batch, { onConflict: 'id', ignoreDuplicates: false });
+      
+      if (error) {
+        console.warn(`[sbUpsertBatch] ${supabaseTable} batch ${i}-${i + batch.length} error:`, error.message);
+      }
+    }
+  } catch (e) {
+    console.warn(`[sbUpsertBatch] ${supabaseTable} exception:`, e);
+  }
+}
+
