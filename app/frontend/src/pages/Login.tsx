@@ -29,16 +29,18 @@ export default function Login() {
     }
   };
 
-  const demoAccounts = [
-    { employeeId: 'A001', password: 'admin123', role: 'Admin (管理員)' },
-    { employeeId: 'P001', password: '1234', role: 'Production (生產員)' },
-    { employeeId: 'Q001', password: '1234', role: 'QC (品管員)' },
-    { employeeId: 'W001', password: '1234', role: 'Warehouse (倉管員)' },
-  ];
-
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-900 p-4">
-      <Card className="w-full max-w-md bg-zinc-800 border-zinc-700">
+    <div className="min-h-screen flex items-center justify-center relative overflow-hidden">
+      {/* Background Image */}
+      <div
+        className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+        style={{ backgroundImage: "url('/assets/foundry-bg.jpg')" }}
+      />
+      {/* Dark Overlay */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+
+      {/* Login Card */}
+      <Card className="relative z-10 w-full max-w-md bg-zinc-800/90 border-zinc-700 shadow-2xl backdrop-blur-md mx-4">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
             <div className="w-16 h-16 rounded-full bg-amber-500/20 flex items-center justify-center">
@@ -78,21 +80,6 @@ export default function Login() {
               登入
             </Button>
           </form>
-
-          <div className="mt-6 pt-4 border-t border-zinc-700">
-            <p className="text-xs text-zinc-400 mb-3">示範帳號：</p>
-            <div className="grid grid-cols-2 gap-2">
-              {demoAccounts.map(acc => (
-                <button
-                  key={acc.employeeId}
-                  onClick={() => { setEmployeeId(acc.employeeId); setPassword(acc.password); }}
-                  className="text-xs px-2 py-1.5 rounded bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
-                >
-                  {acc.employeeId} ({acc.role})
-                </button>
-              ))}
-            </div>
-          </div>
         </CardContent>
       </Card>
     </div>
