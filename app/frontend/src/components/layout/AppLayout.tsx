@@ -1,5 +1,6 @@
 import { ReactNode, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDataConnection } from '@/contexts/DataContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -43,6 +44,7 @@ const navItems: NavItem[] = [
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
+  const { isOnline, isLoading: dataLoading } = useDataConnection();
   const navigate = useNavigate();
   const location = useLocation();
   const [open, setOpen] = useState(false);
@@ -79,6 +81,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         ))}
       </nav>
       <div className="p-4 border-t border-zinc-700">
+        <div className="flex items-center gap-2 mb-2">
+          <span className={`inline-block w-2 h-2 rounded-full ${dataLoading ? 'bg-yellow-400 animate-pulse' : isOnline ? 'bg-green-400' : 'bg-zinc-500'}`} />
+          <span className="text-xs text-zinc-400">
+            {dataLoading ? '連接中...' : isOnline ? 'Supabase 已連接' : '離線模式'}
+          </span>
+        </div>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium text-zinc-200">{user?.name}</p>

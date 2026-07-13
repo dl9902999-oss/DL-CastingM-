@@ -1,0 +1,1126 @@
+import { supabase } from './supabase';
+import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, MeltChemistry, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder, UserProfile, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
+
+// ============================================================
+// Supabase connection check
+// ============================================================
+export async function checkSupabaseConnection(): Promise<boolean> {
+  try {
+    const url = import.meta.env.VITE_SUPABASE_URL;
+    const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (!url || !key) return false;
+    const { error } = await supabase.from('customers').select('id', { count: 'exact', head: true });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================
+// Users
+// ============================================================
+export async function sbGetAllUsers(): Promise<UserProfile[]> {
+  const { data, error } = await supabase.from('users_profile').select('*');
+  if (error) throw error;
+  return (data || []).map(mapUserProfile);
+}
+
+export async function sbLogin(employeeId: string, password: string): Promise<UserProfile | null> {
+  const { data, error } = await supabase.from('users_profile').select('*').eq('employee_id', employeeId).single();
+  if (error || !data) return null;
+  const user = mapUserProfile(data);
+  // Password check - stored in profile for demo
+  if ((data as Record<string, unknown>).password !== password) return null;
+  return user;
+}
+
+export async function sbCreateUser(userData: Omit<UserProfile, 'id'>): Promise<UserProfile> {
+  const { data, error } = await supabase.from('users_profile').insert({
+    employee_id: userData.employee_id,
+    name: userData.name,
+    role: userData.role,
+    permissions: userData.permissions || [],
+    password: userData.password,
+  }).select().single();
+  if (error) throw error;
+  return mapUserProfile(data);
+}
+
+export async function sbUpdateUser(id: string, updates: Partial<Omit<UserProfile, 'id'>>): Promise<UserProfile | null> {
+  const { data, error } = await supabase.from('users_profile').update(updates).eq('id', id).select().single();
+  if (error) throw error;
+  return data ? mapUserProfile(data) : null;
+}
+
+export async function sbDeleteUser(id: string): Promise<boolean> {
+  const { error } = await supabase.from('users_profile').delete().eq('id', id);
+  return !error;
+}
+
+function mapUserProfile(row: Record<string, unknown>): UserProfile {
+  return {
+    id: row.id as string,
+    employee_id: row.employee_id as string,
+    password: (row.password as string) || '',
+    email: (row.email as string) || '',
+    role: row.role as UserProfile['role'],
+    name: row.name as string,
+    permissions: (row.permissions as string[]) || [],
+  };
+}
+
+// ============================================================
+// Customers
+// ============================================================
+export async function sbGetCustomers(): Promise<Customer[]> {
+  const { data, error } = await supabase.from('customers').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapCustomer);
+}
+
+export async function sbCreateCustomer(customerData: Omit<Customer, 'id' | 'customer_no' | 'created_at' | 'updated_at'>): Promise<Customer> {
+  // Generate customer_no
+  const prefixMap: Record<string, string> = {
+    '產業機械': 'A', '砂石產業': 'B', '營造工程': 'C', '汽車模具': 'D',
+    '鑄造廠': 'E', '加工廠': 'F', '貿易商': 'G', '其他': 'H',
+  };
+  const prefix = prefixMap[customerData.type] || 'G';
+  const { data: existing } = await supabase.from('customers').select('customer_no').like('customer_no', `${prefix}-%`);
+  const seq = (existing?.length || 0) + 1;
+  const customerNo = `${prefix}-${String(seq).padStart(3, '0')}`;
+
+  const { data, error } = await supabase.from('customers').insert({
+    ...customerData,
+    customer_no: customerNo,
+  }).select().single();
+  if (error) throw error;
+  return mapCustomer(data);
+}
+
+export async function sbUpdateCustomer(id: string, updates: Partial<Customer>): Promise<Customer | null> {
+  const { data, error } = await supabase.from('customers').update(updates).eq('id', id).select().single();
+  if (error) throw error;
+  return data ? mapCustomer(data) : null;
+}
+
+export async function sbDeleteCustomer(id: string): Promise<void> {
+  const { error } = await supabase.from('customers').delete().eq('id', id);
+  if (error) throw error;
+}
+
+function mapCustomer(row: Record<string, unknown>): Customer {
+  return {
+    id: row.id as string,
+    customer_no: (row.customer_no as string) || '',
+    name: (row.name as string) || '',
+    short_name: (row.short_name as string) || '',
+    type: (row.type as Customer['type']) || '',
+    address: (row.address as string) || '',
+    delivery_addresses: (row.delivery_addresses as string[]) || [],
+    phone: (row.phone as string) || '',
+    email: (row.email as string) || '',
+    contact1_name: (row.contact1_name as string) || '',
+    contact1_phone: (row.contact1_phone as string) || '',
+    contact2_name: (row.contact2_name as string) || '',
+    contact2_phone: (row.contact2_phone as string) || '',
+    status: (row.status as Customer['status']) || '啟用',
+    remarks: (row.remarks as string) || '',
+    created_at: (row.created_at as string) || '',
+    updated_at: (row.updated_at as string) || '',
+  };
+}
+
+// ============================================================
+// Work Orders
+// ============================================================
+export async function sbGetWorkOrders(): Promise<WorkOrder[]> {
+  const { data, error } = await supabase.from('work_orders').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapWorkOrder);
+}
+
+export async function sbCreateWorkOrder(orderData: Omit<WorkOrder, 'id' | 'order_no' | 'status' | 'created_at' | 'updated_at'>): Promise<WorkOrder> {
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  // Find customer code
+  const { data: customers } = await supabase.from('customers').select('customer_no, name, short_name');
+  const matched = customers?.find((c: Record<string, unknown>) => c.name === orderData.customer || c.short_name === orderData.customer);
+  const customerCode = matched?.customer_no ? (matched.customer_no as string).replace(/-/g, '') : 'X00';
+
+  // Count existing orders for this customer
+  const { data: existingOrders } = await supabase.from('work_orders').select('order_no').like('order_no', `%-${customerCode}-%`);
+  const seq = (existingOrders?.length || 0) + 1;
+  const orderNo = `WO-${today}-${customerCode}-${String(seq).padStart(4, '0')}`;
+
+  const { data, error } = await supabase.from('work_orders').insert({
+    ...orderData,
+    order_no: orderNo,
+    status: 'Open',
+  }).select().single();
+  if (error) throw error;
+  return mapWorkOrder(data);
+}
+
+export async function sbUpdateWorkOrder(id: string, updates: Partial<WorkOrder>): Promise<WorkOrder | null> {
+  const { data, error } = await supabase.from('work_orders').update(updates).eq('id', id).select().single();
+  if (error) throw error;
+  return data ? mapWorkOrder(data) : null;
+}
+
+export async function sbDeleteWorkOrder(id: string): Promise<void> {
+  const { error } = await supabase.from('work_orders').delete().eq('id', id);
+  if (error) throw error;
+}
+
+function mapWorkOrder(row: Record<string, unknown>): WorkOrder {
+  return {
+    id: row.id as string,
+    order_no: (row.order_no as string) || '',
+    customer: (row.customer as string) || '',
+    product_name: (row.product_name as string) || '',
+    material: (row.material as string) || '',
+    quantity: (row.quantity as number) || 1,
+    estimated_weight: (row.estimated_weight as number) || 0,
+    mold_supply: (row.mold_supply as WorkOrder['mold_supply']) || '',
+    mold_type: (row.mold_type as WorkOrder['mold_type']) || '',
+    pattern_id: (row.pattern_id as string) || '',
+    heat_treatment: (row.heat_treatment as WorkOrder['heat_treatment']) || '',
+    due_date: (row.due_date as string) || '',
+    remarks: (row.remarks as string) || '',
+    mold_photos: (row.mold_photos as string[]) || [],
+    drawing_photos: (row.drawing_photos as string[]) || [],
+    status: (row.status as WorkOrder['status']) || 'Open',
+    created_at: (row.created_at as string) || '',
+    updated_at: (row.updated_at as string) || '',
+  };
+}
+
+// ============================================================
+// Molding Batches
+// ============================================================
+export async function sbGetMoldingBatches(): Promise<MoldingBatch[]> {
+  const { data, error } = await supabase.from('molding_batches').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapMoldingBatch);
+}
+
+export async function sbCreateMoldingBatch(batchData: { work_order_id: string; order_no: string; customer: string; product_name: string; material: string; quantity_planned: number; estimated_pouring_weight: number; remarks: string; molding_photos: string[]; closing_photos?: string[] }): Promise<MoldingBatch> {
+  const batchNo = `MB-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-5)}`;
+  const status = (batchData.closing_photos && batchData.closing_photos.length > 0) ? 'Completed' :
+    (batchData.molding_photos && batchData.molding_photos.length > 0) ? 'In Progress' : 'Pending';
+
+  const { data, error } = await supabase.from('molding_batches').insert({
+    batch_no: batchNo,
+    work_order_id: batchData.work_order_id,
+    order_no: batchData.order_no,
+    customer: batchData.customer,
+    product_name: batchData.product_name,
+    material: batchData.material,
+    quantity_planned: batchData.quantity_planned,
+    quantity_completed: 0,
+    estimated_pouring_weight: batchData.estimated_pouring_weight,
+    remarks: batchData.remarks,
+    molding_photos: batchData.molding_photos,
+    closing_photos: batchData.closing_photos || [],
+    status,
+  }).select().single();
+  if (error) throw error;
+  return mapMoldingBatch(data);
+}
+
+export async function sbUpdateMoldingBatch(id: string, updates: Partial<MoldingBatch>): Promise<MoldingBatch | null> {
+  const { data, error } = await supabase.from('molding_batches').update(updates).eq('id', id).select().single();
+  if (error) throw error;
+  return data ? mapMoldingBatch(data) : null;
+}
+
+export async function sbDeleteMoldingBatch(id: string): Promise<void> {
+  const { error } = await supabase.from('molding_batches').delete().eq('id', id);
+  if (error) throw error;
+}
+
+function mapMoldingBatch(row: Record<string, unknown>): MoldingBatch {
+  return {
+    id: row.id as string,
+    batch_no: (row.batch_no as string) || '',
+    work_order_id: (row.work_order_id as string) || '',
+    order_no: (row.order_no as string) || '',
+    customer: (row.customer as string) || '',
+    product_name: (row.product_name as string) || '',
+    material: (row.material as string) || '',
+    quantity_planned: (row.quantity_planned as number) || 1,
+    quantity_completed: (row.quantity_completed as number) || 0,
+    estimated_pouring_weight: (row.estimated_pouring_weight as number) || 0,
+    remarks: (row.remarks as string) || '',
+    molding_photos: (row.molding_photos as string[]) || [],
+    closing_photos: (row.closing_photos as string[]) || [],
+    status: (row.status as MoldingBatch['status']) || 'Pending',
+    created_at: (row.created_at as string) || '',
+    updated_at: (row.updated_at as string) || '',
+  };
+}
+
+// ============================================================
+// Melting Records (Legacy simple)
+// ============================================================
+export async function sbGetMeltingRecords(): Promise<MeltingRecord[]> {
+  const { data, error } = await supabase.from('melting_records').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapMeltingRecord);
+}
+
+export async function sbCreateMeltingRecord(recordData: { batch_id: string; batch_no: string; furnace_no: string; melting_weight: number; pouring_weights: number[] }): Promise<MeltingRecord> {
+  const totalPouring = recordData.pouring_weights.reduce((sum, w) => sum + w, 0);
+  const yieldRate = totalPouring > 0 && recordData.melting_weight > 0 ? Math.round((recordData.melting_weight / totalPouring) * 100 * 100) / 100 : 0;
+  const heatNo = `HT-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-5)}`;
+
+  const { data, error } = await supabase.from('melting_records').insert({
+    heat_no: heatNo,
+    batch_id: recordData.batch_id,
+    batch_no: recordData.batch_no,
+    furnace_no: recordData.furnace_no,
+    melting_weight: recordData.melting_weight,
+    pouring_weight: totalPouring,
+    pouring_weights: recordData.pouring_weights,
+    yield_rate: yieldRate,
+    status: 'Completed',
+  }).select().single();
+  if (error) throw error;
+  return mapMeltingRecord(data);
+}
+
+export async function sbUpdateMeltingRecord(id: string, updates: { furnace_no?: string; pouring_weights?: number[]; melting_weight?: number }): Promise<MeltingRecord | null> {
+  const updatePayload: Record<string, unknown> = {};
+  if (updates.furnace_no !== undefined) updatePayload.furnace_no = updates.furnace_no;
+  if (updates.melting_weight !== undefined) updatePayload.melting_weight = updates.melting_weight;
+  if (updates.pouring_weights !== undefined) {
+    updatePayload.pouring_weights = updates.pouring_weights;
+    updatePayload.pouring_weight = updates.pouring_weights.reduce((sum, w) => sum + w, 0);
+  }
+  const { data, error } = await supabase.from('melting_records').update(updatePayload).eq('id', id).select().single();
+  if (error) throw error;
+  return data ? mapMeltingRecord(data) : null;
+}
+
+export async function sbDeleteMeltingRecord(id: string): Promise<boolean> {
+  const { error } = await supabase.from('melting_records').delete().eq('id', id);
+  return !error;
+}
+
+function mapMeltingRecord(row: Record<string, unknown>): MeltingRecord {
+  return {
+    id: row.id as string,
+    heat_no: (row.heat_no as string) || '',
+    batch_id: (row.batch_id as string) || '',
+    batch_no: (row.batch_no as string) || '',
+    furnace_no: (row.furnace_no as string) || '',
+    melting_weight: (row.melting_weight as number) || 0,
+    pouring_weight: (row.pouring_weight as number) || 0,
+    pouring_weights: (row.pouring_weights as number[]) || [],
+    yield_rate: (row.yield_rate as number) || 0,
+    status: (row.status as MeltingRecord['status']) || 'Pending',
+    created_at: (row.created_at as string) || '',
+    updated_at: (row.updated_at as string) || '',
+  };
+}
+
+// ============================================================
+// Melt Records (New full version)
+// ============================================================
+export async function sbGetMeltRecords(): Promise<MeltRecord[]> {
+  const { data, error } = await supabase.from('melt_records').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapMeltRecord);
+}
+
+export async function sbCreateMeltRecord(recordData: Omit<MeltRecord, 'id' | 'melt_no' | 'melt_minutes' | 'total_charge_weight' | 'specific_energy' | 'created_at' | 'updated_at'>): Promise<MeltRecord> {
+  let meltMinutes = 0;
+  if (recordData.power_start_time && recordData.tap_time) {
+    const [sh, sm] = recordData.power_start_time.split(':').map(Number);
+    const [eh, em] = recordData.tap_time.split(':').map(Number);
+    let diff = (eh * 60 + em) - (sh * 60 + sm);
+    if (diff < 0) diff += 24 * 60;
+    meltMinutes = diff;
+  }
+  const meltNo = `ML-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-5)}`;
+
+  const { data, error } = await supabase.from('melt_records').insert({
+    ...recordData,
+    melt_no: meltNo,
+    melt_minutes: meltMinutes,
+    total_charge_weight: 0,
+    specific_energy: 0,
+  }).select().single();
+  if (error) throw error;
+  return mapMeltRecord(data);
+}
+
+export async function sbUpdateMeltRecord(id: string, updates: Partial<MeltRecord>): Promise<MeltRecord | null> {
+  // Recalculate melt_minutes if times changed
+  const payload: Record<string, unknown> = { ...updates };
+  if (updates.power_start_time && updates.tap_time) {
+    const [sh, sm] = updates.power_start_time.split(':').map(Number);
+    const [eh, em] = updates.tap_time.split(':').map(Number);
+    let diff = (eh * 60 + em) - (sh * 60 + sm);
+    if (diff < 0) diff += 24 * 60;
+    payload.melt_minutes = diff;
+  }
+  const { data, error } = await supabase.from('melt_records').update(payload).eq('id', id).select().single();
+  if (error) throw error;
+  return data ? mapMeltRecord(data) : null;
+}
+
+export async function sbDeleteMeltRecord(id: string): Promise<boolean> {
+  const { error } = await supabase.from('melt_records').delete().eq('id', id);
+  return !error;
+}
+
+export async function sbRecalcMeltRecord(meltId: string): Promise<MeltRecord | null> {
+  const { data: materials } = await supabase.from('melt_materials').select('*').eq('melt_id', meltId);
+  const totalChargeWeight = (materials || []).reduce((sum: number, m: Record<string, unknown>) => sum + ((m.subtotal as number) || 0), 0);
+  const { data: record } = await supabase.from('melt_records').select('power_kwh').eq('id', meltId).single();
+  const powerKwh = (record?.power_kwh as number) || 0;
+  const specificEnergy = totalChargeWeight > 0 ? Math.round((powerKwh / totalChargeWeight) * 1000) / 1000 : 0;
+
+  const { data, error } = await supabase.from('melt_records').update({
+    total_charge_weight: totalChargeWeight,
+    specific_energy: specificEnergy,
+  }).eq('id', meltId).select().single();
+  if (error) throw error;
+  return data ? mapMeltRecord(data) : null;
+}
+
+function mapMeltRecord(row: Record<string, unknown>): MeltRecord {
+  return {
+    id: row.id as string,
+    melt_no: (row.melt_no as string) || '',
+    melt_date: (row.melt_date as string) || '',
+    material_grade: (row.material_grade as string) || '',
+    furnace_no: (row.furnace_no as string) || '',
+    power_kwh: (row.power_kwh as number) || 0,
+    power_start_time: (row.power_start_time as string) || '',
+    tap_time: (row.tap_time as string) || '',
+    melt_minutes: (row.melt_minutes as number) || 0,
+    tap_temp: (row.tap_temp as number) || 0,
+    total_charge_weight: (row.total_charge_weight as number) || 0,
+    specific_energy: (row.specific_energy as number) || 0,
+    created_by: (row.created_by as string) || '',
+    remark: (row.remark as string) || '',
+    created_at: (row.created_at as string) || '',
+    updated_at: (row.updated_at as string) || '',
+  };
+}
+
+// ============================================================
+// Melt Materials
+// ============================================================
+export async function sbGetMeltMaterials(meltId?: string): Promise<MeltMaterial[]> {
+  let query = supabase.from('melt_materials').select('*');
+  if (meltId) query = query.eq('melt_id', meltId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map(mapMeltMaterial);
+}
+
+export async function sbCreateMeltMaterial(materialData: Omit<MeltMaterial, 'id' | 'subtotal'>): Promise<MeltMaterial> {
+  const subtotal = materialData.charge_weight + materialData.secondary_weight;
+  const { data, error } = await supabase.from('melt_materials').insert({
+    ...materialData,
+    subtotal,
+  }).select().single();
+  if (error) throw error;
+  await sbRecalcMeltRecord(materialData.melt_id);
+  return mapMeltMaterial(data);
+}
+
+export async function sbUpdateMeltMaterial(id: string, updates: Partial<Omit<MeltMaterial, 'id' | 'subtotal'>>): Promise<MeltMaterial | null> {
+  // Get current to calculate subtotal
+  const { data: current } = await supabase.from('melt_materials').select('*').eq('id', id).single();
+  if (!current) return null;
+  const chargeWeight = updates.charge_weight ?? (current.charge_weight as number);
+  const secondaryWeight = updates.secondary_weight ?? (current.secondary_weight as number);
+  const { data, error } = await supabase.from('melt_materials').update({
+    ...updates,
+    subtotal: chargeWeight + secondaryWeight,
+  }).eq('id', id).select().single();
+  if (error) throw error;
+  if (data) await sbRecalcMeltRecord(data.melt_id as string);
+  return data ? mapMeltMaterial(data) : null;
+}
+
+export async function sbDeleteMeltMaterial(id: string): Promise<boolean> {
+  const { data: material } = await supabase.from('melt_materials').select('melt_id').eq('id', id).single();
+  const { error } = await supabase.from('melt_materials').delete().eq('id', id);
+  if (error) return false;
+  if (material) await sbRecalcMeltRecord(material.melt_id as string);
+  return true;
+}
+
+function mapMeltMaterial(row: Record<string, unknown>): MeltMaterial {
+  return {
+    id: row.id as string,
+    melt_id: (row.melt_id as string) || '',
+    raw_material: (row.raw_material as string) || '',
+    charge_weight: (row.charge_weight as number) || 0,
+    secondary_weight: (row.secondary_weight as number) || 0,
+    subtotal: (row.subtotal as number) || 0,
+  };
+}
+
+// ============================================================
+// Melt Chemistry
+// ============================================================
+export async function sbGetMeltChemistry(meltId?: string): Promise<MeltChemistry[]> {
+  let query = supabase.from('melt_chemistries').select('*');
+  if (meltId) query = query.eq('melt_id', meltId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map(mapMeltChemistry);
+}
+
+export async function sbCreateMeltChemistry(chemData: Omit<MeltChemistry, 'id'>): Promise<MeltChemistry> {
+  const otherElements = chemData.C + chemData.Si + chemData.Mn + chemData.P + chemData.S + chemData.Ni + chemData.Cr + chemData.Mo + chemData.Cu;
+  const Fe = Math.round((100 - otherElements) * 1000) / 1000;
+  const { data, error } = await supabase.from('melt_chemistries').insert({
+    melt_id: chemData.melt_id,
+    sample_stage: chemData.sample_stage,
+    c_val: chemData.C,
+    si_val: chemData.Si,
+    mn_val: chemData.Mn,
+    p_val: chemData.P,
+    s_val: chemData.S,
+    ni_val: chemData.Ni,
+    cr_val: chemData.Cr,
+    mo_val: chemData.Mo,
+    cu_val: chemData.Cu,
+    fe_val: Fe,
+  }).select().single();
+  if (error) throw error;
+  return mapMeltChemistry(data);
+}
+
+export async function sbUpdateMeltChemistry(id: string, updates: Partial<Omit<MeltChemistry, 'id'>>): Promise<MeltChemistry | null> {
+  const dbUpdates: Record<string, unknown> = {};
+  if (updates.sample_stage !== undefined) dbUpdates.sample_stage = updates.sample_stage;
+  if (updates.melt_id !== undefined) dbUpdates.melt_id = updates.melt_id;
+  if (updates.C !== undefined) dbUpdates.c_val = updates.C;
+  if (updates.Si !== undefined) dbUpdates.si_val = updates.Si;
+  if (updates.Mn !== undefined) dbUpdates.mn_val = updates.Mn;
+  if (updates.P !== undefined) dbUpdates.p_val = updates.P;
+  if (updates.S !== undefined) dbUpdates.s_val = updates.S;
+  if (updates.Ni !== undefined) dbUpdates.ni_val = updates.Ni;
+  if (updates.Cr !== undefined) dbUpdates.cr_val = updates.Cr;
+  if (updates.Mo !== undefined) dbUpdates.mo_val = updates.Mo;
+  if (updates.Cu !== undefined) dbUpdates.cu_val = updates.Cu;
+
+  const { data, error } = await supabase.from('melt_chemistries').update(dbUpdates).eq('id', id).select().single();
+  if (error) throw error;
+  return data ? mapMeltChemistry(data) : null;
+}
+
+export async function sbDeleteMeltChemistry(id: string): Promise<boolean> {
+  const { error } = await supabase.from('melt_chemistries').delete().eq('id', id);
+  return !error;
+}
+
+function mapMeltChemistry(row: Record<string, unknown>): MeltChemistry {
+  return {
+    id: row.id as string,
+    melt_id: (row.melt_id as string) || '',
+    sample_stage: (row.sample_stage as MeltChemistry['sample_stage']) || 'TARGET',
+    C: (row.c_val as number) || 0,
+    Si: (row.si_val as number) || 0,
+    Mn: (row.mn_val as number) || 0,
+    P: (row.p_val as number) || 0,
+    S: (row.s_val as number) || 0,
+    Ni: (row.ni_val as number) || 0,
+    Cr: (row.cr_val as number) || 0,
+    Mo: (row.mo_val as number) || 0,
+    Cu: (row.cu_val as number) || 0,
+    Fe: (row.fe_val as number) || 0,
+  };
+}
+
+// ============================================================
+// Melt Pourings
+// ============================================================
+export interface MeltPouring {
+  id: string;
+  melt_id: string;
+  batch_id: string;
+  batch_no: string;
+  customer: string;
+  product_name: string;
+  material: string;
+  quantity: number;
+  estimated_weight: number;
+  estimated_pouring_weight: number;
+  pouring_weights: number[];
+  total_pouring_weight: number;
+  avg_pouring_weight: number;
+  created_at: string;
+}
+
+export async function sbGetMeltPourings(meltId?: string): Promise<MeltPouring[]> {
+  let query = supabase.from('melt_pourings').select('*');
+  if (meltId) query = query.eq('melt_id', meltId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map((row: Record<string, unknown>) => ({
+    id: row.id as string,
+    melt_id: (row.melt_id as string) || '',
+    batch_id: (row.batch_id as string) || '',
+    batch_no: (row.batch_no as string) || '',
+    customer: (row.customer as string) || '',
+    product_name: (row.product_name as string) || '',
+    material: (row.material as string) || '',
+    quantity: (row.quantity as number) || 1,
+    estimated_weight: (row.estimated_weight as number) || 0,
+    estimated_pouring_weight: (row.estimated_pouring_weight as number) || 0,
+    pouring_weights: (row.pouring_weights as number[]) || [],
+    total_pouring_weight: (row.total_pouring_weight as number) || 0,
+    avg_pouring_weight: (row.avg_pouring_weight as number) || 0,
+    created_at: (row.created_at as string) || '',
+  }));
+}
+
+export async function sbCreateMeltPouring(data: Omit<MeltPouring, 'id' | 'created_at'>): Promise<MeltPouring> {
+  const { data: result, error } = await supabase.from('melt_pourings').insert(data).select().single();
+  if (error) throw error;
+  return {
+    id: result.id as string,
+    melt_id: (result.melt_id as string) || '',
+    batch_id: (result.batch_id as string) || '',
+    batch_no: (result.batch_no as string) || '',
+    customer: (result.customer as string) || '',
+    product_name: (result.product_name as string) || '',
+    material: (result.material as string) || '',
+    quantity: (result.quantity as number) || 1,
+    estimated_weight: (result.estimated_weight as number) || 0,
+    estimated_pouring_weight: (result.estimated_pouring_weight as number) || 0,
+    pouring_weights: (result.pouring_weights as number[]) || [],
+    total_pouring_weight: (result.total_pouring_weight as number) || 0,
+    avg_pouring_weight: (result.avg_pouring_weight as number) || 0,
+    created_at: (result.created_at as string) || '',
+  };
+}
+
+export async function sbUpdateMeltPouring(id: string, updates: Partial<MeltPouring>): Promise<MeltPouring | null> {
+  const { data, error } = await supabase.from('melt_pourings').update(updates).eq('id', id).select().single();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    id: data.id as string,
+    melt_id: (data.melt_id as string) || '',
+    batch_id: (data.batch_id as string) || '',
+    batch_no: (data.batch_no as string) || '',
+    customer: (data.customer as string) || '',
+    product_name: (data.product_name as string) || '',
+    material: (data.material as string) || '',
+    quantity: (data.quantity as number) || 1,
+    estimated_weight: (data.estimated_weight as number) || 0,
+    estimated_pouring_weight: (data.estimated_pouring_weight as number) || 0,
+    pouring_weights: (data.pouring_weights as number[]) || [],
+    total_pouring_weight: (data.total_pouring_weight as number) || 0,
+    avg_pouring_weight: (data.avg_pouring_weight as number) || 0,
+    created_at: (data.created_at as string) || '',
+  };
+}
+
+export async function sbDeleteMeltPouring(id: string): Promise<boolean> {
+  const { error } = await supabase.from('melt_pourings').delete().eq('id', id);
+  return !error;
+}
+
+// ============================================================
+// Melt Preset Recipes
+// ============================================================
+export interface MeltPresetRecipe {
+  id: string;
+  name: string;
+  materials: Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function sbGetMeltPresetRecipes(): Promise<MeltPresetRecipe[]> {
+  const { data, error } = await supabase.from('melt_preset_recipes').select('*');
+  if (error) throw error;
+  return (data || []).map((row: Record<string, unknown>) => ({
+    id: row.id as string,
+    name: (row.name as string) || '',
+    materials: (row.materials as MeltPresetRecipe['materials']) || [],
+    created_at: (row.created_at as string) || '',
+    updated_at: (row.updated_at as string) || '',
+  }));
+}
+
+export async function sbCreateMeltPresetRecipe(data: { name: string; materials: MeltPresetRecipe['materials'] }): Promise<MeltPresetRecipe> {
+  const { data: result, error } = await supabase.from('melt_preset_recipes').insert(data).select().single();
+  if (error) throw error;
+  return {
+    id: result.id as string,
+    name: (result.name as string) || '',
+    materials: (result.materials as MeltPresetRecipe['materials']) || [],
+    created_at: (result.created_at as string) || '',
+    updated_at: (result.updated_at as string) || '',
+  };
+}
+
+export async function sbUpdateMeltPresetRecipe(id: string, updates: Partial<{ name: string; materials: MeltPresetRecipe['materials'] }>): Promise<MeltPresetRecipe | null> {
+  const { data, error } = await supabase.from('melt_preset_recipes').update(updates).eq('id', id).select().single();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    id: data.id as string,
+    name: (data.name as string) || '',
+    materials: (data.materials as MeltPresetRecipe['materials']) || [],
+    created_at: (data.created_at as string) || '',
+    updated_at: (data.updated_at as string) || '',
+  };
+}
+
+export async function sbDeleteMeltPresetRecipe(id: string): Promise<boolean> {
+  const { error } = await supabase.from('melt_preset_recipes').delete().eq('id', id);
+  return !error;
+}
+
+// ============================================================
+// Quality Inspections
+// ============================================================
+export async function sbGetQualityInspections(): Promise<QualityInspection[]> {
+  const { data, error } = await supabase.from('quality_inspections').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapQualityInspection);
+}
+
+export async function sbCreateQualityInspection(inspData: Omit<QualityInspection, 'id' | 'inspection_no' | 'created_at'>): Promise<QualityInspection> {
+  const prefix = inspData.type;
+  const inspNo = `${prefix}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-5)}`;
+  const { data, error } = await supabase.from('quality_inspections').insert({
+    ...inspData,
+    inspection_no: inspNo,
+  }).select().single();
+  if (error) throw error;
+  return mapQualityInspection(data);
+}
+
+export async function sbUpdateQualityInspection(id: string, updates: Partial<QualityInspection>): Promise<void> {
+  const { error } = await supabase.from('quality_inspections').update(updates).eq('id', id);
+  if (error) throw error;
+}
+
+export async function sbDeleteQualityInspection(id: string): Promise<void> {
+  const { error } = await supabase.from('quality_inspections').delete().eq('id', id);
+  if (error) throw error;
+}
+
+function mapQualityInspection(row: Record<string, unknown>): QualityInspection {
+  return {
+    id: row.id as string,
+    inspection_no: (row.inspection_no as string) || '',
+    type: (row.type as QualityInspection['type']) || 'FAI',
+    batch_id: (row.batch_id as string) || '',
+    batch_no: (row.batch_no as string) || '',
+    work_order_id: (row.work_order_id as string) || undefined,
+    order_no: (row.order_no as string) || undefined,
+    customer: (row.customer as string) || undefined,
+    product_name: (row.product_name as string) || undefined,
+    material: (row.material as string) || undefined,
+    mold_id: (row.mold_id as string) || undefined,
+    heat_no: (row.heat_no as string) || '',
+    melt_record_id: (row.melt_record_id as string) || undefined,
+    inspection_date: (row.inspection_date as string) || '',
+    inspector: (row.inspector as string) || '',
+    result: (row.result as QualityInspection['result']) || 'PASS',
+    inspected_quantity: (row.inspected_quantity as number) || 0,
+    pass_quantity: (row.pass_quantity as number) || 0,
+    defect_count: (row.defect_count as number) || 0,
+    yield_rate: (row.yield_rate as number) || 0,
+    sampling_method: (row.sampling_method as string) || '',
+    item_results: (row.item_results as QualityInspection['item_results']) || [],
+    defects: (row.defects as QualityInspection['defects']) || [],
+    attachments: (row.attachments as string[]) || [],
+    remarks: (row.remarks as string) || '',
+    created_at: (row.created_at as string) || '',
+  };
+}
+
+// ============================================================
+// Defect Records
+// ============================================================
+export async function sbGetDefectRecords(): Promise<DefectRecord[]> {
+  const { data, error } = await supabase.from('defect_records').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapDefectRecord);
+}
+
+export async function sbCreateDefectRecord(defectData: Omit<DefectRecord, 'id' | 'created_at'>): Promise<DefectRecord> {
+  const { data, error } = await supabase.from('defect_records').insert(defectData).select().single();
+  if (error) throw error;
+  return mapDefectRecord(data);
+}
+
+function mapDefectRecord(row: Record<string, unknown>): DefectRecord {
+  return {
+    id: row.id as string,
+    inspection_id: (row.inspection_id as string) || undefined,
+    batch_id: (row.batch_id as string) || undefined,
+    batch_no: (row.batch_no as string) || undefined,
+    defect_code: (row.defect_code as string) || '',
+    defect_label: (row.defect_label as string) || '',
+    quantity: (row.quantity as number) || 1,
+    cause: (row.cause as string) || undefined,
+    responsible_station: (row.responsible_station as string) || undefined,
+    disposition: (row.disposition as DefectRecord['disposition']) || 'REWORK',
+    remarks: (row.remarks as string) || undefined,
+    created_at: (row.created_at as string) || '',
+  };
+}
+
+// ============================================================
+// CAPA Records
+// ============================================================
+export async function sbGetCAPARecords(): Promise<CAPARecord[]> {
+  const { data, error } = await supabase.from('capa_records').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapCAPARecord);
+}
+
+export async function sbCreateCAPARecord(capaData: Omit<CAPARecord, 'id' | 'capa_no' | 'created_at'>): Promise<CAPARecord> {
+  const capaNo = `CAPA-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-5)}`;
+  const { data, error } = await supabase.from('capa_records').insert({
+    ...capaData,
+    capa_no: capaNo,
+  }).select().single();
+  if (error) throw error;
+  return mapCAPARecord(data);
+}
+
+export async function sbUpdateCAPARecord(id: string, updates: Partial<CAPARecord>): Promise<void> {
+  const { error } = await supabase.from('capa_records').update(updates).eq('id', id);
+  if (error) throw error;
+}
+
+function mapCAPARecord(row: Record<string, unknown>): CAPARecord {
+  return {
+    id: row.id as string,
+    capa_no: (row.capa_no as string) || '',
+    inspection_id: (row.inspection_id as string) || undefined,
+    defect_id: (row.defect_id as string) || undefined,
+    status: (row.status as CAPARecord['status']) || 'OPEN',
+    problem_description: (row.problem_description as string) || '',
+    five_why: (row.five_why as string) || undefined,
+    root_cause: (row.root_cause as string) || undefined,
+    corrective_action: (row.corrective_action as string) || undefined,
+    preventive_action: (row.preventive_action as string) || undefined,
+    responsible_person: (row.responsible_person as string) || '',
+    due_date: (row.due_date as string) || '',
+    verified_by: (row.verified_by as string) || undefined,
+    verified_date: (row.verified_date as string) || undefined,
+    attachments: (row.attachments as string[]) || undefined,
+    created_at: (row.created_at as string) || '',
+  };
+}
+
+// ============================================================
+// Warehouse Entries
+// ============================================================
+export async function sbGetWarehouseEntries(): Promise<WarehouseEntry[]> {
+  const { data, error } = await supabase.from('warehouse_entries').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map((row: Record<string, unknown>) => ({
+    id: row.id as string,
+    batch_id: (row.batch_id as string) || '',
+    batch_no: (row.batch_no as string) || '',
+    location: (row.location as string) || '',
+    quantity: (row.quantity as number) || 0,
+    created_at: (row.created_at as string) || '',
+  }));
+}
+
+export async function sbCreateWarehouseEntry(entryData: { batch_id: string; batch_no: string; location: string; quantity: number }): Promise<WarehouseEntry> {
+  const { data, error } = await supabase.from('warehouse_entries').insert(entryData).select().single();
+  if (error) throw error;
+  return {
+    id: data.id as string,
+    batch_id: (data.batch_id as string) || '',
+    batch_no: (data.batch_no as string) || '',
+    location: (data.location as string) || '',
+    quantity: (data.quantity as number) || 0,
+    created_at: (data.created_at as string) || '',
+  };
+}
+
+// ============================================================
+// Shipment Orders
+// ============================================================
+export async function sbGetShipmentOrders(): Promise<ShipmentOrder[]> {
+  const { data, error } = await supabase.from('shipment_orders').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map((row: Record<string, unknown>) => ({
+    id: row.id as string,
+    shipment_no: (row.shipment_no as string) || '',
+    work_order_id: (row.work_order_id as string) || '',
+    order_no: (row.order_no as string) || '',
+    customer: (row.customer as string) || '',
+    quantity: (row.quantity as number) || 0,
+    ship_date: (row.ship_date as string) || '',
+    status: (row.status as ShipmentOrder['status']) || 'Pending',
+    created_at: (row.created_at as string) || '',
+  }));
+}
+
+export async function sbCreateShipmentOrder(orderData: { work_order_id: string; order_no: string; customer: string; quantity: number; ship_date: string }): Promise<ShipmentOrder> {
+  const shipmentNo = `SH-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-5)}`;
+  const { data, error } = await supabase.from('shipment_orders').insert({
+    ...orderData,
+    shipment_no: shipmentNo,
+    status: 'Pending',
+  }).select().single();
+  if (error) throw error;
+  return {
+    id: data.id as string,
+    shipment_no: (data.shipment_no as string) || '',
+    work_order_id: (data.work_order_id as string) || '',
+    order_no: (data.order_no as string) || '',
+    customer: (data.customer as string) || '',
+    quantity: (data.quantity as number) || 0,
+    ship_date: (data.ship_date as string) || '',
+    status: (data.status as ShipmentOrder['status']) || 'Pending',
+    created_at: (data.created_at as string) || '',
+  };
+}
+
+export async function sbUpdateShipmentOrder(id: string, updates: Partial<ShipmentOrder>): Promise<ShipmentOrder | null> {
+  const { data, error } = await supabase.from('shipment_orders').update(updates).eq('id', id).select().single();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    id: data.id as string,
+    shipment_no: (data.shipment_no as string) || '',
+    work_order_id: (data.work_order_id as string) || '',
+    order_no: (data.order_no as string) || '',
+    customer: (data.customer as string) || '',
+    quantity: (data.quantity as number) || 0,
+    ship_date: (data.ship_date as string) || '',
+    status: (data.status as ShipmentOrder['status']) || 'Pending',
+    created_at: (data.created_at as string) || '',
+  };
+}
+
+// ============================================================
+// Patterns (Mold Management)
+// ============================================================
+export async function sbGetPatterns(): Promise<Pattern[]> {
+  const { data, error } = await supabase.from('patterns').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapPattern);
+}
+
+export async function sbCreatePattern(patternData: Omit<Pattern, 'id' | 'pattern_no' | 'usage_count' | 'created_at' | 'updated_at'>): Promise<Pattern> {
+  const { data: customers } = await supabase.from('customers').select('customer_no, name, short_name');
+  const matched = customers?.find((c: Record<string, unknown>) => c.name === patternData.customer || c.short_name === patternData.customer);
+  let customerCode = 'X00';
+  if (matched?.customer_no) {
+    const parts = (matched.customer_no as string).replace(/-/g, '');
+    customerCode = parts.length >= 3 ? parts.slice(0, 3) : parts.padEnd(3, '0');
+  }
+  const { data: existingPatterns } = await supabase.from('patterns').select('id').eq('customer', patternData.customer);
+  const seq = (existingPatterns?.length || 0) + 1;
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const patternNo = `MD-${dateStr}-${customerCode}-${String(seq).padStart(5, '0')}`;
+
+  const { data, error } = await supabase.from('patterns').insert({
+    ...patternData,
+    pattern_no: patternNo,
+    usage_count: 0,
+  }).select().single();
+  if (error) throw error;
+  return mapPattern(data);
+}
+
+export async function sbUpdatePattern(id: string, updates: Partial<Pattern>): Promise<void> {
+  const { error } = await supabase.from('patterns').update(updates).eq('id', id);
+  if (error) throw error;
+}
+
+export async function sbDeletePattern(id: string): Promise<void> {
+  const { error } = await supabase.from('patterns').delete().eq('id', id);
+  if (error) throw error;
+}
+
+function mapPattern(row: Record<string, unknown>): Pattern {
+  return {
+    id: row.id as string,
+    pattern_no: (row.pattern_no as string) || '',
+    name: (row.name as string) || '',
+    product_no: (row.product_no as string) || '',
+    customer: (row.customer as string) || '',
+    pattern_type: (row.pattern_type as Pattern['pattern_type']) || '上下模',
+    material: (row.material as string) || '',
+    cavities: (row.cavities as number) || 1,
+    template_count: (row.template_count as number) || 0,
+    sand_core_count: (row.sand_core_count as number) || 0,
+    dimensions: (row.dimensions as string) || '',
+    weight: (row.weight as number) || 0,
+    photos: (row.photos as string[]) || [],
+    open_date: (row.open_date as string) || '',
+    supplier: (row.supplier as string) || '',
+    cost: (row.cost as number) || 0,
+    lifetime_count: (row.lifetime_count as number) || 0,
+    usage_count: (row.usage_count as number) || 0,
+    status: (row.status as Pattern['status']) || '可生產',
+    location_warehouse: (row.location_warehouse as string) || '',
+    location_area: (row.location_area as string) || '',
+    location_shelf: (row.location_shelf as string) || '',
+    location_status: (row.location_status as Pattern['location_status']) || '在庫',
+    remarks: (row.remarks as string) || '',
+    created_at: (row.created_at as string) || '',
+    updated_at: (row.updated_at as string) || '',
+  };
+}
+
+// ============================================================
+// Pattern sub-tables
+// ============================================================
+export async function sbGetPatternVersions(patternId: string): Promise<PatternVersion[]> {
+  const { data, error } = await supabase.from('pattern_versions').select('*').eq('pattern_id', patternId);
+  if (error) throw error;
+  return (data || []).map((row: Record<string, unknown>) => ({
+    id: row.id as string,
+    pattern_id: (row.pattern_id as string) || '',
+    version: (row.version as string) || '',
+    change_date: (row.change_date as string) || '',
+    change_content: (row.change_content as string) || '',
+    created_by: (row.created_by as string) || '',
+    created_at: (row.created_at as string) || '',
+  }));
+}
+
+export async function sbCreatePatternVersion(data: Omit<PatternVersion, 'id' | 'created_at'>): Promise<PatternVersion> {
+  const { data: result, error } = await supabase.from('pattern_versions').insert(data).select().single();
+  if (error) throw error;
+  return {
+    id: result.id as string,
+    pattern_id: (result.pattern_id as string) || '',
+    version: (result.version as string) || '',
+    change_date: (result.change_date as string) || '',
+    change_content: (result.change_content as string) || '',
+    created_by: (result.created_by as string) || '',
+    created_at: (result.created_at as string) || '',
+  };
+}
+
+export async function sbGetPatternHistory(patternId?: string): Promise<PatternHistory[]> {
+  let query = supabase.from('pattern_histories').select('*');
+  if (patternId) query = query.eq('pattern_id', patternId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map((row: Record<string, unknown>) => ({
+    id: row.id as string,
+    pattern_id: (row.pattern_id as string) || '',
+    date: (row.date as string) || '',
+    work_order_id: (row.work_order_id as string) || '',
+    order_no: (row.order_no as string) || '',
+    product_name: (row.product_name as string) || '',
+    quantity: (row.quantity as number) || 0,
+    molding_count: (row.molding_count as number) || 0,
+    operator: (row.operator as string) || '',
+    created_at: (row.created_at as string) || '',
+  }));
+}
+
+export async function sbCreatePatternHistory(data: Omit<PatternHistory, 'id' | 'created_at'>): Promise<PatternHistory> {
+  const { data: result, error } = await supabase.from('pattern_histories').insert(data).select().single();
+  if (error) throw error;
+  // Increment usage count
+  await supabase.rpc('increment_pattern_usage', { pattern_id_input: data.pattern_id }).catch(() => {
+    // Fallback: manual increment
+    supabase.from('patterns').select('usage_count').eq('id', data.pattern_id).single().then(({ data: p }) => {
+      if (p) supabase.from('patterns').update({ usage_count: ((p.usage_count as number) || 0) + 1 }).eq('id', data.pattern_id);
+    });
+  });
+  return {
+    id: result.id as string,
+    pattern_id: (result.pattern_id as string) || '',
+    date: (result.date as string) || '',
+    work_order_id: (result.work_order_id as string) || '',
+    order_no: (result.order_no as string) || '',
+    product_name: (result.product_name as string) || '',
+    quantity: (result.quantity as number) || 0,
+    molding_count: (result.molding_count as number) || 0,
+    operator: (result.operator as string) || '',
+    created_at: (result.created_at as string) || '',
+  };
+}
+
+export async function sbGetPatternMaintenance(patternId?: string): Promise<PatternMaintenance[]> {
+  let query = supabase.from('pattern_maintenances').select('*');
+  if (patternId) query = query.eq('pattern_id', patternId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map((row: Record<string, unknown>) => ({
+    id: row.id as string,
+    pattern_id: (row.pattern_id as string) || '',
+    maintenance_date: (row.maintenance_date as string) || '',
+    type: (row.type as PatternMaintenance['type']) || '清潔',
+    content: (row.content as string) || '',
+    cost: (row.cost as number) || 0,
+    next_maintenance_date: (row.next_maintenance_date as string) || '',
+    created_by: (row.created_by as string) || '',
+    created_at: (row.created_at as string) || '',
+  }));
+}
+
+export async function sbCreatePatternMaintenance(data: Omit<PatternMaintenance, 'id' | 'created_at'>): Promise<PatternMaintenance> {
+  const { data: result, error } = await supabase.from('pattern_maintenances').insert(data).select().single();
+  if (error) throw error;
+  return {
+    id: result.id as string,
+    pattern_id: (result.pattern_id as string) || '',
+    maintenance_date: (result.maintenance_date as string) || '',
+    type: (result.type as PatternMaintenance['type']) || '清潔',
+    content: (result.content as string) || '',
+    cost: (result.cost as number) || 0,
+    next_maintenance_date: (result.next_maintenance_date as string) || '',
+    created_by: (result.created_by as string) || '',
+    created_at: (result.created_at as string) || '',
+  };
+}
+
+export async function sbGetPatternLoans(patternId?: string): Promise<PatternLoan[]> {
+  let query = supabase.from('pattern_loans').select('*');
+  if (patternId) query = query.eq('pattern_id', patternId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map((row: Record<string, unknown>) => ({
+    id: row.id as string,
+    pattern_id: (row.pattern_id as string) || '',
+    borrower: (row.borrower as string) || '',
+    borrow_date: (row.borrow_date as string) || '',
+    return_date: (row.return_date as string) || '',
+    purpose: (row.purpose as string) || '',
+    created_at: (row.created_at as string) || '',
+  }));
+}
+
+export async function sbCreatePatternLoan(data: Omit<PatternLoan, 'id' | 'created_at'>): Promise<PatternLoan> {
+  const { data: result, error } = await supabase.from('pattern_loans').insert(data).select().single();
+  if (error) throw error;
+  await sbUpdatePattern(data.pattern_id, { location_status: '借出' });
+  return {
+    id: result.id as string,
+    pattern_id: (result.pattern_id as string) || '',
+    borrower: (result.borrower as string) || '',
+    borrow_date: (result.borrow_date as string) || '',
+    return_date: (result.return_date as string) || '',
+    purpose: (result.purpose as string) || '',
+    created_at: (result.created_at as string) || '',
+  };
+}
+
+export async function sbReturnPatternLoan(loanId: string): Promise<void> {
+  const { data } = await supabase.from('pattern_loans').select('pattern_id').eq('id', loanId).single();
+  await supabase.from('pattern_loans').update({ return_date: new Date().toISOString().slice(0, 10) }).eq('id', loanId);
+  if (data) await sbUpdatePattern(data.pattern_id as string, { location_status: '在庫' });
+}
