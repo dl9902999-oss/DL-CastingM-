@@ -64,6 +64,126 @@ function ImageUpload({ label, images, onChange, icon }: { label: string; images:
   );
 }
 
+function PatternAutocomplete({ value, onChange, patterns, onAddPattern }: {
+  value: string;
+  onChange: (patternId: string, patternType?: string) => void;
+  patterns: Pattern[];
+  onAddPattern: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [inputValue, setInputValue] = useState('');
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Display selected pattern info
+  const selectedPattern = patterns.find(p => p.id === value);
+
+  useEffect(() => {
+    if (selectedPattern) {
+      setInputValue(`${selectedPattern.pattern_no} - ${selectedPattern.name}`);
+    } else if (!value || value === '__none__') {
+      setInputValue('');
+    }
+  }, [value, selectedPattern]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const availablePatterns = patterns.filter(p => p.status === '可生產');
+  const filtered = availablePatterns.filter(p => {
+    if (!inputValue.trim()) return true;
+    const term = inputValue.toLowerCase();
+    return p.pattern_no.toLowerCase().includes(term) ||
+      p.name.toLowerCase().includes(term) ||
+      p.pattern_type.toLowerCase().includes(term) ||
+      (p.customer && p.customer.toLowerCase().includes(term));
+  });
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <div className="flex gap-2">
+        <Input
+          value={inputValue}
+          onChange={e => {
+            setInputValue(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          placeholder="輸入模具編號、名稱或客戶搜尋..."
+          className="bg-zinc-700 border-zinc-600 text-zinc-100 flex-1"
+        />
+        {value && value !== '__none__' && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              onChange('__none__');
+              setInputValue('');
+            }}
+            className="text-zinc-400 hover:text-zinc-100 shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+        )}
+      </div>
+      {open && (
+        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-zinc-800 border border-zinc-600 rounded-md shadow-lg max-h-56 overflow-y-auto">
+          <button
+            type="button"
+            className="w-full text-left px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-700"
+            onClick={() => {
+              onChange('__none__');
+              setInputValue('');
+              setOpen(false);
+            }}
+          >
+            不帶入
+          </button>
+          {filtered.length > 0 ? (
+            filtered.map(p => (
+              <button
+                key={p.id}
+                type="button"
+                className="w-full text-left px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-700 flex justify-between items-center"
+                onClick={() => {
+                  onChange(p.id, p.pattern_type);
+                  setInputValue(`${p.pattern_no} - ${p.name}`);
+                  setOpen(false);
+                }}
+              >
+                <span className="flex flex-col">
+                  <span>{p.pattern_no} - {p.name}</span>
+                  <span className="text-xs text-zinc-500">{p.pattern_type}{p.customer ? ` | ${p.customer}` : ''}</span>
+                </span>
+                <span className="text-zinc-500 text-xs">{p.pattern_type}</span>
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-2 text-sm text-zinc-400">找不到符合的模具</div>
+          )}
+          <button
+            type="button"
+            className="w-full text-left px-3 py-2 text-sm text-amber-400 hover:bg-zinc-700 flex items-center gap-1.5 border-t border-zinc-700"
+            onClick={() => {
+              setOpen(false);
+              onAddPattern();
+            }}
+          >
+            <Plus className="w-3.5 h-3.5" />新增模具
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CustomerAutocomplete({ value, onChange, customers, onAddCustomer }: {
   value: string;
   onChange: (val: string) => void;
@@ -389,24 +509,18 @@ export default function WorkOrders() {
                 </div>
                 <div>
                   <Label className="text-zinc-300">帶入模具</Label>
-                  <Select value={form.pattern_id} onValueChange={val => {
-                    const selected = patternList.find(p => p.id === val);
-                    if (selected) {
-                      setForm({ ...form, pattern_id: val, mold_type: selected.pattern_type as MoldType });
-                    } else {
-                      setForm({ ...form, pattern_id: val });
-                    }
-                  }}>
-                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
-                      <SelectValue placeholder="選擇模具管理清單中的模具" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-zinc-700 border-zinc-600">
-                      <SelectItem value="__none__">不帶入</SelectItem>
-                      {patternList.filter(p => p.status === '可生產').map(p => (
-                        <SelectItem key={p.id} value={p.id}>{p.pattern_no} - {p.name} ({p.pattern_type})</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <PatternAutocomplete
+                    value={form.pattern_id}
+                    onChange={(patternId, patternType) => {
+                      if (patternType) {
+                        setForm({ ...form, pattern_id: patternId, mold_type: patternType as MoldType });
+                      } else {
+                        setForm({ ...form, pattern_id: patternId === '__none__' ? '' : patternId });
+                      }
+                    }}
+                    patterns={patternList}
+                    onAddPattern={() => navigate('/patterns')}
+                  />
                 </div>
                 <div>
                   <Label className="text-zinc-300">熱處理</Label>
@@ -652,24 +766,18 @@ export default function WorkOrders() {
                 </div>
                 <div>
                   <Label className="text-zinc-300">帶入模具</Label>
-                  <Select value={editOrder.pattern_id || '__none__'} onValueChange={val => {
-                    const selected = patternList.find(p => p.id === val);
-                    if (selected) {
-                      setEditOrder({ ...editOrder, pattern_id: val, mold_type: selected.pattern_type as MoldType });
-                    } else {
-                      setEditOrder({ ...editOrder, pattern_id: val === '__none__' ? '' : val });
-                    }
-                  }}>
-                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
-                      <SelectValue placeholder="選擇模具管理清單中的模具" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-zinc-700 border-zinc-600">
-                      <SelectItem value="__none__">不帶入</SelectItem>
-                      {patternList.filter(p => p.status === '可生產').map(p => (
-                        <SelectItem key={p.id} value={p.id}>{p.pattern_no} - {p.name} ({p.pattern_type})</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <PatternAutocomplete
+                    value={editOrder.pattern_id || ''}
+                    onChange={(patternId, patternType) => {
+                      if (patternType) {
+                        setEditOrder({ ...editOrder, pattern_id: patternId, mold_type: patternType as MoldType });
+                      } else {
+                        setEditOrder({ ...editOrder, pattern_id: patternId === '__none__' ? '' : patternId });
+                      }
+                    }}
+                    patterns={patternList}
+                    onAddPattern={() => navigate('/patterns')}
+                  />
                 </div>
                 <div>
                   <Label className="text-zinc-300">熱處理</Label>
