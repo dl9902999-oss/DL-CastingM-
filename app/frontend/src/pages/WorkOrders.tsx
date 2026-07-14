@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
+import { useSyncTrigger } from '@/hooks/useSyncedData';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -296,12 +297,14 @@ export default function WorkOrders() {
   });
   const [patternList, setPatternList] = useState<Pattern[]>([]);
 
+  const syncTrigger = useSyncTrigger();
+
   useEffect(() => {
     setOrders(getWorkOrders());
     setBatches(getMoldingBatches());
     setPatternList(getPatterns());
     setCustomers(getCustomers());
-  }, []);
+  }, [syncTrigger]);
 
   const getStartedQty = (orderId: string) => {
     return batches.filter(b => b.work_order_id === orderId).reduce((sum, b) => sum + b.quantity_planned, 0);

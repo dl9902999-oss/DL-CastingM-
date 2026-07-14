@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSyncTrigger } from '@/hooks/useSyncedData';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -140,9 +141,15 @@ export default function Quality() {
     due_date: '',
   });
 
-  // Data refresh
+  // Data refresh - also triggered by real-time sync from other devices
+  const syncTrigger = useSyncTrigger();
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = () => setRefreshKey(k => k + 1);
+
+  // When sync trigger changes (data from another device), force refresh
+  useEffect(() => {
+    setRefreshKey(k => k + 1);
+  }, [syncTrigger]);
 
   const inspections = useMemo(() => getQualityInspections(), [refreshKey]);
   const defectRecords = useMemo(() => getDefectRecords(), [refreshKey]);

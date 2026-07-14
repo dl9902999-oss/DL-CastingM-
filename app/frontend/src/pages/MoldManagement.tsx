@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSyncTrigger } from '@/hooks/useSyncedData';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -133,9 +134,11 @@ export default function MoldManagement() {
     purpose: '',
   });
 
+  const syncTrigger = useSyncTrigger();
+
   useEffect(() => {
     loadData();
-  }, []);
+  }, [syncTrigger]);
 
   const loadData = () => {
     setPatterns(getPatterns());

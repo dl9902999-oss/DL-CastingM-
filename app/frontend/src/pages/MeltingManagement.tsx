@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSyncTrigger } from '@/hooks/useSyncedData';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -78,9 +79,11 @@ export default function MeltingManagement() {
   const [showPresetManager, setShowPresetManager] = useState(false);
   const { toast } = useToast();
 
+  const syncTrigger = useSyncTrigger();
+
   useEffect(() => {
     setRecords(getMeltRecords());
-  }, []);
+  }, [syncTrigger]);
 
   const refreshRecords = () => setRecords(getMeltRecords());
 

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,7 @@ import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from '@/
 import { Customer, CustomerType, CustomerStatus } from '@/lib/types';
 import { Plus, Search, Edit, Trash2, Users, X, Upload } from 'lucide-react';
 import BatchImportDialog from '@/components/BatchImportDialog';
+import { useSyncedData } from '@/hooks/useSyncedData';
 
 const CUSTOMER_TYPES: CustomerType[] = ['產業機械', '砂石產業', '營造工程', '汽車模具', '鑄造廠', '加工廠', '貿易商', '其他'];
 const CUSTOMER_STATUSES: CustomerStatus[] = ['啟用', '停用'];
@@ -48,11 +49,17 @@ const emptyForm: FormState = {
 
 export default function Customers() {
   const { toast } = useToast();
-  const [customers, setCustomers] = useState<Customer[]>(getCustomers());
+  const [syncedCustomers, reloadCustomers] = useSyncedData(getCustomers);
+  const [customers, setCustomers] = useState<Customer[]>(syncedCustomers);
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
+
+  // Auto-update when synced data changes (from another device)
+  useEffect(() => {
+    setCustomers(syncedCustomers);
+  }, [syncedCustomers]);
 
   // Batch import state
   const [isBatchImportOpen, setIsBatchImportOpen] = useState(false);

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSyncTrigger } from '@/hooks/useSyncedData';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -82,12 +83,14 @@ export default function Molding() {
     closing_photos: [] as string[],
   });
 
+  const syncTrigger = useSyncTrigger();
+
   useEffect(() => {
     const allWo = getWorkOrders();
     setAllWorkOrders(allWo);
     setWorkOrders(allWo.filter(o => o.status !== 'Cancelled'));
     setBatches(getMoldingBatches());
-  }, []);
+  }, [syncTrigger]);
 
   // Helper: get work order info for a batch (fallback when batch fields are empty)
   const getWoInfo = (batch: MoldingBatch) => {

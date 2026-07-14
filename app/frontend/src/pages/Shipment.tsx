@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSyncTrigger } from '@/hooks/useSyncedData';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,10 +20,12 @@ export default function Shipment() {
 
   const [form, setForm] = useState({ work_order_id: '', quantity: 0, ship_date: '' });
 
+  const syncTrigger = useSyncTrigger();
+
   useEffect(() => {
     setShipments(getShipmentOrders());
     setWorkOrders(getWorkOrders());
-  }, []);
+  }, [syncTrigger]);
 
   const handleCreate = () => {
     if (!form.work_order_id || form.quantity <= 0 || !form.ship_date) {

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
+import { useSyncTrigger } from '@/hooks/useSyncedData';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,10 +20,12 @@ export default function WarehousePage() {
 
   const [form, setForm] = useState({ batch_id: '', location: '', quantity: 0 });
 
+  const syncTrigger = useSyncTrigger();
+
   useEffect(() => {
     setEntries(getWarehouseEntries());
     setBatches(getMoldingBatches());
-  }, []);
+  }, [syncTrigger]);
 
   const handleCreate = () => {
     if (!form.batch_id || !form.location || form.quantity <= 0) {

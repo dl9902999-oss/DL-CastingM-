@@ -3,16 +3,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getDashboardStats, getWorkOrders, getMoldingBatches, getShipmentOrders } from '@/lib/store';
 import { Activity, TrendingUp, Package, Truck } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
+import { useSyncTrigger } from '@/hooks/useSyncedData';
 
 export default function Dashboard() {
   const [stats, setStats] = useState({ todayProduction: 0, todayProductionKg: 0, yieldRate: 0, wipQuantity: 0, pendingShipment: 0 });
   const [recentOrders, setRecentOrders] = useState<{ order_no: string; customer: string; status: string }[]>([]);
+  const syncTrigger = useSyncTrigger();
 
   useEffect(() => {
     setStats(getDashboardStats());
     const orders = getWorkOrders().slice(-5).reverse();
     setRecentOrders(orders.map(o => ({ order_no: o.order_no, customer: o.customer, status: o.status })));
-  }, []);
+  }, [syncTrigger]);
 
   return (
     <AppLayout>
