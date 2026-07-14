@@ -34,6 +34,47 @@ const STORAGE_KEYS = {
 // ============================================================
 let _bgSyncEnabled: boolean | null = null;
 let _bgSyncCheckPromise: Promise<boolean> | null = null;
+const _pendingSyncTables: Set<string> = new Set();
+
+const TABLE_MAP: Record<string, string> = {
+  [STORAGE_KEYS.CUSTOMERS]: 'customers',
+  [STORAGE_KEYS.WORK_ORDERS]: 'work_orders',
+  [STORAGE_KEYS.MOLDING_BATCHES]: 'molding_batches',
+  [STORAGE_KEYS.MELTING_RECORDS]: 'melting_records',
+  [STORAGE_KEYS.QUALITY_INSPECTIONS]: 'quality_inspections',
+  [STORAGE_KEYS.DEFECT_RECORDS]: 'defect_records',
+  [STORAGE_KEYS.CAPA_RECORDS]: 'capa_records',
+  [STORAGE_KEYS.WAREHOUSE_ENTRIES]: 'warehouse_entries',
+  [STORAGE_KEYS.SHIPMENT_ORDERS]: 'shipment_orders',
+  [STORAGE_KEYS.MELT_RECORDS]: 'melt_records',
+  [STORAGE_KEYS.MELT_MATERIALS]: 'melt_materials',
+  [STORAGE_KEYS.MELT_CHEMISTRY]: 'melt_chemistry',
+  [STORAGE_KEYS.PATTERNS]: 'patterns',
+  [STORAGE_KEYS.PATTERN_HISTORY]: 'pattern_history',
+  [STORAGE_KEYS.PATTERN_MAINTENANCE]: 'pattern_maintenance',
+  [STORAGE_KEYS.PATTERN_LOANS]: 'pattern_loans',
+  [STORAGE_KEYS.USERS]: 'users',
+};
+
+const KEY_MAP: Record<string, string> = {
+  customers: STORAGE_KEYS.CUSTOMERS,
+  work_orders: STORAGE_KEYS.WORK_ORDERS,
+  molding_batches: STORAGE_KEYS.MOLDING_BATCHES,
+  melting_records: STORAGE_KEYS.MELTING_RECORDS,
+  quality_inspections: STORAGE_KEYS.QUALITY_INSPECTIONS,
+  defect_records: STORAGE_KEYS.DEFECT_RECORDS,
+  capa_records: STORAGE_KEYS.CAPA_RECORDS,
+  warehouse_entries: STORAGE_KEYS.WAREHOUSE_ENTRIES,
+  shipment_orders: STORAGE_KEYS.SHIPMENT_ORDERS,
+  melt_records: STORAGE_KEYS.MELT_RECORDS,
+  melt_materials: STORAGE_KEYS.MELT_MATERIALS,
+  melt_chemistry: STORAGE_KEYS.MELT_CHEMISTRY,
+  patterns: STORAGE_KEYS.PATTERNS,
+  pattern_history: STORAGE_KEYS.PATTERN_HISTORY,
+  pattern_maintenance: STORAGE_KEYS.PATTERN_MAINTENANCE,
+  pattern_loans: STORAGE_KEYS.PATTERN_LOANS,
+  users: STORAGE_KEYS.USERS,
+};
 
 function initBgSync(): void {
   if (_bgSyncCheckPromise) return;
@@ -41,13 +82,32 @@ function initBgSync(): void {
     _bgSyncEnabled = connected;
     console.log(`[Store] Background sync ${connected ? 'ENABLED ✓' : 'DISABLED (offline mode)'}`);
     if (connected) {
-      performFullSync();
+      // Flush any pending sync requests that came in while checking connection
+      if (_pendingSyncTables.size > 0) {
+        const pending = Array.from(_pendingSyncTables);
+        _pendingSyncTables.clear();
+        pending.forEach(table => {
+          bgSyncCollection(table).catch(e => console.warn(`[Store] pending sync ${table}:`, e));
+        });
+      }
+      // Note: We no longer call performFullSync() on init.
+      // DataContext handles the initial download (fullSyncFromSupabase).
+      // Upload only happens on explicit local writes via notifyBgSync.
     }
     return connected;
   }).catch(() => {
     _bgSyncEnabled = false;
     return false;
   });
+}
+
+/**
+ * Force a full upload of all localStorage data to Supabase.
+ * Call this only when you know local data is authoritative.
+ */
+export async function forceFullUpload(): Promise<void> {
+  if (_bgSyncEnabled !== true) return;
+  await performFullSync();
 }
 
 async function performFullSync(): Promise<void> {
@@ -69,26 +129,7 @@ async function performFullSync(): Promise<void> {
 
 async function bgSyncCollection(table: string): Promise<void> {
   try {
-    const keyMap: Record<string, string> = {
-      customers: STORAGE_KEYS.CUSTOMERS,
-      work_orders: STORAGE_KEYS.WORK_ORDERS,
-      molding_batches: STORAGE_KEYS.MOLDING_BATCHES,
-      melting_records: STORAGE_KEYS.MELTING_RECORDS,
-      quality_inspections: STORAGE_KEYS.QUALITY_INSPECTIONS,
-      defect_records: STORAGE_KEYS.DEFECT_RECORDS,
-      capa_records: STORAGE_KEYS.CAPA_RECORDS,
-      warehouse_entries: STORAGE_KEYS.WAREHOUSE_ENTRIES,
-      shipment_orders: STORAGE_KEYS.SHIPMENT_ORDERS,
-      melt_records: STORAGE_KEYS.MELT_RECORDS,
-      melt_materials: STORAGE_KEYS.MELT_MATERIALS,
-      melt_chemistry: STORAGE_KEYS.MELT_CHEMISTRY,
-      patterns: STORAGE_KEYS.PATTERNS,
-      pattern_history: STORAGE_KEYS.PATTERN_HISTORY,
-      pattern_maintenance: STORAGE_KEYS.PATTERN_MAINTENANCE,
-      pattern_loans: STORAGE_KEYS.PATTERN_LOANS,
-      users: STORAGE_KEYS.USERS,
-    };
-    const storageKey = keyMap[table];
+    const storageKey = KEY_MAP[table];
     if (!storageKey) return;
     const raw = localStorage.getItem(storageKey);
     if (!raw) return;
@@ -101,30 +142,18 @@ async function bgSyncCollection(table: string): Promise<void> {
 }
 
 function notifyBgSync(storageKey: string): void {
-  if (_bgSyncEnabled !== true) return;
-  const tableMap: Record<string, string> = {
-    [STORAGE_KEYS.CUSTOMERS]: 'customers',
-    [STORAGE_KEYS.WORK_ORDERS]: 'work_orders',
-    [STORAGE_KEYS.MOLDING_BATCHES]: 'molding_batches',
-    [STORAGE_KEYS.MELTING_RECORDS]: 'melting_records',
-    [STORAGE_KEYS.QUALITY_INSPECTIONS]: 'quality_inspections',
-    [STORAGE_KEYS.DEFECT_RECORDS]: 'defect_records',
-    [STORAGE_KEYS.CAPA_RECORDS]: 'capa_records',
-    [STORAGE_KEYS.WAREHOUSE_ENTRIES]: 'warehouse_entries',
-    [STORAGE_KEYS.SHIPMENT_ORDERS]: 'shipment_orders',
-    [STORAGE_KEYS.MELT_RECORDS]: 'melt_records',
-    [STORAGE_KEYS.MELT_MATERIALS]: 'melt_materials',
-    [STORAGE_KEYS.MELT_CHEMISTRY]: 'melt_chemistry',
-    [STORAGE_KEYS.PATTERNS]: 'patterns',
-    [STORAGE_KEYS.PATTERN_HISTORY]: 'pattern_history',
-    [STORAGE_KEYS.PATTERN_MAINTENANCE]: 'pattern_maintenance',
-    [STORAGE_KEYS.PATTERN_LOANS]: 'pattern_loans',
-    [STORAGE_KEYS.USERS]: 'users',
-  };
-  const table = tableMap[storageKey];
-  if (table) {
-    bgSyncCollection(table).catch(e => console.warn(`[Store] bg sync ${table}:`, e));
+  const table = TABLE_MAP[storageKey];
+  if (!table) return;
+
+  // If connection check hasn't completed yet, queue the table for later
+  if (_bgSyncEnabled === null) {
+    _pendingSyncTables.add(table);
+    return;
   }
+  // If not connected, skip
+  if (_bgSyncEnabled !== true) return;
+
+  bgSyncCollection(table).catch(e => console.warn(`[Store] bg sync ${table}:`, e));
 }
 
 // Initialize background sync on module load

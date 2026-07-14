@@ -74,8 +74,10 @@ function notifyListeners(table: string) {
 
 /**
  * Pull fresh data from Supabase for a specific table and update localStorage.
- * IMPORTANT: If Supabase returns an empty array, do NOT overwrite existing local data.
- * This prevents wiping demo users or locally-created data when Supabase tables are empty.
+ * Uses a smart merge strategy:
+ * - If Supabase has data, merge it with local data (Supabase wins on conflicts by id).
+ * - If Supabase returns empty array, keep existing local data intact
+ *   (prevents wiping demo users or locally-created records).
  */
 async function refreshLocalFromSupabase(table: string): Promise<void> {
   const storageKey = TABLE_TO_STORAGE_KEY[table];
@@ -87,11 +89,24 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
       console.warn(`[RealtimeSync] Failed to refresh ${table}:`, error.message);
       return;
     }
-    // Only overwrite localStorage if Supabase actually has data.
-    // If Supabase returns empty array, keep existing local data intact
-    // (prevents wiping demo users or locally-created records).
+    // Only update localStorage if Supabase actually has data.
     if (data && data.length > 0) {
-      localStorage.setItem(storageKey, JSON.stringify(data));
+      // Merge strategy: Supabase data is authoritative for records it contains.
+      // Keep any local records not present in Supabase (they may be pending upload).
+      const existingRaw = localStorage.getItem(storageKey);
+      const existingItems: Record<string, unknown>[] = existingRaw ? JSON.parse(existingRaw) : [];
+      
+      // Build a set of IDs from Supabase data
+      const supabaseIds = new Set(data.map((item: Record<string, unknown>) => item.id));
+      
+      // Keep local items that are NOT in Supabase (pending upload)
+      const localOnlyItems = existingItems.filter(
+        (item: Record<string, unknown>) => item.id && !supabaseIds.has(item.id)
+      );
+      
+      // Merged result: Supabase data + local-only items
+      const merged = [...data, ...localOnlyItems];
+      localStorage.setItem(storageKey, JSON.stringify(merged));
     }
   } catch (e) {
     console.warn(`[RealtimeSync] Exception refreshing ${table}:`, e);

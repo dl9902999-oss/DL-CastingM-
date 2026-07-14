@@ -1147,7 +1147,7 @@ export async function sbReturnPatternLoan(loanId: string): Promise<void> {
 export async function sbUpsertBatch(table: string, items: Record<string, unknown>[]): Promise<void> {
   if (!items || items.length === 0) return;
   
-  // Map internal table names to Supabase table names
+  // Map internal table names to actual Supabase table names
   const tableNameMap: Record<string, string> = {
     customers: 'customers',
     work_orders: 'work_orders',
@@ -1160,12 +1160,12 @@ export async function sbUpsertBatch(table: string, items: Record<string, unknown
     shipment_orders: 'shipment_orders',
     melt_records: 'melt_records',
     melt_materials: 'melt_materials',
-    melt_chemistry: 'melt_chemistry',
+    melt_chemistry: 'melt_chemistries',
     patterns: 'patterns',
-    pattern_history: 'pattern_history',
-    pattern_maintenance: 'pattern_maintenance',
+    pattern_history: 'pattern_histories',
+    pattern_maintenance: 'pattern_maintenances',
     pattern_loans: 'pattern_loans',
-    users: 'user_profiles',
+    users: 'users_profile',
   };
 
   const supabaseTable = tableNameMap[table];
