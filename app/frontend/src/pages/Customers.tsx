@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,11 +6,11 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from '@/lib/store';
+import { dsGetCustomers, dsCreateCustomer, dsUpdateCustomer, dsDeleteCustomer } from '@/lib/dataService';
 import { Customer, CustomerType, CustomerStatus } from '@/lib/types';
-import { Plus, Search, Edit, Trash2, Users, X, Upload } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Users, X, Upload, RefreshCw } from 'lucide-react';
 import BatchImportDialog from '@/components/BatchImportDialog';
-import { useSyncedData } from '@/hooks/useSyncedData';
+import { useDataConnection } from '@/contexts/DataContext';
 
 const CUSTOMER_TYPES: CustomerType[] = ['產業機械', '砂石產業', '營造工程', '汽車模具', '鑄造廠', '加工廠', '貿易商', '其他'];
 const CUSTOMER_STATUSES: CustomerStatus[] = ['啟用', '停用'];
@@ -49,17 +49,49 @@ const emptyForm: FormState = {
 
 export default function Customers() {
   const { toast } = useToast();
-  const [syncedCustomers, reloadCustomers] = useSyncedData(getCustomers);
-  const [customers, setCustomers] = useState<Customer[]>(syncedCustomers);
+  const { lastSyncTime } = useDataConnection();
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Auto-update when synced data changes (from another device)
+  // Load customers from dataService (routes to Supabase when connected)
+  const loadCustomers = useCallback(async () => {
+    try {
+      const data = await dsGetCustomers();
+      setCustomers(data);
+    } catch (err) {
+      console.error('[Customers] Failed to load:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Initial load
   useEffect(() => {
-    setCustomers(syncedCustomers);
-  }, [syncedCustomers]);
+    loadCustomers();
+  }, [loadCustomers]);
+
+  // Re-load when sync event occurs (another device changed data)
+  useEffect(() => {
+    if (lastSyncTime > 0) {
+      loadCustomers();
+    }
+  }, [lastSyncTime, loadCustomers]);
+
+  // Manual refresh
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await loadCustomers();
+      toast({ title: '資料已刷新' });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   // Batch import state
   const [isBatchImportOpen, setIsBatchImportOpen] = useState(false);
@@ -74,7 +106,7 @@ export default function Customers() {
     );
   }, [customers, searchQuery]);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!form.name.trim()) {
       toast({ title: '請輸入客戶名稱', variant: 'destructive' });
       return;
@@ -91,25 +123,30 @@ export default function Customers() {
       toast({ title: '請輸入聯絡人1手機', variant: 'destructive' });
       return;
     }
-    createCustomer({
-      name: form.name,
-      short_name: form.short_name,
-      type: form.type,
-      address: form.address,
-      delivery_addresses: form.delivery_addresses.filter(a => a.trim() !== ''),
-      phone: form.phone,
-      email: form.email,
-      contact1_name: form.contact1_name,
-      contact1_phone: form.contact1_phone,
-      contact2_name: form.contact2_name,
-      contact2_phone: form.contact2_phone,
-      status: form.status,
-      remarks: form.remarks,
-    });
-    setCustomers(getCustomers());
-    setIsCreateOpen(false);
-    setForm(emptyForm);
-    toast({ title: '客戶已新增' });
+    try {
+      await dsCreateCustomer({
+        name: form.name,
+        short_name: form.short_name,
+        type: form.type,
+        address: form.address,
+        delivery_addresses: form.delivery_addresses.filter(a => a.trim() !== ''),
+        phone: form.phone,
+        email: form.email,
+        contact1_name: form.contact1_name,
+        contact1_phone: form.contact1_phone,
+        contact2_name: form.contact2_name,
+        contact2_phone: form.contact2_phone,
+        status: form.status,
+        remarks: form.remarks,
+      });
+      await loadCustomers();
+      setIsCreateOpen(false);
+      setForm(emptyForm);
+      toast({ title: '客戶已新增' });
+    } catch (err) {
+      console.error('[Customers] Create failed:', err);
+      toast({ title: '新增失敗，請重試', variant: 'destructive' });
+    }
   };
 
   const handleEditOpen = (customer: Customer) => {
@@ -134,7 +171,7 @@ export default function Customers() {
     });
   };
 
-  const handleEditSave = () => {
+  const handleEditSave = async () => {
     if (!editCustomer) return;
     if (!form.name.trim()) {
       toast({ title: '請輸入客戶名稱', variant: 'destructive' });
@@ -152,32 +189,42 @@ export default function Customers() {
       toast({ title: '請輸入聯絡人1手機', variant: 'destructive' });
       return;
     }
-    updateCustomer(editCustomer.id, {
-      name: form.name,
-      short_name: form.short_name,
-      type: form.type,
-      address: form.address,
-      delivery_addresses: form.delivery_addresses.filter(a => a.trim() !== ''),
-      phone: form.phone,
-      email: form.email,
-      contact1_name: form.contact1_name,
-      contact1_phone: form.contact1_phone,
-      contact2_name: form.contact2_name,
-      contact2_phone: form.contact2_phone,
-      status: form.status,
-      remarks: form.remarks,
-    });
-    setCustomers(getCustomers());
-    setEditCustomer(null);
-    setForm(emptyForm);
-    toast({ title: '客戶已更新' });
+    try {
+      await dsUpdateCustomer(editCustomer.id, {
+        name: form.name,
+        short_name: form.short_name,
+        type: form.type,
+        address: form.address,
+        delivery_addresses: form.delivery_addresses.filter(a => a.trim() !== ''),
+        phone: form.phone,
+        email: form.email,
+        contact1_name: form.contact1_name,
+        contact1_phone: form.contact1_phone,
+        contact2_name: form.contact2_name,
+        contact2_phone: form.contact2_phone,
+        status: form.status,
+        remarks: form.remarks,
+      });
+      await loadCustomers();
+      setEditCustomer(null);
+      setForm(emptyForm);
+      toast({ title: '客戶已更新' });
+    } catch (err) {
+      console.error('[Customers] Update failed:', err);
+      toast({ title: '更新失敗，請重試', variant: 'destructive' });
+    }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('確定要刪除此客戶？')) return;
-    deleteCustomer(id);
-    setCustomers(getCustomers());
-    toast({ title: '客戶已刪除' });
+    try {
+      await dsDeleteCustomer(id);
+      await loadCustomers();
+      toast({ title: '客戶已刪除' });
+    } catch (err) {
+      console.error('[Customers] Delete failed:', err);
+      toast({ title: '刪除失敗，請重試', variant: 'destructive' });
+    }
   };
 
   const addDeliveryAddress = () => {
@@ -309,6 +356,16 @@ export default function Customers() {
             客戶資料
           </h1>
           <div className="flex gap-2">
+            <Button
+              onClick={handleRefresh}
+              variant="outline"
+              size="icon"
+              className="border-zinc-600 text-zinc-300 hover:bg-zinc-700"
+              disabled={isRefreshing}
+              title="重新刷新資料"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
             <Button onClick={() => setIsBatchImportOpen(true)} variant="outline" className="border-amber-600 text-amber-400 hover:bg-amber-600/10">
               <Upload className="w-4 h-4 mr-1" /> 批次匯入
             </Button>
@@ -329,54 +386,59 @@ export default function Customers() {
           />
         </div>
 
-        {/* Customer List */}
-        <div className="overflow-x-auto rounded-lg border border-zinc-700">
-          <table className="w-full text-sm">
-            <thead className="bg-zinc-800">
-              <tr>
-                <th className="px-3 py-2 text-left text-zinc-300">客戶編號</th>
-                <th className="px-3 py-2 text-left text-zinc-300">客戶名稱</th>
-                <th className="px-3 py-2 text-left text-zinc-300">簡稱</th>
-                <th className="px-3 py-2 text-left text-zinc-300">類型</th>
-                <th className="px-3 py-2 text-left text-zinc-300">電話</th>
-                <th className="px-3 py-2 text-left text-zinc-300">聯絡人</th>
-                <th className="px-3 py-2 text-left text-zinc-300">狀態</th>
-                <th className="px-3 py-2 text-left text-zinc-300">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredCustomers.length === 0 ? (
-                <tr><td colSpan={8} className="px-3 py-8 text-center text-zinc-500">無客戶資料</td></tr>
-              ) : (
-                filteredCustomers.map(c => (
-                  <tr key={c.id} className="border-t border-zinc-700 hover:bg-zinc-800/50">
-                    <td className="px-3 py-2 text-zinc-300 font-mono text-xs">{c.customer_no}</td>
-                    <td className="px-3 py-2 text-zinc-100">{c.name}</td>
-                    <td className="px-3 py-2 text-zinc-300">{c.short_name}</td>
-                    <td className="px-3 py-2 text-zinc-300">{c.type || '-'}</td>
-                    <td className="px-3 py-2 text-zinc-300">{c.phone || '-'}</td>
-                    <td className="px-3 py-2 text-zinc-300">{c.contact1_name || '-'}</td>
-                    <td className="px-3 py-2">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${c.status === '啟用' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                        {c.status}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => handleEditOpen(c)}>
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => handleDelete(c.id)} className="text-red-400 hover:text-red-300">
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        {/* Loading state */}
+        {isLoading ? (
+          <div className="text-center py-8 text-zinc-400">載入中...</div>
+        ) : (
+          /* Customer List */
+          <div className="overflow-x-auto rounded-lg border border-zinc-700">
+            <table className="w-full text-sm">
+              <thead className="bg-zinc-800">
+                <tr>
+                  <th className="px-3 py-2 text-left text-zinc-300">客戶編號</th>
+                  <th className="px-3 py-2 text-left text-zinc-300">客戶名稱</th>
+                  <th className="px-3 py-2 text-left text-zinc-300">簡稱</th>
+                  <th className="px-3 py-2 text-left text-zinc-300">類型</th>
+                  <th className="px-3 py-2 text-left text-zinc-300">電話</th>
+                  <th className="px-3 py-2 text-left text-zinc-300">聯絡人</th>
+                  <th className="px-3 py-2 text-left text-zinc-300">狀態</th>
+                  <th className="px-3 py-2 text-left text-zinc-300">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredCustomers.length === 0 ? (
+                  <tr><td colSpan={8} className="px-3 py-8 text-center text-zinc-500">無客戶資料</td></tr>
+                ) : (
+                  filteredCustomers.map(c => (
+                    <tr key={c.id} className="border-t border-zinc-700 hover:bg-zinc-800/50">
+                      <td className="px-3 py-2 text-zinc-300 font-mono text-xs">{c.customer_no}</td>
+                      <td className="px-3 py-2 text-zinc-100">{c.name}</td>
+                      <td className="px-3 py-2 text-zinc-300">{c.short_name}</td>
+                      <td className="px-3 py-2 text-zinc-300">{c.type || '-'}</td>
+                      <td className="px-3 py-2 text-zinc-300">{c.phone || '-'}</td>
+                      <td className="px-3 py-2 text-zinc-300">{c.contact1_name || '-'}</td>
+                      <td className="px-3 py-2">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${c.status === '啟用' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                          {c.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="ghost" onClick={() => handleEditOpen(c)}>
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => handleDelete(c.id)} className="text-red-400 hover:text-red-300">
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Create Dialog */}
@@ -407,7 +469,7 @@ export default function Customers() {
       <BatchImportDialog
         open={isBatchImportOpen}
         onOpenChange={setIsBatchImportOpen}
-        onImportComplete={() => setCustomers(getCustomers())}
+        onImportComplete={() => loadCustomers()}
       />
     </AppLayout>
   );

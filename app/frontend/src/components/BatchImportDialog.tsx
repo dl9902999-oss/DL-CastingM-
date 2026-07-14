@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { createCustomer } from '@/lib/store';
+import { dsCreateCustomer } from '@/lib/dataService';
 import { CustomerType, CustomerStatus } from '@/lib/types';
 import { Upload, FileSpreadsheet, Check, AlertCircle, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -57,6 +57,7 @@ export default function BatchImportDialog({ open, onOpenChange, onImportComplete
   const [importData, setImportData] = useState<ImportRow[]>([]);
   const [importFileName, setImportFileName] = useState('');
   const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const resetImport = () => {
@@ -64,6 +65,7 @@ export default function BatchImportDialog({ open, onOpenChange, onImportComplete
     setImportData([]);
     setImportFileName('');
     setImportErrors([]);
+    setIsImporting(false);
   };
 
   const handleClose = () => {
@@ -135,43 +137,52 @@ export default function BatchImportDialog({ open, onOpenChange, onImportComplete
     setImportData(prev => prev.map(row => ({ ...row, selected: !allSelected })));
   };
 
-  const handleBatchCreate = () => {
+  const handleBatchCreate = async () => {
+    setIsImporting(true);
     const errors: string[] = [];
     let created = 0;
-    importData.forEach((row, idx) => {
-      if (!row.selected) return;
+
+    for (let idx = 0; idx < importData.length; idx++) {
+      const row = importData[idx];
+      if (!row.selected) continue;
       if (!row.name.trim()) {
         errors.push(`第 ${idx + 1} 行：缺少客戶名稱`);
-        return;
+        continue;
       }
       if (!row.contact1_name.trim()) {
         errors.push(`第 ${idx + 1} 行：缺少聯絡人1姓名`);
-        return;
+        continue;
       }
       if (!row.contact1_phone.trim()) {
         errors.push(`第 ${idx + 1} 行：缺少聯絡人1手機`);
-        return;
+        continue;
       }
       const type = CUSTOMER_TYPES.includes(row.type as CustomerType) ? (row.type as CustomerType) : '其他';
       const status = CUSTOMER_STATUSES.includes(row.status as CustomerStatus) ? (row.status as CustomerStatus) : '啟用';
-      createCustomer({
-        name: row.name,
-        short_name: row.short_name,
-        type,
-        address: row.address,
-        delivery_addresses: row.delivery_address ? [row.delivery_address] : [],
-        phone: row.phone,
-        email: row.email,
-        contact1_name: row.contact1_name,
-        contact1_phone: row.contact1_phone,
-        contact2_name: row.contact2_name,
-        contact2_phone: row.contact2_phone,
-        status,
-        remarks: row.remarks,
-      });
-      created++;
-    });
+      try {
+        await dsCreateCustomer({
+          name: row.name,
+          short_name: row.short_name,
+          type,
+          address: row.address,
+          delivery_addresses: row.delivery_address ? [row.delivery_address] : [],
+          phone: row.phone,
+          email: row.email,
+          contact1_name: row.contact1_name,
+          contact1_phone: row.contact1_phone,
+          contact2_name: row.contact2_name,
+          contact2_phone: row.contact2_phone,
+          status,
+          remarks: row.remarks,
+        });
+        created++;
+      } catch (err) {
+        errors.push(`第 ${idx + 1} 行：建立失敗 - ${err}`);
+      }
+    }
+
     setImportErrors(errors);
+    setIsImporting(false);
     if (created > 0) {
       onImportComplete();
       toast({ title: `成功匯入 ${created} 筆客戶資料` });
@@ -411,10 +422,14 @@ export default function BatchImportDialog({ open, onOpenChange, onImportComplete
                 <Button variant="outline" onClick={handleClose}>取消</Button>
                 <Button
                   onClick={handleBatchCreate}
-                  disabled={selectedCount === 0}
+                  disabled={selectedCount === 0 || isImporting}
                   className="bg-amber-600 hover:bg-amber-700"
                 >
-                  <Check className="w-4 h-4 mr-1" /> 確認建立 ({selectedCount} 筆)
+                  {isImporting ? (
+                    <>匯入中...</>
+                  ) : (
+                    <><Check className="w-4 h-4 mr-1" /> 確認建立 ({selectedCount} 筆)</>
+                  )}
                 </Button>
               </div>
             </div>

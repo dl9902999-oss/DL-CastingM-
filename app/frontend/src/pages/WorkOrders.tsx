@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment, Pattern, Customer } from '@/lib/types';
-import { getWorkOrders, createWorkOrder, updateWorkOrder, deleteWorkOrder, getMoldingBatches, getPatterns, getCustomers, getMeltRecords } from '@/lib/store';
+import { getWorkOrders, createWorkOrder, updateWorkOrder, deleteWorkOrder, getMoldingBatches, getPatterns, getMeltRecords } from '@/lib/store';
+import { dsGetCustomers } from '@/lib/dataService';
 import { Plus, Search, Edit, Image, FileImage, X, Trash2, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -303,7 +304,8 @@ export default function WorkOrders() {
     setOrders(getWorkOrders());
     setBatches(getMoldingBatches());
     setPatternList(getPatterns());
-    setCustomers(getCustomers());
+    // Load customers from dataService (routes to Supabase when connected)
+    dsGetCustomers().then(data => setCustomers(data)).catch(() => {});
   }, [syncTrigger]);
 
   const getStartedQty = (orderId: string) => {

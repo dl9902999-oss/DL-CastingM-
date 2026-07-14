@@ -19,6 +19,7 @@ import {
   Users,
   Shield,
   Box,
+  RefreshCw,
 } from 'lucide-react';
 
 interface NavItem {
@@ -44,10 +45,20 @@ const navItems: NavItem[] = [
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
-  const { isOnline, isLoading: dataLoading } = useDataConnection();
+  const { isOnline, isLoading: dataLoading, refreshData } = useDataConnection();
   const navigate = useNavigate();
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleGlobalRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshData();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const filteredNavItems = navItems.filter(item => {
     if (!user) return false;
@@ -114,16 +125,43 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             <Factory className="w-6 h-6 text-amber-500" />
             <span className="font-bold text-zinc-100">鑄造生產系統</span>
           </div>
-          <Sheet open={open} onOpenChange={setOpen}>
-            <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="text-zinc-300">
-                <Menu className="w-5 h-5" />
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="left" className="p-0 w-64 bg-zinc-800 border-zinc-700">
-              <NavContent />
-            </SheetContent>
-          </Sheet>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleGlobalRefresh}
+              disabled={isRefreshing}
+              className="text-zinc-300 hover:text-amber-400"
+              title="重新刷新資料"
+            >
+              <RefreshCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
+            <Sheet open={open} onOpenChange={setOpen}>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="text-zinc-300">
+                  <Menu className="w-5 h-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="p-0 w-64 bg-zinc-800 border-zinc-700">
+                <NavContent />
+              </SheetContent>
+            </Sheet>
+          </div>
+        </header>
+
+        {/* Desktop top bar with refresh */}
+        <header className="hidden md:flex items-center justify-end p-2 bg-zinc-800/50 border-b border-zinc-700/50">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleGlobalRefresh}
+            disabled={isRefreshing}
+            className="text-zinc-400 hover:text-amber-400 gap-1.5"
+            title="重新刷新資料"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span className="text-xs">刷新</span>
+          </Button>
         </header>
 
         {/* Main Content */}
