@@ -10,7 +10,7 @@ export async function checkSupabaseConnection(): Promise<boolean> {
     const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
     if (!url || !key) return false;
     // Try a simple query - if RLS blocks it, we'll get a specific error
-    const { error } = await supabase.from('customers').select('id', { count: 'exact', head: true });
+    const { error } = await supabase.from('customers').select('id').limit(1);
     if (error) {
       // If the error is about the table not existing, connection works but schema not set up
       if (error.code === '42P01') {
@@ -24,6 +24,15 @@ export async function checkSupabaseConnection(): Promise<boolean> {
       }
       console.warn('[Supabase] 連接錯誤:', error.message);
       return false;
+    }
+    // Also verify write access by attempting a dummy insert/delete
+    const testId = '00000000-0000-0000-0000-000000000000';
+    const { error: writeError } = await supabase.from('customers').delete().eq('id', testId);
+    if (writeError) {
+      if (writeError.code === '42501' || writeError.message?.includes('policy') || writeError.message?.includes('permission')) {
+        console.warn('[Supabase] 讀取正常但寫入權限不足，請執行 supabase_rls_fix.sql');
+        return false;
+      }
     }
     return true;
   } catch (e) {
@@ -105,11 +114,29 @@ export async function sbCreateCustomer(customerData: Omit<Customer, 'id' | 'cust
   const seq = (existing?.length || 0) + 1;
   const customerNo = `${prefix}-${String(seq).padStart(3, '0')}`;
 
-  const { data, error } = await supabase.from('customers').insert({
-    ...customerData,
+  const insertPayload = {
+    name: customerData.name,
+    short_name: customerData.short_name || '',
+    type: customerData.type || '',
+    address: customerData.address || '',
+    delivery_addresses: customerData.delivery_addresses || [],
+    phone: customerData.phone || '',
+    email: customerData.email || '',
+    contact1_name: customerData.contact1_name || '',
+    contact1_phone: customerData.contact1_phone || '',
+    contact2_name: customerData.contact2_name || '',
+    contact2_phone: customerData.contact2_phone || '',
+    status: customerData.status || '啟用',
+    remarks: customerData.remarks || '',
     customer_no: customerNo,
-  }).select().single();
-  if (error) throw error;
+  };
+
+  const { data, error } = await supabase.from('customers').insert(insertPayload).select().single();
+  if (error) {
+    console.error('[Supabase] sbCreateCustomer error:', error.code, error.message, error.details, error.hint);
+    const errMsg = error.message + ' [code: ' + error.code + ']';
+    throw new Error(errMsg);
+  }
   return mapCustomer(data);
 }
 

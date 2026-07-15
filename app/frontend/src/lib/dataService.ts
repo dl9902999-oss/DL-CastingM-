@@ -81,25 +81,68 @@ export async function dsDeleteUser(id: string): Promise<boolean> {
 // ============================================================
 export async function dsGetCustomers(): Promise<Customer[]> {
   const connected = await isSupabaseConnected();
-  if (connected) return sbStore.sbGetCustomers();
+  if (connected) {
+    try {
+      return await sbStore.sbGetCustomers();
+    } catch (err) {
+      console.warn('[DataService] sbGetCustomers failed, falling back to localStorage:', err);
+      return localStore.getCustomers();
+    }
+  }
   return localStore.getCustomers();
 }
 
 export async function dsCreateCustomer(data: Omit<Customer, 'id' | 'customer_no' | 'created_at' | 'updated_at'>): Promise<Customer> {
   const connected = await isSupabaseConnected();
-  if (connected) return sbStore.sbCreateCustomer(data);
+  if (connected) {
+    try {
+      return await sbStore.sbCreateCustomer(data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // RLS policy error - fall back to localStorage and warn
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security') || msg.includes('42501') || msg.includes('new row violates')) {
+        console.warn('[DataService] Supabase RLS blocked insert, falling back to localStorage. Please run supabase_rls_fix.sql');
+        const result = localStore.createCustomer(data);
+        return result;
+      }
+      throw err;
+    }
+  }
   return localStore.createCustomer(data);
 }
 
 export async function dsUpdateCustomer(id: string, data: Partial<Customer>): Promise<Customer | null> {
   const connected = await isSupabaseConnected();
-  if (connected) return sbStore.sbUpdateCustomer(id, data);
+  if (connected) {
+    try {
+      return await sbStore.sbUpdateCustomer(id, data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security') || msg.includes('42501')) {
+        console.warn('[DataService] Supabase RLS blocked update, falling back to localStorage');
+        return localStore.updateCustomer(id, data);
+      }
+      throw err;
+    }
+  }
   return localStore.updateCustomer(id, data);
 }
 
 export async function dsDeleteCustomer(id: string): Promise<void> {
   const connected = await isSupabaseConnected();
-  if (connected) return sbStore.sbDeleteCustomer(id);
+  if (connected) {
+    try {
+      return await sbStore.sbDeleteCustomer(id);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security') || msg.includes('42501')) {
+        console.warn('[DataService] Supabase RLS blocked delete, falling back to localStorage');
+        localStore.deleteCustomer(id);
+        return;
+      }
+      throw err;
+    }
+  }
   localStore.deleteCustomer(id);
 }
 

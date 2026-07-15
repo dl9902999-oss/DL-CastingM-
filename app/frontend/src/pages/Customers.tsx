@@ -124,7 +124,7 @@ export default function Customers() {
       return;
     }
     try {
-      await dsCreateCustomer({
+      const result = await dsCreateCustomer({
         name: form.name,
         short_name: form.short_name,
         type: form.type,
@@ -139,13 +139,24 @@ export default function Customers() {
         status: form.status,
         remarks: form.remarks,
       });
-      await loadCustomers();
-      setIsCreateOpen(false);
-      setForm(emptyForm);
-      toast({ title: '客戶已新增' });
-    } catch (err) {
+      if (result) {
+        await loadCustomers();
+        setIsCreateOpen(false);
+        setForm(emptyForm);
+        toast({ title: '客戶已新增' });
+      } else {
+        toast({ title: '新增失敗，請重試', variant: 'destructive' });
+      }
+    } catch (err: unknown) {
       console.error('[Customers] Create failed:', err);
-      toast({ title: '新增失敗，請重試', variant: 'destructive' });
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '資料庫權限不足，請聯繫管理員執行 RLS 修正腳本', variant: 'destructive' });
+      } else if (msg.includes('duplicate') || msg.includes('unique')) {
+        toast({ title: '客戶編號重複，請重試', variant: 'destructive' });
+      } else {
+        toast({ title: '新增失敗，請重試', variant: 'destructive' });
+      }
     }
   };
 
