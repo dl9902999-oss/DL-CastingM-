@@ -13,8 +13,11 @@ import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMater
 let _isConnected: boolean | null = null;
 let _connectionChecked = false;
 let _checkPromise: Promise<boolean> | null = null;
+// Track if write operations failed due to RLS - forces fallback for reads too
+let _writeFailed = false;
 
 export async function isSupabaseConnected(): Promise<boolean> {
+  if (_writeFailed) return false;
   if (_connectionChecked) return _isConnected!;
   if (_checkPromise) return _checkPromise;
   _checkPromise = sbStore.checkSupabaseConnection().then(connected => {
@@ -35,6 +38,7 @@ export function resetConnectionState(): void {
   _isConnected = null;
   _connectionChecked = false;
   _checkPromise = null;
+  _writeFailed = false;
 }
 
 export function getConnectionStatus(): boolean | null {
@@ -101,7 +105,8 @@ export async function dsCreateCustomer(data: Omit<Customer, 'id' | 'customer_no'
       const msg = err instanceof Error ? err.message : String(err);
       // RLS policy error - fall back to localStorage and warn
       if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security') || msg.includes('42501') || msg.includes('new row violates')) {
-        console.warn('[DataService] Supabase RLS blocked insert, falling back to localStorage. Please run supabase_rls_fix.sql');
+        console.warn('[DataService] Supabase RLS blocked insert, switching to offline mode. Please run supabase_rls_fix.sql');
+        _writeFailed = true;
         const result = localStore.createCustomer(data);
         return result;
       }
@@ -119,7 +124,8 @@ export async function dsUpdateCustomer(id: string, data: Partial<Customer>): Pro
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security') || msg.includes('42501')) {
-        console.warn('[DataService] Supabase RLS blocked update, falling back to localStorage');
+        console.warn('[DataService] Supabase RLS blocked update, switching to offline mode');
+        _writeFailed = true;
         return localStore.updateCustomer(id, data);
       }
       throw err;
@@ -136,7 +142,8 @@ export async function dsDeleteCustomer(id: string): Promise<void> {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security') || msg.includes('42501')) {
-        console.warn('[DataService] Supabase RLS blocked delete, falling back to localStorage');
+        console.warn('[DataService] Supabase RLS blocked delete, switching to offline mode');
+        _writeFailed = true;
         localStore.deleteCustomer(id);
         return;
       }
