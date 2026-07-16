@@ -1,26 +1,30 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
-import { isSupabaseConnected } from '../lib/dataService';
+import { isSupabaseConnected, attemptReconnect, getConnectionStatus } from '../lib/dataService';
 import { startRealtimeSync, stopRealtimeSync, fullSyncFromSupabase, onDataChange } from '../lib/realtimeSync';
 
 interface DataContextType {
   isOnline: boolean | null; // null = checking, true = Supabase, false = localStorage
   isLoading: boolean;
   lastSyncTime: number; // timestamp of last data change, use to trigger re-renders
-  refreshData: () => void; // manually trigger a data refresh
+  connectionReason: string; // reason for offline mode
+  refreshData: () => Promise<void>; // manually trigger a data refresh
 }
 
 const DataContext = createContext<DataContextType>({
   isOnline: null,
   isLoading: true,
   lastSyncTime: 0,
-  refreshData: () => {},
+  connectionReason: 'none',
+  refreshData: async () => {},
 });
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
   const [isOnline, setIsOnline] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [lastSyncTime, setLastSyncTime] = useState(Date.now());
+  const [connectionReason, setConnectionReason] = useState('none');
   const initialSyncDone = useRef(false);
+  const refreshInProgress = useRef(false);
 
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
@@ -28,6 +32,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     isSupabaseConnected().then(async (connected) => {
       setIsOnline(connected);
       setIsLoading(false);
+      setConnectionReason(getConnectionStatus().reason);
 
       if (connected) {
         // Perform initial full sync from Supabase to ensure localStorage is up-to-date
@@ -54,17 +59,30 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refreshData = useCallback(async () => {
-    if (isOnline) {
-      await fullSyncFromSupabase();
+    // Debounce: prevent multiple simultaneous refreshes
+    if (refreshInProgress.current) return;
+    refreshInProgress.current = true;
+
+    try {
+      // Try to reconnect (handles recovery from _writeFailed state)
+      const connected = await attemptReconnect();
+      setIsOnline(connected);
+      setConnectionReason(getConnectionStatus().reason);
+
+      if (connected) {
+        await fullSyncFromSupabase();
+        // Re-start realtime sync if it was stopped
+        startRealtimeSync();
+      }
+      // Always trigger re-render for UI update
       setLastSyncTime(Date.now());
-    } else {
-      // Just trigger re-render for localStorage mode
-      setLastSyncTime(Date.now());
+    } finally {
+      refreshInProgress.current = false;
     }
-  }, [isOnline]);
+  }, []);
 
   return (
-    <DataContext.Provider value={{ isOnline, isLoading, lastSyncTime, refreshData }}>
+    <DataContext.Provider value={{ isOnline, isLoading, lastSyncTime, connectionReason, refreshData }}>
       {children}
     </DataContext.Provider>
   );

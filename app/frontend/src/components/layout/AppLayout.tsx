@@ -45,7 +45,7 @@ const navItems: NavItem[] = [
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
-  const { isOnline, isLoading: dataLoading, refreshData } = useDataConnection();
+  const { isOnline, isLoading: dataLoading, refreshData, connectionReason } = useDataConnection();
   const navigate = useNavigate();
   const location = useLocation();
   const [open, setOpen] = useState(false);
@@ -93,9 +93,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       </nav>
       <div className="p-4 border-t border-zinc-700">
         <div className="flex items-center gap-2 mb-2">
-          <span className={`inline-block w-2 h-2 rounded-full ${dataLoading ? 'bg-yellow-400 animate-pulse' : isOnline ? 'bg-green-400' : 'bg-zinc-500'}`} />
+          <span className={`inline-block w-2 h-2 rounded-full ${dataLoading ? 'bg-yellow-400 animate-pulse' : isOnline ? 'bg-green-400' : connectionReason === 'rls_blocked' ? 'bg-orange-400' : 'bg-zinc-500'}`} />
           <span className="text-xs text-zinc-400">
-            {dataLoading ? '連接中...' : isOnline ? 'Supabase 已連接' : '離線模式'}
+            {dataLoading ? '連接中...' : isOnline ? 'Supabase 已連接' : connectionReason === 'rls_blocked' ? '離線模式（權限受限）' : '離線模式'}
           </span>
         </div>
         <div className="flex items-center justify-between">

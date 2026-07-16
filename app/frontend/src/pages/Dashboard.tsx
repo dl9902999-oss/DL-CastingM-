@@ -1,20 +1,40 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { getDashboardStats, getWorkOrders, getMoldingBatches, getShipmentOrders } from '@/lib/store';
+import { dsGetDashboardStats, dsGetWorkOrders, dsGetMoldingBatches, dsGetShipmentOrders } from '@/lib/dataService';
 import { Activity, TrendingUp, Package, Truck } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
-import { useSyncTrigger } from '@/hooks/useSyncedData';
+import { useDataConnection } from '@/contexts/DataContext';
 
 export default function Dashboard() {
   const [stats, setStats] = useState({ todayProduction: 0, todayProductionKg: 0, yieldRate: 0, wipQuantity: 0, pendingShipment: 0 });
   const [recentOrders, setRecentOrders] = useState<{ order_no: string; customer: string; status: string }[]>([]);
-  const syncTrigger = useSyncTrigger();
+  const [summaryStats, setSummaryStats] = useState({ totalOrders: 0, activeBatches: 0, pendingShipments: 0 });
+  const { lastSyncTime } = useDataConnection();
+
+  const loadData = useCallback(async () => {
+    try {
+      const [dashStats, orders, batches, shipments] = await Promise.all([
+        dsGetDashboardStats(),
+        dsGetWorkOrders(),
+        dsGetMoldingBatches(),
+        dsGetShipmentOrders(),
+      ]);
+      setStats(dashStats);
+      const recent = orders.slice(0, 5);
+      setRecentOrders(recent.map(o => ({ order_no: o.order_no, customer: o.customer, status: o.status })));
+      setSummaryStats({
+        totalOrders: orders.length,
+        activeBatches: batches.filter(b => b.status !== 'Completed').length,
+        pendingShipments: shipments.filter(s => s.status === 'Pending').length,
+      });
+    } catch (err) {
+      console.error('[Dashboard] Failed to load data:', err);
+    }
+  }, []);
 
   useEffect(() => {
-    setStats(getDashboardStats());
-    const orders = getWorkOrders().slice(-5).reverse();
-    setRecentOrders(orders.map(o => ({ order_no: o.order_no, customer: o.customer, status: o.status })));
-  }, [syncTrigger]);
+    loadData();
+  }, [loadData, lastSyncTime]);
 
   return (
     <AppLayout>
@@ -122,15 +142,15 @@ export default function Dashboard() {
               <div className="space-y-3">
                 <div className="flex justify-between text-sm">
                   <span className="text-zinc-400">總工單數</span>
-                  <span className="text-zinc-200">{getWorkOrders().length}</span>
+                  <span className="text-zinc-200">{summaryStats.totalOrders}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-zinc-400">進行中批次</span>
-                  <span className="text-zinc-200">{getMoldingBatches().filter(b => b.status !== 'Completed').length}</span>
+                  <span className="text-zinc-200">{summaryStats.activeBatches}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-zinc-400">待出貨訂單</span>
-                  <span className="text-zinc-200">{getShipmentOrders().filter(s => s.status === 'Pending').length}</span>
+                  <span className="text-zinc-200">{summaryStats.pendingShipments}</span>
                 </div>
               </div>
             </CardContent>
