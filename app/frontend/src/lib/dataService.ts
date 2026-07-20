@@ -36,7 +36,13 @@ export async function isSupabaseConnected(): Promise<boolean> {
 
   if (_connectionChecked) return _isConnected!;
   if (_checkPromise) return _checkPromise;
-  _checkPromise = sbStore.checkSupabaseConnection().then(connected => {
+  const CONNECTION_CHECK_TIMEOUT = 8_000; // 8 seconds for connection check
+  _checkPromise = Promise.race([
+    sbStore.checkSupabaseConnection(),
+    new Promise<boolean>((_, reject) =>
+      setTimeout(() => reject(new Error('connection check timeout')), CONNECTION_CHECK_TIMEOUT)
+    ),
+  ]).then(connected => {
     _isConnected = connected;
     _connectionChecked = true;
     _lastCheckTime = Date.now();
@@ -92,6 +98,18 @@ export async function attemptReconnect(): Promise<boolean> {
 // ============================================================
 // Helper: wrap write operations with RLS fallback
 // ============================================================
+// Timeout helper: rejects after specified ms
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`[${label}] timeout after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
+const OPERATION_TIMEOUT = 10_000; // 10 seconds
+
 async function withRLSFallback<T>(
   sbOperation: () => Promise<T>,
   localFallback: () => T,
@@ -101,7 +119,7 @@ async function withRLSFallback<T>(
   if (!connected) return localFallback();
 
   try {
-    return await sbOperation();
+    return await withTimeout(sbOperation(), OPERATION_TIMEOUT, operationName);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (
@@ -114,6 +132,11 @@ async function withRLSFallback<T>(
       console.warn(`[DataService] ${operationName}: RLS blocked, switching to offline mode`);
       _writeFailed = true;
       _offlineReason = 'rls_blocked';
+      return localFallback();
+    }
+    // Timeout or network error - fallback to localStorage
+    if (msg.includes('timeout')) {
+      console.warn(`[DataService] ${operationName}: timeout, falling back to localStorage`);
       return localFallback();
     }
     throw err;
@@ -129,7 +152,7 @@ async function withReadFallback<T>(
   if (!connected) return localFallback();
 
   try {
-    return await sbOperation();
+    return await withTimeout(sbOperation(), OPERATION_TIMEOUT, operationName);
   } catch (err) {
     console.warn(`[DataService] ${operationName} failed, falling back to localStorage:`, err);
     return localFallback();

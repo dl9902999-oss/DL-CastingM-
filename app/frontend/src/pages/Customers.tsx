@@ -57,6 +57,7 @@ export default function Customers() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Load customers from dataService (routes to Supabase when connected)
   const loadCustomers = useCallback(async () => {
@@ -123,6 +124,8 @@ export default function Customers() {
       toast({ title: '請輸入聯絡人1手機', variant: 'destructive' });
       return;
     }
+    if (isSaving) return;
+    setIsSaving(true);
     try {
       const result = await dsCreateCustomer({
         name: form.name,
@@ -154,9 +157,13 @@ export default function Customers() {
         toast({ title: '資料庫權限不足，請聯繫管理員執行 RLS 修正腳本', variant: 'destructive' });
       } else if (msg.includes('duplicate') || msg.includes('unique')) {
         toast({ title: '客戶編號重複，請重試', variant: 'destructive' });
+      } else if (msg.includes('timeout')) {
+        toast({ title: '連線逾時，已儲存至本地', variant: 'destructive' });
       } else {
         toast({ title: '新增失敗，請重試', variant: 'destructive' });
       }
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -200,6 +207,8 @@ export default function Customers() {
       toast({ title: '請輸入聯絡人1手機', variant: 'destructive' });
       return;
     }
+    if (isSaving) return;
+    setIsSaving(true);
     try {
       await dsUpdateCustomer(editCustomer.id, {
         name: form.name,
@@ -222,7 +231,14 @@ export default function Customers() {
       toast({ title: '客戶已更新' });
     } catch (err) {
       console.error('[Customers] Update failed:', err);
-      toast({ title: '更新失敗，請重試', variant: 'destructive' });
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('timeout')) {
+        toast({ title: '連線逾時，已儲存至本地', variant: 'destructive' });
+      } else {
+        toast({ title: '更新失敗，請重試', variant: 'destructive' });
+      }
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -459,7 +475,9 @@ export default function Customers() {
           {formContent}
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => setIsCreateOpen(false)}>取消</Button>
-            <Button onClick={handleCreate} className="bg-amber-600 hover:bg-amber-700">新增</Button>
+            <Button onClick={handleCreate} disabled={isSaving} className="bg-amber-600 hover:bg-amber-700">
+              {isSaving ? '儲存中...' : '新增'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -471,7 +489,9 @@ export default function Customers() {
           {formContent}
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => { setEditCustomer(null); setForm(emptyForm); }}>取消</Button>
-            <Button onClick={handleEditSave} className="bg-amber-600 hover:bg-amber-700">儲存</Button>
+            <Button onClick={handleEditSave} disabled={isSaving} className="bg-amber-600 hover:bg-amber-700">
+              {isSaving ? '儲存中...' : '儲存'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
