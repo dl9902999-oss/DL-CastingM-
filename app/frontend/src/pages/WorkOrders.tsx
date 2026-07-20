@@ -524,7 +524,7 @@ export default function WorkOrders() {
                       }
                     }}
                     patterns={patternList}
-                    onAddPattern={() => navigate('/patterns')}
+                    onAddPattern={() => navigate('/mold-management')}
                   />
                 </div>
                 <div>
@@ -781,7 +781,7 @@ export default function WorkOrders() {
                       }
                     }}
                     patterns={patternList}
-                    onAddPattern={() => navigate('/patterns')}
+                    onAddPattern={() => navigate('/mold-management')}
                   />
                 </div>
                 <div>

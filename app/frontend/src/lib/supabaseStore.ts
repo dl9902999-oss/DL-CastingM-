@@ -25,15 +25,8 @@ export async function checkSupabaseConnection(): Promise<boolean> {
       console.warn('[Supabase] 連接錯誤:', error.message);
       return false;
     }
-    // Also verify write access by attempting a dummy insert/delete
-    const testId = '00000000-0000-0000-0000-000000000000';
-    const { error: writeError } = await supabase.from('customers').delete().eq('id', testId);
-    if (writeError) {
-      if (writeError.code === '42501' || writeError.message?.includes('policy') || writeError.message?.includes('permission')) {
-        console.warn('[Supabase] 讀取正常但寫入權限不足，請執行 supabase_rls_fix.sql');
-        return false;
-      }
-    }
+    // Connection is good if read succeeds - skip write test to avoid
+    // false negatives from RLS policies on empty result sets
     return true;
   } catch (e) {
     console.warn('[Supabase] 連接失敗:', e);

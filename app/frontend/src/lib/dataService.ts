@@ -13,26 +13,44 @@ import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMater
 let _isConnected: boolean | null = null;
 let _connectionChecked = false;
 let _checkPromise: Promise<boolean> | null = null;
+let _lastCheckTime = 0;
 // Track if write operations failed due to RLS - forces fallback for reads too
 let _writeFailed = false;
 // Track the reason for offline mode
 let _offlineReason: 'none' | 'no_connection' | 'rls_blocked' | 'error' = 'none';
 
+// Auto-retry connection check after 60 seconds if previously failed
+const CONNECTION_RETRY_INTERVAL = 60_000;
+
 export async function isSupabaseConnected(): Promise<boolean> {
   if (_writeFailed) return false;
+
+  // If previously checked and failed, allow retry after interval
+  if (_connectionChecked && !_isConnected) {
+    const elapsed = Date.now() - _lastCheckTime;
+    if (elapsed > CONNECTION_RETRY_INTERVAL) {
+      _connectionChecked = false;
+      _checkPromise = null;
+    }
+  }
+
   if (_connectionChecked) return _isConnected!;
   if (_checkPromise) return _checkPromise;
   _checkPromise = sbStore.checkSupabaseConnection().then(connected => {
     _isConnected = connected;
     _connectionChecked = true;
+    _lastCheckTime = Date.now();
     if (!connected) {
       _offlineReason = 'no_connection';
+    } else {
+      _offlineReason = 'none';
     }
     console.log(`[DataService] Supabase ${connected ? '已連接 ✓' : '未連接，使用離線模式'}`);
     return connected;
   }).catch(() => {
     _isConnected = false;
     _connectionChecked = true;
+    _lastCheckTime = Date.now();
     _offlineReason = 'error';
     return false;
   });

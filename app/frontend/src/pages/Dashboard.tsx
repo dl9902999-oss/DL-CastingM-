@@ -9,7 +9,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState({ todayProduction: 0, todayProductionKg: 0, yieldRate: 0, wipQuantity: 0, pendingShipment: 0 });
   const [recentOrders, setRecentOrders] = useState<{ order_no: string; customer: string; status: string }[]>([]);
   const [summaryStats, setSummaryStats] = useState({ totalOrders: 0, activeBatches: 0, pendingShipments: 0 });
-  const { lastSyncTime } = useDataConnection();
+  const { lastSyncTime, isOnline } = useDataConnection();
 
   const loadData = useCallback(async () => {
     try {
@@ -167,8 +167,10 @@ export default function Dashboard() {
                   <span className="text-sm text-zinc-300">系統運行正常</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-amber-400"></div>
-                  <span className="text-sm text-zinc-300">離線模式（Demo）</span>
+                  <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-400' : 'bg-amber-400'}`}></div>
+                  <span className="text-sm text-zinc-300">
+                    {isOnline === null ? '連線檢查中...' : isOnline ? 'Supabase 雲端已連接' : '離線模式（本地儲存）'}
+                  </span>
                 </div>
               </div>
             </CardContent>
