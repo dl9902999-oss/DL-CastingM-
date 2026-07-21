@@ -139,7 +139,9 @@ async function withRLSFallback<T>(
       console.warn(`[DataService] ${operationName}: timeout, falling back to localStorage`);
       return localFallback();
     }
-    throw err;
+    // Any other Supabase error (schema mismatch, constraint violation, etc.) - fallback to localStorage
+    console.warn(`[DataService] ${operationName}: Supabase error, falling back to localStorage:`, msg);
+    return localFallback();
   }
 }
 

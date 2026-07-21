@@ -424,8 +424,14 @@ export default function WorkOrders() {
       setIsCreateOpen(false);
       resetForm();
       toast({ title: '工單已建立' });
-    } catch {
-      toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+    } catch (err) {
+      console.error('[WorkOrders] 建立工單失敗:', err);
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('timeout')) {
+        toast({ title: '連線逾時，請檢查網路後再試', variant: 'destructive' });
+      } else {
+        toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+      }
     }
   };
 
