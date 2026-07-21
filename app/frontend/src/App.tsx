@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { DataProvider } from '@/contexts/DataContext';
+import SyncStatusNotifier from '@/components/SyncStatusNotifier';
 import Login from '@/pages/Login';
 import Dashboard from '@/pages/Dashboard';
 import WorkOrders from '@/pages/WorkOrders';
@@ -58,6 +59,7 @@ const App = () => (
       <AuthProvider>
         <TooltipProvider>
           <Toaster />
+          <SyncStatusNotifier />
           <BrowserRouter>
             <AppRoutes />
           </BrowserRouter>

@@ -5,28 +5,55 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Factory, Eye, EyeOff } from 'lucide-react';
+import { Factory, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 export default function Login() {
   const [employeeId, setEmployeeId] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const success = login(employeeId, password);
-    if (success) {
-      navigate('/dashboard');
-    } else {
+    if (isLoggingIn) return;
+
+    if (!employeeId.trim()) {
+      toast({ title: '請輸入員工編號', variant: 'destructive' });
+      return;
+    }
+    if (!password.trim()) {
+      toast({ title: '請輸入密碼', variant: 'destructive' });
+      return;
+    }
+
+    setIsLoggingIn(true);
+    try {
+      const result = await login(employeeId, password);
+      if (result.success) {
+        if (result.error) {
+          // Login succeeded but with a warning (e.g., offline mode)
+          toast({ title: '登入成功', description: result.error });
+        }
+        navigate('/dashboard');
+      } else {
+        toast({
+          title: '登入失敗',
+          description: result.error || '請確認員工編號及密碼是否正確',
+          variant: 'destructive',
+        });
+      }
+    } catch {
       toast({
         title: '登入失敗',
-        description: '請確認員工編號及密碼是否正確',
+        description: '系統異常，請稍後重試',
         variant: 'destructive',
       });
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -62,6 +89,7 @@ export default function Login() {
                 onChange={e => setEmployeeId(e.target.value)}
                 placeholder="輸入員工編號"
                 className="bg-zinc-700 border-zinc-600 text-zinc-100 placeholder:text-zinc-500"
+                disabled={isLoggingIn}
                 required
               />
             </div>
@@ -75,6 +103,7 @@ export default function Login() {
                   onChange={e => setPassword(e.target.value)}
                   placeholder="輸入密碼"
                   className="bg-zinc-700 border-zinc-600 text-zinc-100 placeholder:text-zinc-500 pr-10"
+                  disabled={isLoggingIn}
                   required
                 />
                 <button
@@ -86,8 +115,19 @@ export default function Login() {
                 </button>
               </div>
             </div>
-            <Button type="submit" className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900 font-semibold">
-              登入
+            <Button
+              type="submit"
+              className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900 font-semibold"
+              disabled={isLoggingIn}
+            >
+              {isLoggingIn ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  驗證中...
+                </span>
+              ) : (
+                '登入'
+              )}
             </Button>
           </form>
         </CardContent>

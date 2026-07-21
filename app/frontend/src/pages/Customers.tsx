@@ -211,7 +211,7 @@ export default function Customers() {
     if (isSaving) return;
     setIsSaving(true);
     try {
-      await dsUpdateCustomer(editCustomer.id, {
+      const result = await dsUpdateCustomer(editCustomer.id, {
         name: form.name,
         short_name: form.short_name,
         type: form.type,
@@ -226,17 +226,30 @@ export default function Customers() {
         status: form.status,
         remarks: form.remarks,
       });
-      await loadCustomers();
-      setEditCustomer(null);
-      setForm(emptyForm);
-      toast({ title: '客戶已更新' });
-    } catch (err) {
-      console.error('[Customers] Update failed:', err);
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('timeout')) {
-        toast({ title: '連線逾時，已儲存至本地', variant: 'destructive' });
+      if (result) {
+        await loadCustomers();
+        setEditCustomer(null);
+        setForm(emptyForm);
+        toast({ title: '✅ 客戶資料已更新' });
       } else {
         toast({ title: '更新失敗，請重試', variant: 'destructive' });
+      }
+    } catch (err: unknown) {
+      console.error('[Customers] Update failed:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '資料庫權限不足，請聯繫管理員執行 RLS 修正腳本', variant: 'destructive' });
+      } else if (msg.includes('timeout')) {
+        toast({ title: '連線逾時，已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('not found') || msg.includes('404')) {
+        toast({ title: '找不到此客戶資料，可能已被其他裝置刪除', variant: 'destructive' });
+        await loadCustomers();
+        setEditCustomer(null);
+        setForm(emptyForm);
+      } else if (msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '網路連線異常，已儲存至本地', description: '請確認網路狀態', variant: 'destructive' });
+      } else {
+        toast({ title: '更新失敗，請重試', description: msg, variant: 'destructive' });
       }
     } finally {
       setIsSaving(false);
@@ -244,14 +257,23 @@ export default function Customers() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('確定要刪除此客戶？')) return;
+    if (!confirm('確定要刪除此客戶？此操作無法復原。')) return;
     try {
       await dsDeleteCustomer(id);
       await loadCustomers();
-      toast({ title: '客戶已刪除' });
-    } catch (err) {
+      toast({ title: '✅ 客戶已刪除' });
+    } catch (err: unknown) {
       console.error('[Customers] Delete failed:', err);
-      toast({ title: '刪除失敗，請重試', variant: 'destructive' });
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，無法刪除此客戶', variant: 'destructive' });
+      } else if (msg.includes('timeout')) {
+        toast({ title: '連線逾時，請重試', variant: 'destructive' });
+      } else if (msg.includes('foreign') || msg.includes('constraint') || msg.includes('referenced')) {
+        toast({ title: '此客戶有關聯的工單或其他資料，無法刪除', description: '請先刪除相關工單後再試', variant: 'destructive' });
+      } else {
+        toast({ title: '刪除失敗，請重試', description: msg, variant: 'destructive' });
+      }
     }
   };
 
