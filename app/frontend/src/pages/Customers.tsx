@@ -10,6 +10,7 @@ import { dsGetCustomers, dsCreateCustomer, dsUpdateCustomer, dsDeleteCustomer } 
 import { Customer, CustomerType, CustomerStatus } from '@/lib/types';
 import { Plus, Search, Edit, Trash2, Users, X, Upload, RefreshCw } from 'lucide-react';
 import BatchImportDialog from '@/components/BatchImportDialog';
+import BusinessCardOCR from '@/components/BusinessCardOCR';
 import { useDataConnection } from '@/contexts/DataContext';
 
 const CUSTOMER_TYPES: CustomerType[] = ['產業機械', '砂石產業', '營造工程', '汽車模具', '鑄造廠', '加工廠', '貿易商', '其他'];
@@ -254,6 +255,30 @@ export default function Customers() {
     }
   };
 
+  // Handle OCR result from business card recognition
+  const handleOCRResult = (data: { company_name: string; short_name: string; contact_name: string; contact_title: string; phone: string; mobile: string; fax: string; email: string; address: string; website: string }) => {
+    setForm(prev => ({
+      ...prev,
+      name: data.company_name || prev.name,
+      short_name: data.short_name || prev.short_name,
+      phone: data.phone || prev.phone,
+      email: data.email || prev.email,
+      address: data.address || prev.address,
+      contact1_name: data.contact_name || prev.contact1_name,
+      contact1_phone: data.mobile || prev.contact1_phone,
+      remarks: [
+        prev.remarks,
+        data.contact_title ? `職稱: ${data.contact_title}` : '',
+        data.fax ? `傳真: ${data.fax}` : '',
+        data.website ? `網站: ${data.website}` : '',
+      ].filter(Boolean).join('\n'),
+    }));
+    // Open create dialog if not already open
+    if (!isCreateOpen && !editCustomer) {
+      setIsCreateOpen(true);
+    }
+  };
+
   const addDeliveryAddress = () => {
     setForm({ ...form, delivery_addresses: [...form.delivery_addresses, ''] });
   };
@@ -393,6 +418,7 @@ export default function Customers() {
             >
               <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
             </Button>
+            <BusinessCardOCR onResult={handleOCRResult} />
             <Button onClick={() => setIsBatchImportOpen(true)} variant="outline" className="border-amber-600 text-amber-400 hover:bg-amber-600/10">
               <Upload className="w-4 h-4 mr-1" /> 批次匯入
             </Button>
