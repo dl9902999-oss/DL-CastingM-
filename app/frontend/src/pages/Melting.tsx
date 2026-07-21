@@ -6,7 +6,15 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { MeltingRecord, MoldingBatch, WorkOrder } from '@/lib/types';
-import { getMeltingRecords, createMeltingRecord, updateMeltingRecord, deleteMeltingRecord, getMoldingBatches, getWorkOrders } from '@/lib/store';
+import { dsGetMeltingRecords, dsCreateMeltingRecord, dsUpdateMeltingRecord, dsDeleteMeltingRecord, dsGetMoldingBatches, dsGetWorkOrders } from '@/lib/dataService';
+
+// Alias ds* to legacy names used in this file
+const getMeltingRecords = dsGetMeltingRecords as unknown as (...args: Parameters<typeof dsGetMeltingRecords>) => Awaited<ReturnType<typeof dsGetMeltingRecords>>;
+const createMeltingRecord = dsCreateMeltingRecord as unknown as (...args: Parameters<typeof dsCreateMeltingRecord>) => Awaited<ReturnType<typeof dsCreateMeltingRecord>>;
+const updateMeltingRecord = dsUpdateMeltingRecord as unknown as (...args: Parameters<typeof dsUpdateMeltingRecord>) => Awaited<ReturnType<typeof dsUpdateMeltingRecord>>;
+const deleteMeltingRecord = dsDeleteMeltingRecord as unknown as (...args: Parameters<typeof dsDeleteMeltingRecord>) => Awaited<ReturnType<typeof dsDeleteMeltingRecord>>;
+const getMoldingBatches = dsGetMoldingBatches as unknown as (...args: Parameters<typeof dsGetMoldingBatches>) => Awaited<ReturnType<typeof dsGetMoldingBatches>>;
+const getWorkOrders = dsGetWorkOrders as unknown as (...args: Parameters<typeof dsGetWorkOrders>) => Awaited<ReturnType<typeof dsGetWorkOrders>>;
 import { Plus, Flame, Search, X, Pencil, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 

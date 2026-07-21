@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ShipmentOrder, WorkOrder } from '@/lib/types';
-import { getShipmentOrders, createShipmentOrder, updateShipmentOrder, getWorkOrders } from '@/lib/store';
+import { dsGetShipmentOrders, dsCreateShipmentOrder, dsUpdateShipmentOrder, dsGetWorkOrders } from '@/lib/dataService';
 import { Plus, Truck, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -22,35 +22,56 @@ export default function Shipment() {
 
   const syncTrigger = useSyncTrigger();
 
+  const [loading, setLoading] = useState(false);
+
   useEffect(() => {
-    setShipments(getShipmentOrders());
-    setWorkOrders(getWorkOrders());
+    let cancelled = false;
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const [s, wo] = await Promise.all([dsGetShipmentOrders(), dsGetWorkOrders()]);
+        if (!cancelled) { setShipments(s); setWorkOrders(wo); }
+      } catch { /* handled */ }
+      finally { if (!cancelled) setLoading(false); }
+    };
+    loadData();
+    return () => { cancelled = true; };
   }, [syncTrigger]);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!form.work_order_id || form.quantity <= 0 || !form.ship_date) {
       toast({ title: '請填寫所有必要欄位', variant: 'destructive' });
       return;
     }
     const wo = workOrders.find(o => o.id === form.work_order_id);
     if (!wo) return;
-    createShipmentOrder({
-      work_order_id: form.work_order_id,
-      order_no: wo.order_no,
-      customer: wo.customer,
-      quantity: form.quantity,
-      ship_date: form.ship_date,
-    });
-    setShipments(getShipmentOrders());
-    setIsCreateOpen(false);
-    setForm({ work_order_id: '', quantity: 0, ship_date: '' });
-    toast({ title: '出貨單已建立' });
+    try {
+      await dsCreateShipmentOrder({
+        work_order_id: form.work_order_id,
+        order_no: wo.order_no,
+        customer: wo.customer,
+        quantity: form.quantity,
+        ship_date: form.ship_date,
+      });
+      const data = await dsGetShipmentOrders();
+      setShipments(data);
+      setIsCreateOpen(false);
+      setForm({ work_order_id: '', quantity: 0, ship_date: '' });
+      toast({ title: '出貨單已建立' });
+    } catch {
+      toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
-  const handleShip = (id: string) => {
-    updateShipmentOrder(id, { status: 'Shipped' });
-    setShipments(getShipmentOrders());
-    toast({ title: '已標記為已出貨' });
+  const handleShip = async (id: string) => {
+    try {
+      await dsUpdateShipmentOrder(id, { status: 'Shipped' });
+      const data = await dsGetShipmentOrders();
+      setShipments(data);
+      toast({ title: '已標記為已出貨' });
+    } catch {
+      toast({ title: '更新失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
   return (

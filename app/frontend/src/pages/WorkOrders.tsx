@@ -10,8 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment, Pattern, Customer } from '@/lib/types';
-import { getWorkOrders, createWorkOrder, updateWorkOrder, deleteWorkOrder, getMoldingBatches, getPatterns, getMeltRecords } from '@/lib/store';
-import { dsGetCustomers } from '@/lib/dataService';
+import { dsGetCustomers, dsGetWorkOrders, dsCreateWorkOrder, dsUpdateWorkOrder, dsDeleteWorkOrder, dsGetMoldingBatches, dsGetPatterns, dsGetMeltRecords } from '@/lib/dataService';
 import { Plus, Search, Edit, Image, FileImage, X, Trash2, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -300,22 +299,49 @@ export default function WorkOrders() {
 
   const syncTrigger = useSyncTrigger();
 
+  const [loading, setLoading] = useState(false);
+
   useEffect(() => {
-    setOrders(getWorkOrders());
-    setBatches(getMoldingBatches());
-    setPatternList(getPatterns());
-    // Load customers from dataService (routes to Supabase when connected)
-    dsGetCustomers().then(data => setCustomers(data)).catch(() => {});
+    let cancelled = false;
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const [wo, mb, pl, cl] = await Promise.all([
+          dsGetWorkOrders(),
+          dsGetMoldingBatches(),
+          dsGetPatterns(),
+          dsGetCustomers(),
+        ]);
+        if (!cancelled) {
+          setOrders(wo);
+          setBatches(mb);
+          setPatternList(pl);
+          setCustomers(cl);
+        }
+      } catch {
+        // fallback already handled inside dataService
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    loadData();
+    return () => { cancelled = true; };
   }, [syncTrigger]);
 
   const getStartedQty = (orderId: string) => {
     return batches.filter(b => b.work_order_id === orderId).reduce((sum, b) => sum + b.quantity_planned, 0);
   };
 
+  const [meltRecordsCache, setMeltRecordsCache] = useState<Array<{ id: string }>>([]);
+
+  // Load melt records for pouring status check
+  useEffect(() => {
+    dsGetMeltRecords().then(records => setMeltRecordsCache(records)).catch(() => {});
+  }, [syncTrigger]);
+
   // Check if a batch has pouring records (from melt_pouring_* localStorage)
   const getBatchPouringStatus = (batchId: string): 'none' | 'partial' | 'full' => {
-    const meltRecords = getMeltRecords();
-    for (const record of meltRecords) {
+    for (const record of meltRecordsCache) {
       const pouringKey = `melt_pouring_${record.id}`;
       const savedPouring = localStorage.getItem(pouringKey);
       if (savedPouring) {
@@ -385,34 +411,49 @@ export default function WorkOrders() {
     due_date: '', remarks: '', mold_photos: [], drawing_photos: []
   });
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!form.customer || !form.product_name || !form.material || form.quantity <= 0) {
       toast({ title: '請填寫必要欄位', variant: 'destructive' });
       return;
     }
-    createWorkOrder(form);
-    setOrders(getWorkOrders());
-    setBatches(getMoldingBatches());
-    setIsCreateOpen(false);
-    resetForm();
-    toast({ title: '工單已建立' });
+    try {
+      await dsCreateWorkOrder(form);
+      const [wo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
+      setOrders(wo);
+      setBatches(mb);
+      setIsCreateOpen(false);
+      resetForm();
+      toast({ title: '工單已建立' });
+    } catch {
+      toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     if (!editOrder) return;
-    updateWorkOrder(editOrder.id, editOrder);
-    setOrders(getWorkOrders());
-    setBatches(getMoldingBatches());
-    setEditOrder(null);
-    toast({ title: '工單已更新' });
+    try {
+      await dsUpdateWorkOrder(editOrder.id, editOrder);
+      const [wo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
+      setOrders(wo);
+      setBatches(mb);
+      setEditOrder(null);
+      toast({ title: '工單已更新' });
+    } catch {
+      toast({ title: '更新失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
-  const handleDelete = (order: WorkOrder) => {
+  const handleDelete = async (order: WorkOrder) => {
     if (!window.confirm(`確定要刪除工單 ${order.order_no} 嗎？`)) return;
-    deleteWorkOrder(order.id);
-    setOrders(getWorkOrders());
-    setBatches(getMoldingBatches());
-    toast({ title: '工單已刪除' });
+    try {
+      await dsDeleteWorkOrder(order.id);
+      const [wo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
+      setOrders(wo);
+      setBatches(mb);
+      toast({ title: '工單已刪除' });
+    } catch {
+      toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
   const filtered = orders.filter(o => {

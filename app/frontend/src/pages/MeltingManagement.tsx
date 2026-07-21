@@ -10,12 +10,31 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { MeltRecord, MeltMaterial, MeltChemistry, SampleStage, MoldingBatch, WorkOrder } from '@/lib/types';
 import {
-  getMeltRecords, createMeltRecord, updateMeltRecord, deleteMeltRecord,
-  getMeltMaterials, createMeltMaterial, deleteMeltMaterial,
-  getMeltChemistry, createMeltChemistry, deleteMeltChemistry,
-  recalcMeltRecord, getMeltTargetRange, saveMeltTargetRange,
-  getMoldingBatches, getWorkOrders,
-} from '@/lib/store';
+  dsGetMeltRecords, dsCreateMeltRecord, dsUpdateMeltRecord, dsDeleteMeltRecord,
+  dsGetMeltMaterials, dsCreateMeltMaterial, dsDeleteMeltMaterial,
+  dsGetMeltChemistry, dsCreateMeltChemistry, dsDeleteMeltChemistry,
+  dsRecalcMeltRecord, dsGetMeltTargetRange, dsSaveMeltTargetRange,
+  dsGetMoldingBatches, dsGetWorkOrders,
+  dsGetMeltPourings, dsCreateMeltPouring, dsUpdateMeltPouring, dsDeleteMeltPouring,
+  dsGetMeltPresetRecipes, dsCreateMeltPresetRecipe, dsUpdateMeltPresetRecipe, dsDeleteMeltPresetRecipe,
+} from '@/lib/dataService';
+
+// Alias ds* functions to legacy names used throughout this file (sync-compatible wrappers)
+const getMeltRecords = dsGetMeltRecords as unknown as (...args: Parameters<typeof dsGetMeltRecords>) => Awaited<ReturnType<typeof dsGetMeltRecords>>;
+const createMeltRecord = dsCreateMeltRecord as unknown as (...args: Parameters<typeof dsCreateMeltRecord>) => Awaited<ReturnType<typeof dsCreateMeltRecord>>;
+const updateMeltRecord = dsUpdateMeltRecord as unknown as (...args: Parameters<typeof dsUpdateMeltRecord>) => Awaited<ReturnType<typeof dsUpdateMeltRecord>>;
+const deleteMeltRecord = dsDeleteMeltRecord as unknown as (...args: Parameters<typeof dsDeleteMeltRecord>) => Awaited<ReturnType<typeof dsDeleteMeltRecord>>;
+const getMeltMaterials = dsGetMeltMaterials as unknown as (...args: Parameters<typeof dsGetMeltMaterials>) => Awaited<ReturnType<typeof dsGetMeltMaterials>>;
+const createMeltMaterial = dsCreateMeltMaterial as unknown as (...args: Parameters<typeof dsCreateMeltMaterial>) => Awaited<ReturnType<typeof dsCreateMeltMaterial>>;
+const deleteMeltMaterial = dsDeleteMeltMaterial as unknown as (...args: Parameters<typeof dsDeleteMeltMaterial>) => Awaited<ReturnType<typeof dsDeleteMeltMaterial>>;
+const getMeltChemistry = dsGetMeltChemistry as unknown as (...args: Parameters<typeof dsGetMeltChemistry>) => Awaited<ReturnType<typeof dsGetMeltChemistry>>;
+const createMeltChemistry = dsCreateMeltChemistry as unknown as (...args: Parameters<typeof dsCreateMeltChemistry>) => Awaited<ReturnType<typeof dsCreateMeltChemistry>>;
+const deleteMeltChemistry = dsDeleteMeltChemistry as unknown as (...args: Parameters<typeof dsDeleteMeltChemistry>) => Awaited<ReturnType<typeof dsDeleteMeltChemistry>>;
+const recalcMeltRecord = dsRecalcMeltRecord as unknown as (...args: Parameters<typeof dsRecalcMeltRecord>) => Awaited<ReturnType<typeof dsRecalcMeltRecord>>;
+const getMeltTargetRange = dsGetMeltTargetRange as unknown as (...args: Parameters<typeof dsGetMeltTargetRange>) => Awaited<ReturnType<typeof dsGetMeltTargetRange>>;
+const saveMeltTargetRange = dsSaveMeltTargetRange as unknown as (...args: Parameters<typeof dsSaveMeltTargetRange>) => Awaited<ReturnType<typeof dsSaveMeltTargetRange>>;
+const getMoldingBatches = dsGetMoldingBatches as unknown as (...args: Parameters<typeof dsGetMoldingBatches>) => Awaited<ReturnType<typeof dsGetMoldingBatches>>;
+const getWorkOrders = dsGetWorkOrders as unknown as (...args: Parameters<typeof dsGetWorkOrders>) => Awaited<ReturnType<typeof dsGetWorkOrders>>;
 import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -82,26 +101,31 @@ export default function MeltingManagement() {
   const syncTrigger = useSyncTrigger();
 
   useEffect(() => {
-    setRecords(getMeltRecords());
+    let cancelled = false;
+    (async () => {
+      const data = await getMeltRecords();
+      if (!cancelled) setRecords(data);
+    })();
+    return () => { cancelled = true; };
   }, [syncTrigger]);
 
-  const refreshRecords = () => setRecords(getMeltRecords());
+  const refreshRecords = async () => setRecords(await getMeltRecords());
 
-  const handleDelete = (record: MeltRecord) => {
+  const handleDelete = async (record: MeltRecord) => {
     if (!window.confirm(`確定要刪除熔解紀錄 ${record.melt_no} 嗎？`)) return;
-    deleteMeltRecord(record.id);
-    refreshRecords();
+    await deleteMeltRecord(record.id);
+    await refreshRecords();
     toast({ title: '熔解紀錄已刪除' });
   };
 
-  const handleCopyLast = () => {
+  const handleCopyLast = async () => {
     const sorted = [...records].sort((a, b) => b.created_at.localeCompare(a.created_at));
     if (sorted.length === 0) {
       toast({ title: '無可複製的紀錄', variant: 'destructive' });
       return;
     }
     const last = sorted[0];
-    const newRecord = createMeltRecord({
+    const newRecord = await createMeltRecord({
       melt_date: new Date().toISOString().slice(0, 10),
       material_grade: last.material_grade,
       furnace_no: last.furnace_no,
@@ -112,15 +136,15 @@ export default function MeltingManagement() {
       created_by: last.created_by,
       remark: `複製自 ${last.melt_no}`,
     });
-    const lastMaterials = getMeltMaterials(last.id);
-    lastMaterials.forEach(m => {
-      createMeltMaterial({ melt_id: newRecord.id, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
-    });
-    const lastChemistry = getMeltChemistry(last.id);
-    lastChemistry.forEach(c => {
-      createMeltChemistry({ melt_id: newRecord.id, sample_stage: c.sample_stage, C: c.C, Si: c.Si, Mn: c.Mn, P: c.P, S: c.S, Ni: c.Ni, Cr: c.Cr, Mo: c.Mo, Cu: c.Cu, Fe: c.Fe });
-    });
-    refreshRecords();
+    const lastMaterials = await getMeltMaterials(last.id);
+    for (const m of lastMaterials) {
+      await createMeltMaterial({ melt_id: newRecord.id, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
+    }
+    const lastChemistry = await getMeltChemistry(last.id);
+    for (const c of lastChemistry) {
+      await createMeltChemistry({ melt_id: newRecord.id, sample_stage: c.sample_stage, C: c.C, Si: c.Si, Mn: c.Mn, P: c.P, S: c.S, Ni: c.Ni, Cr: c.Cr, Mo: c.Mo, Cu: c.Cu, Fe: c.Fe });
+    }
+    await refreshRecords();
     toast({ title: `已複製上一爐 ${last.melt_no} 的資料` });
   };
 
@@ -266,9 +290,29 @@ function formatMeltMinutes(minutes: number): string {
 function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
   record: MeltRecord; expanded: boolean; onToggle: () => void; onEdit: () => void; onDelete: () => void;
 }) {
-  const materials = getMeltMaterials(record.id);
-  const chemistry = getMeltChemistry(record.id);
-  const targetRangeData = expanded ? getMeltTargetRange(record.id) : null;
+  const [materials, setMaterials] = useState<MeltMaterial[]>([]);
+  const [chemistry, setChemistry] = useState<MeltChemistry[]>([]);
+  const [targetRangeData, setTargetRangeData] = useState<Record<string, number> | null>(null);
+  const [cardBatches, setCardBatches] = useState<MoldingBatch[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [mats, chem] = await Promise.all([getMeltMaterials(record.id), getMeltChemistry(record.id)]);
+      if (!cancelled) { setMaterials(mats); setChemistry(chem); }
+    })();
+    return () => { cancelled = true; };
+  }, [record.id]);
+
+  useEffect(() => {
+    if (!expanded) { setTargetRangeData(null); return; }
+    let cancelled = false;
+    (async () => {
+      const [tr, batches] = await Promise.all([getMeltTargetRange(record.id), getMoldingBatches()]);
+      if (!cancelled) { setTargetRangeData(tr); setCardBatches(batches); }
+    })();
+    return () => { cancelled = true; };
+  }, [expanded, record.id]);
 
   return (
     <Card className="bg-zinc-800 border-zinc-700">
@@ -390,7 +434,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                   material: string; quantity: number; estimated_weight: number; estimated_pouring_weight?: number; pouring_weights: number[];
                 }>;
                 if (pouringData.length === 0) return null;
-                const currentBatches = getMoldingBatches();
+                const currentBatches = cardBatches;
                 return (
                   <div>
                     <div className="flex items-center gap-2 mb-1">
@@ -739,9 +783,11 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
   // Load data when dialog opens
   useEffect(() => {
     if (open) {
+      (async () => {
       setPresetRecipes(getPresetRecipes());
-      setAllBatches(getMoldingBatches());
-      setAllWorkOrders(getWorkOrders());
+      const [batches, orders] = await Promise.all([getMoldingBatches(), getWorkOrders()]);
+      setAllBatches(batches);
+      setAllWorkOrders(orders);
       if (editRecord) {
         // Load pouring data
         const pouringKey = `melt_pouring_${editRecord.id}`;
@@ -762,15 +808,15 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
           created_by: editRecord.created_by,
           remark: editRecord.remark,
         });
-        const mats = getMeltMaterials(editRecord.id);
+        const mats = await getMeltMaterials(editRecord.id);
         setMaterials(mats.map(m => ({ id: m.id, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight })));
-        const chem = getMeltChemistry(editRecord.id);
+        const chem = await getMeltChemistry(editRecord.id);
         const loadedChemRows: Record<'IN_FURNACE' | 'AFTER_FURNACE', Record<string, number>> = {
           IN_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
           AFTER_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
         };
         // Try loading target range from dedicated storage first
-        const savedRange = getMeltTargetRange(editRecord.id);
+        const savedRange = await getMeltTargetRange(editRecord.id);
         let loadedTarget: Record<string, number> = {
           C_min: 0, C_max: 0, Si_min: 0, Si_max: 0, Mn_min: 0, Mn_max: 0,
           P_min: 0, P_max: 0, S_min: 0, S_max: 0, Ni_min: 0, Ni_max: 0,
@@ -798,6 +844,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
         resetFormState();
       }
       setTimeError('');
+      })();
     }
   }, [open, editRecord]);
 
@@ -881,7 +928,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
   };
 
   // Save
-  const handleSave = (andNew: boolean) => {
+  const handleSave = async (andNew: boolean) => {
     if (!form.material_grade || !form.furnace_no) {
       toast({ title: '請填寫材質與爐號', variant: 'destructive' });
       return;
@@ -894,7 +941,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
     let recordId: string;
 
     if (isEdit && editRecord) {
-      updateMeltRecord(editRecord.id, {
+      await updateMeltRecord(editRecord.id, {
         melt_date: form.melt_date,
         material_grade: form.material_grade,
         furnace_no: form.furnace_no,
@@ -906,12 +953,12 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
         remark: form.remark,
       });
       recordId = editRecord.id;
-      const oldMats = getMeltMaterials(recordId);
-      oldMats.forEach(m => deleteMeltMaterial(m.id));
-      const oldChem = getMeltChemistry(recordId);
-      oldChem.forEach(c => deleteMeltChemistry(c.id));
+      const oldMats = await getMeltMaterials(recordId);
+      for (const m of oldMats) { await deleteMeltMaterial(m.id); }
+      const oldChem = await getMeltChemistry(recordId);
+      for (const c of oldChem) { await deleteMeltChemistry(c.id); }
     } else {
-      const newRec = createMeltRecord({
+      const newRec = await createMeltRecord({
         melt_date: form.melt_date,
         material_grade: form.material_grade,
         furnace_no: form.furnace_no,
@@ -925,9 +972,9 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
       recordId = newRec.id;
     }
 
-    materials.forEach(m => {
-      createMeltMaterial({ melt_id: recordId, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
-    });
+    for (const m of materials) {
+      await createMeltMaterial({ melt_id: recordId, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
+    }
 
     // Save TARGET as range (store max values for compatibility, min/max in separate storage)
     const targetHasData = Object.values(targetRange).some(v => v > 0);
@@ -937,7 +984,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
       const targetRow: Record<string, number> = {};
       elements.forEach(el => { targetRow[el] = targetRange[`${el}_max`] || 0; });
       const fe = autoCalcFe ? calcFe(targetRow) : 0;
-      createMeltChemistry({
+      await createMeltChemistry({
         melt_id: recordId,
         sample_stage: 'TARGET',
         C: targetRow.C, Si: targetRow.Si, Mn: targetRow.Mn,
@@ -946,17 +993,17 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
         Fe: fe,
       });
       // Save the full min/max range separately
-      saveMeltTargetRange(recordId, targetRange);
+      await saveMeltTargetRange(recordId, targetRange);
     }
 
     // Save IN_FURNACE and AFTER_FURNACE
     const otherStages: Array<'IN_FURNACE' | 'AFTER_FURNACE'> = ['IN_FURNACE', 'AFTER_FURNACE'];
-    otherStages.forEach(stage => {
+    for (const stage of otherStages) {
       const row = chemRows[stage];
       const hasData = Object.values(row).some(v => v > 0);
       if (hasData) {
         const fe = autoCalcFe ? calcFe(row) : 0;
-        createMeltChemistry({
+        await createMeltChemistry({
           melt_id: recordId,
           sample_stage: stage,
           C: row.C || 0, Si: row.Si || 0, Mn: row.Mn || 0,
@@ -965,7 +1012,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
           Fe: fe,
         });
       }
-    });
+    }
 
     // Save pouring batches data
     const pouringKey = `melt_pouring_${recordId}`;
@@ -975,7 +1022,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
       localStorage.removeItem(pouringKey);
     }
 
-    recalcMeltRecord(recordId);
+    await recalcMeltRecord(recordId);
     toast({ title: isEdit ? '熔解紀錄已更新' : '熔解紀錄已建立' });
 
     if (andNew) {

@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { traceByWorkOrder, traceByBatch, traceByHeatNo, traceByShipment } from '@/lib/store';
+import { dsTraceByWorkOrder, dsTraceByBatch, dsTraceByHeatNo, dsTraceByShipment } from '@/lib/dataService';
 import { Search, ClipboardList, Layers, Flame, CheckCircle, Package, Truck } from 'lucide-react';
 
 interface TraceResult {
@@ -21,26 +21,35 @@ export default function Traceability() {
   const [searchTerm, setSearchTerm] = useState('');
   const [result, setResult] = useState<TraceResult | null>(null);
 
-  const handleSearch = () => {
+  const [loading, setLoading] = useState(false);
+
+  const handleSearch = async () => {
     if (!searchTerm.trim()) return;
-    let traceResult;
-    switch (searchType) {
-      case 'workorder':
-        traceResult = traceByWorkOrder(searchTerm);
-        break;
-      case 'batch':
-        traceResult = traceByBatch(searchTerm);
-        break;
-      case 'heatno':
-        traceResult = traceByHeatNo(searchTerm);
-        break;
-      case 'shipment':
-        traceResult = traceByShipment(searchTerm);
-        break;
-      default:
-        return;
+    setLoading(true);
+    try {
+      let traceResult;
+      switch (searchType) {
+        case 'workorder':
+          traceResult = await dsTraceByWorkOrder(searchTerm);
+          break;
+        case 'batch':
+          traceResult = await dsTraceByBatch(searchTerm);
+          break;
+        case 'heatno':
+          traceResult = await dsTraceByHeatNo(searchTerm);
+          break;
+        case 'shipment':
+          traceResult = await dsTraceByShipment(searchTerm);
+          break;
+        default:
+          return;
+      }
+      setResult(traceResult as TraceResult);
+    } catch {
+      setResult(null);
+    } finally {
+      setLoading(false);
     }
-    setResult(traceResult as TraceResult);
   };
 
   return (

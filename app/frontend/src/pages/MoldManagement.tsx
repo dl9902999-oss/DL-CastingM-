@@ -15,11 +15,24 @@ import {
   PatternMaintenance, PatternHistory, PatternLoan, Customer,
 } from '@/lib/types';
 import {
-  getPatterns, createPattern, updatePattern, deletePattern,
-  getPatternHistory, getPatternMaintenance, createPatternMaintenance,
-  getPatternLoans, createPatternLoan, returnPatternLoan,
-  getCustomers,
-} from '@/lib/store';
+  dsGetPatterns, dsCreatePattern, dsUpdatePattern, dsDeletePattern,
+  dsGetPatternHistory, dsGetPatternMaintenance, dsCreatePatternMaintenance,
+  dsGetPatternLoans, dsCreatePatternLoan, dsReturnPatternLoan,
+  dsGetCustomers,
+} from '@/lib/dataService';
+
+// Alias ds* to legacy names used in this file
+const getPatterns = dsGetPatterns as unknown as (...args: Parameters<typeof dsGetPatterns>) => Awaited<ReturnType<typeof dsGetPatterns>>;
+const createPattern = dsCreatePattern as unknown as (...args: Parameters<typeof dsCreatePattern>) => Awaited<ReturnType<typeof dsCreatePattern>>;
+const updatePattern = dsUpdatePattern as unknown as (...args: Parameters<typeof dsUpdatePattern>) => Awaited<ReturnType<typeof dsUpdatePattern>>;
+const deletePattern = dsDeletePattern as unknown as (...args: Parameters<typeof dsDeletePattern>) => Awaited<ReturnType<typeof dsDeletePattern>>;
+const getPatternHistory = dsGetPatternHistory as unknown as (...args: Parameters<typeof dsGetPatternHistory>) => Awaited<ReturnType<typeof dsGetPatternHistory>>;
+const getPatternMaintenance = dsGetPatternMaintenance as unknown as (...args: Parameters<typeof dsGetPatternMaintenance>) => Awaited<ReturnType<typeof dsGetPatternMaintenance>>;
+const createPatternMaintenance = dsCreatePatternMaintenance as unknown as (...args: Parameters<typeof dsCreatePatternMaintenance>) => Awaited<ReturnType<typeof dsCreatePatternMaintenance>>;
+const getPatternLoans = dsGetPatternLoans as unknown as (...args: Parameters<typeof dsGetPatternLoans>) => Awaited<ReturnType<typeof dsGetPatternLoans>>;
+const createPatternLoan = dsCreatePatternLoan as unknown as (...args: Parameters<typeof dsCreatePatternLoan>) => Awaited<ReturnType<typeof dsCreatePatternLoan>>;
+const returnPatternLoan = dsReturnPatternLoan as unknown as (...args: Parameters<typeof dsReturnPatternLoan>) => Awaited<ReturnType<typeof dsReturnPatternLoan>>;
+const getCustomers = dsGetCustomers as unknown as (...args: Parameters<typeof dsGetCustomers>) => Awaited<ReturnType<typeof dsGetCustomers>>;
 import { Plus, Search, Edit, Trash2, Wrench, History, MapPin, ArrowLeftRight, BarChart3, AlertTriangle, Image as ImageIcon, X } from 'lucide-react';
 
 function MoldImageUpload({ images, onChange }: { images: string[]; onChange: (imgs: string[]) => void }) {
@@ -137,15 +150,39 @@ export default function MoldManagement() {
   const syncTrigger = useSyncTrigger();
 
   useEffect(() => {
-    loadData();
+    let cancelled = false;
+    (async () => {
+      const [p, c, h, m, l] = await Promise.all([
+        getPatterns(),
+        getCustomers(),
+        getPatternHistory(),
+        getPatternMaintenance(),
+        getPatternLoans(),
+      ]);
+      if (!cancelled) {
+        setPatterns(p);
+        setCustomers(c);
+        setHistory(h);
+        setMaintenance(m);
+        setLoans(l);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [syncTrigger]);
 
-  const loadData = () => {
-    setPatterns(getPatterns());
-    setCustomers(getCustomers());
-    setHistory(getPatternHistory());
-    setMaintenance(getPatternMaintenance());
-    setLoans(getPatternLoans());
+  const loadData = async () => {
+    const [p, c, h, m, l] = await Promise.all([
+      getPatterns(),
+      getCustomers(),
+      getPatternHistory(),
+      getPatternMaintenance(),
+      getPatternLoans(),
+    ]);
+    setPatterns(p);
+    setCustomers(c);
+    setHistory(h);
+    setMaintenance(m);
+    setLoans(l);
   };
 
   const filteredPatterns = patterns.filter(p => {
@@ -188,54 +225,54 @@ export default function MoldManagement() {
     setDialogOpen(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.name.trim()) {
       toast({ title: '請輸入模具名稱', variant: 'destructive' });
       return;
     }
     if (editPattern) {
-      updatePattern(editPattern.id, form);
+      await updatePattern(editPattern.id, form);
       toast({ title: '模具已更新' });
     } else {
-      createPattern(form);
+      await createPattern(form);
       toast({ title: '模具已建立' });
     }
     setDialogOpen(false);
-    loadData();
+    await loadData();
   };
 
-  const handleDelete = (p: Pattern) => {
+  const handleDelete = async (p: Pattern) => {
     if (!window.confirm(`確定要刪除模具 ${p.pattern_no} - ${p.name} 嗎？`)) return;
-    deletePattern(p.id);
-    loadData();
+    await deletePattern(p.id);
+    await loadData();
     toast({ title: '模具已刪除' });
   };
 
-  const handleMaintSave = () => {
+  const handleMaintSave = async () => {
     if (!selectedPatternId || !maintForm.content.trim()) {
       toast({ title: '請填寫保養內容', variant: 'destructive' });
       return;
     }
-    createPatternMaintenance({ pattern_id: selectedPatternId, ...maintForm });
+    await createPatternMaintenance({ pattern_id: selectedPatternId, ...maintForm });
     setMaintDialogOpen(false);
-    loadData();
+    await loadData();
     toast({ title: '保養紀錄已建立' });
   };
 
-  const handleLoanSave = () => {
+  const handleLoanSave = async () => {
     if (!selectedPatternId || !loanForm.borrower.trim()) {
       toast({ title: '請填寫借出人', variant: 'destructive' });
       return;
     }
-    createPatternLoan({ pattern_id: selectedPatternId, return_date: '', ...loanForm });
+    await createPatternLoan({ pattern_id: selectedPatternId, return_date: '', ...loanForm });
     setLoanDialogOpen(false);
-    loadData();
+    await loadData();
     toast({ title: '借出紀錄已建立' });
   };
 
-  const handleReturn = (loanId: string) => {
-    returnPatternLoan(loanId);
-    loadData();
+  const handleReturn = async (loanId: string) => {
+    await returnPatternLoan(loanId);
+    await loadData();
     toast({ title: '模具已歸還' });
   };
 

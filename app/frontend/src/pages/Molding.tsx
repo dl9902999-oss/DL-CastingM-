@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 
 import { MoldingBatch, WorkOrder } from '@/lib/types';
-import { getMoldingBatches, createMoldingBatch, updateMoldingBatch, deleteMoldingBatch, getWorkOrders } from '@/lib/store';
+import { dsGetMoldingBatches, dsCreateMoldingBatch, dsUpdateMoldingBatch, dsDeleteMoldingBatch, dsGetWorkOrders } from '@/lib/dataService';
 import { Plus, QrCode, Search, Image, X, Edit, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useToast } from '@/hooks/use-toast';
@@ -84,12 +84,24 @@ export default function Molding() {
   });
 
   const syncTrigger = useSyncTrigger();
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const allWo = getWorkOrders();
-    setAllWorkOrders(allWo);
-    setWorkOrders(allWo.filter(o => o.status !== 'Cancelled'));
-    setBatches(getMoldingBatches());
+    let cancelled = false;
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const [allWo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
+        if (!cancelled) {
+          setAllWorkOrders(allWo);
+          setWorkOrders(allWo.filter(o => o.status !== 'Cancelled'));
+          setBatches(mb);
+        }
+      } catch { /* handled */ }
+      finally { if (!cancelled) setLoading(false); }
+    };
+    loadData();
+    return () => { cancelled = true; };
   }, [syncTrigger]);
 
   // Helper: get work order info for a batch (fallback when batch fields are empty)
@@ -116,7 +128,7 @@ export default function Molding() {
     setWoSearch('');
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!selectedWo || form.quantity_planned <= 0) {
       toast({ title: '請選擇工單並填寫數量', variant: 'destructive' });
       return;
@@ -127,28 +139,33 @@ export default function Molding() {
       toast({ title: `累計數量不能大於工單數量（工單數量: ${selectedWo.quantity}，已開工: ${existingQty}，可用餘量: ${selectedWo.quantity - existingQty}）`, variant: 'destructive' });
       return;
     }
-    createMoldingBatch({
-      work_order_id: selectedWo.id,
-      order_no: selectedWo.order_no,
-      customer: selectedWo.customer,
-      product_name: selectedWo.product_name,
-      material: selectedWo.material,
-      quantity_planned: form.quantity_planned,
-      estimated_pouring_weight: form.estimated_pouring_weight,
-      remarks: form.remarks,
-      molding_photos: form.molding_photos,
-      closing_photos: form.closing_photos,
-    });
-    setBatches(getMoldingBatches());
-    setIsCreateOpen(false);
-    setSelectedWo(null);
-    setForm({ quantity_planned: 0, estimated_pouring_weight: 0, remarks: '', molding_photos: [], closing_photos: [] });
-    toast({ title: '造模批次已建立' });
+    try {
+      await dsCreateMoldingBatch({
+        work_order_id: selectedWo.id,
+        order_no: selectedWo.order_no,
+        customer: selectedWo.customer,
+        product_name: selectedWo.product_name,
+        material: selectedWo.material,
+        quantity_planned: form.quantity_planned,
+        estimated_pouring_weight: form.estimated_pouring_weight,
+        remarks: form.remarks,
+        molding_photos: form.molding_photos,
+        closing_photos: form.closing_photos,
+      });
+      const data = await dsGetMoldingBatches();
+      setBatches(data);
+      setIsCreateOpen(false);
+      setSelectedWo(null);
+      setForm({ quantity_planned: 0, estimated_pouring_weight: 0, remarks: '', molding_photos: [], closing_photos: [] });
+      toast({ title: '造模批次已建立' });
+    } catch {
+      toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
 
 
-  const handleEditSave = () => {
+  const handleEditSave = async () => {
     if (!editBatch) return;
     // Determine status based on photos
     const closingPhotos = editBatch.closing_photos || [];
@@ -161,25 +178,35 @@ export default function Molding() {
     } else {
       status = 'Pending';
     }
-    updateMoldingBatch(editBatch.id, {
-      quantity_planned: editBatch.quantity_planned,
-      quantity_completed: editBatch.quantity_completed,
-      estimated_pouring_weight: editBatch.estimated_pouring_weight,
-      remarks: editBatch.remarks || '',
-      molding_photos: moldingPhotos,
-      closing_photos: closingPhotos,
-      status,
-    });
-    setBatches(getMoldingBatches());
-    setEditBatch(null);
-    toast({ title: '批次已更新' });
+    try {
+      await dsUpdateMoldingBatch(editBatch.id, {
+        quantity_planned: editBatch.quantity_planned,
+        quantity_completed: editBatch.quantity_completed,
+        estimated_pouring_weight: editBatch.estimated_pouring_weight,
+        remarks: editBatch.remarks || '',
+        molding_photos: moldingPhotos,
+        closing_photos: closingPhotos,
+        status,
+      });
+      const data = await dsGetMoldingBatches();
+      setBatches(data);
+      setEditBatch(null);
+      toast({ title: '批次已更新' });
+    } catch {
+      toast({ title: '更新失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
-  const handleDeleteBatch = (batch: MoldingBatch) => {
+  const handleDeleteBatch = async (batch: MoldingBatch) => {
     if (!window.confirm(`確定要刪除批次 ${batch.batch_no} 嗎？`)) return;
-    deleteMoldingBatch(batch.id);
-    setBatches(getMoldingBatches());
-    toast({ title: '批次已刪除' });
+    try {
+      await dsDeleteMoldingBatch(batch.id);
+      const data = await dsGetMoldingBatches();
+      setBatches(data);
+      toast({ title: '批次已刪除' });
+    } catch {
+      toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
   return (

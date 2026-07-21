@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { WarehouseEntry, MoldingBatch } from '@/lib/types';
-import { getWarehouseEntries, createWarehouseEntry, getMoldingBatches } from '@/lib/store';
+import { dsGetWarehouseEntries, dsCreateWarehouseEntry, dsGetMoldingBatches } from '@/lib/dataService';
 import { Plus, Package } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -22,23 +22,39 @@ export default function WarehousePage() {
 
   const syncTrigger = useSyncTrigger();
 
+  const [loading, setLoading] = useState(false);
+
   useEffect(() => {
-    setEntries(getWarehouseEntries());
-    setBatches(getMoldingBatches());
+    let cancelled = false;
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const [e, b] = await Promise.all([dsGetWarehouseEntries(), dsGetMoldingBatches()]);
+        if (!cancelled) { setEntries(e); setBatches(b); }
+      } catch { /* handled */ }
+      finally { if (!cancelled) setLoading(false); }
+    };
+    loadData();
+    return () => { cancelled = true; };
   }, [syncTrigger]);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!form.batch_id || !form.location || form.quantity <= 0) {
       toast({ title: '請填寫所有必要欄位', variant: 'destructive' });
       return;
     }
     const batch = batches.find(b => b.id === form.batch_id);
     if (!batch) return;
-    createWarehouseEntry({ batch_id: form.batch_id, batch_no: batch.batch_no, location: form.location, quantity: form.quantity });
-    setEntries(getWarehouseEntries());
-    setIsCreateOpen(false);
-    setForm({ batch_id: '', location: '', quantity: 0 });
-    toast({ title: '入庫紀錄已建立' });
+    try {
+      await dsCreateWarehouseEntry({ batch_id: form.batch_id, batch_no: batch.batch_no, location: form.location, quantity: form.quantity });
+      const data = await dsGetWarehouseEntries();
+      setEntries(data);
+      setIsCreateOpen(false);
+      setForm({ batch_id: '', location: '', quantity: 0 });
+      toast({ title: '入庫紀錄已建立' });
+    } catch {
+      toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
   return (

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import AppLayout from '@/components/layout/AppLayout';
-import { getAllUsers, createUser, updateUser, deleteUser } from '@/lib/store';
+import { dsGetAllUsers, dsCreateUser, dsUpdateUser, dsDeleteUser } from '@/lib/dataService';
 import { UserProfile, UserRole } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -53,12 +53,19 @@ export default function UserManagement() {
     permissions: ['/dashboard', '/traceability'] as string[],
   });
 
+  const [loading, setLoading] = useState(false);
+
   useEffect(() => {
     loadUsers();
   }, []);
 
-  const loadUsers = () => {
-    setUsers(getAllUsers());
+  const loadUsers = async () => {
+    setLoading(true);
+    try {
+      const data = await dsGetAllUsers();
+      setUsers(data);
+    } catch { /* handled */ }
+    finally { setLoading(false); }
   };
 
   const handleOpenCreate = () => {
@@ -84,7 +91,7 @@ export default function UserManagement() {
     setDialogOpen(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.employee_id.trim()) {
       toast({ title: '請輸入員工編號', variant: 'destructive' });
       return;
@@ -94,57 +101,65 @@ export default function UserManagement() {
       return;
     }
 
-    if (editingUser) {
-      // Update existing user
-      const updates: Partial<Omit<UserProfile, 'id'>> = {
-        employee_id: form.employee_id.trim(),
-        name: form.name.trim(),
-        role: form.role,
-        permissions: form.permissions,
-      };
-      // Check duplicate employee_id
-      const existing = users.find(u => u.employee_id === form.employee_id.trim() && u.id !== editingUser.id);
-      if (existing) {
-        toast({ title: '員工編號已存在', variant: 'destructive' });
-        return;
+    try {
+      if (editingUser) {
+        // Update existing user
+        const updates: Partial<Omit<UserProfile, 'id'>> = {
+          employee_id: form.employee_id.trim(),
+          name: form.name.trim(),
+          role: form.role,
+          permissions: form.permissions,
+        };
+        // Check duplicate employee_id
+        const existing = users.find(u => u.employee_id === form.employee_id.trim() && u.id !== editingUser.id);
+        if (existing) {
+          toast({ title: '員工編號已存在', variant: 'destructive' });
+          return;
+        }
+        await dsUpdateUser(editingUser.id, updates);
+        toast({ title: '帳號已更新' });
+      } else {
+        // Create new user
+        if (!form.password.trim()) {
+          toast({ title: '請輸入密碼', variant: 'destructive' });
+          return;
+        }
+        // Check duplicate employee_id
+        const existing = users.find(u => u.employee_id === form.employee_id.trim());
+        if (existing) {
+          toast({ title: '員工編號已存在', variant: 'destructive' });
+          return;
+        }
+        await dsCreateUser({
+          employee_id: form.employee_id.trim(),
+          name: form.name.trim(),
+          password: form.password.trim(),
+          role: form.role,
+          permissions: form.permissions,
+        });
+        toast({ title: '帳號已建立' });
       }
-      updateUser(editingUser.id, updates);
-      toast({ title: '帳號已更新' });
-    } else {
-      // Create new user
-      if (!form.password.trim()) {
-        toast({ title: '請輸入密碼', variant: 'destructive' });
-        return;
-      }
-      // Check duplicate employee_id
-      const existing = users.find(u => u.employee_id === form.employee_id.trim());
-      if (existing) {
-        toast({ title: '員工編號已存在', variant: 'destructive' });
-        return;
-      }
-      createUser({
-        employee_id: form.employee_id.trim(),
-        name: form.name.trim(),
-        password: form.password.trim(),
-        role: form.role,
-        permissions: form.permissions,
-      });
-      toast({ title: '帳號已建立' });
-    }
 
-    setDialogOpen(false);
-    loadUsers();
+      setDialogOpen(false);
+      loadUsers();
+    } catch {
+      toast({ title: '操作失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
-  const handleDelete = (u: UserProfile) => {
+  const handleDelete = async (u: UserProfile) => {
     if (u.id === currentUser?.id) {
       toast({ title: '無法刪除自己的帳號', variant: 'destructive' });
       return;
     }
     if (!window.confirm(`確定要刪除帳號「${u.employee_id} - ${u.name}」？`)) return;
-    deleteUser(u.id);
-    toast({ title: '帳號已刪除' });
-    loadUsers();
+    try {
+      await dsDeleteUser(u.id);
+      toast({ title: '帳號已刪除' });
+      loadUsers();
+    } catch {
+      toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
   const handleOpenPasswordChange = (u: UserProfile) => {
@@ -153,16 +168,20 @@ export default function UserManagement() {
     setPasswordDialogOpen(true);
   };
 
-  const handleChangePassword = () => {
+  const handleChangePassword = async () => {
     if (!newPassword.trim()) {
       toast({ title: '請輸入新密碼', variant: 'destructive' });
       return;
     }
     if (!passwordTarget) return;
-    updateUser(passwordTarget.id, { password: newPassword.trim() });
-    toast({ title: `已變更 ${passwordTarget.employee_id} 的密碼` });
-    setPasswordDialogOpen(false);
-    loadUsers();
+    try {
+      await dsUpdateUser(passwordTarget.id, { password: newPassword.trim() });
+      toast({ title: `已變更 ${passwordTarget.employee_id} 的密碼` });
+      setPasswordDialogOpen(false);
+      loadUsers();
+    } catch {
+      toast({ title: '變更密碼失敗，請稍後再試', variant: 'destructive' });
+    }
   };
 
   if (currentUser?.role !== 'Admin') {

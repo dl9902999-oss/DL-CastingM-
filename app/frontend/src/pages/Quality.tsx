@@ -16,11 +16,24 @@ import {
 } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 import {
-  getQualityInspections, createQualityInspection, deleteQualityInspection,
-  getDefectRecords, createDefectRecord,
-  getCAPARecords, createCAPARecord, updateCAPARecord,
-  getMoldingBatches, getWorkOrders, getMeltingRecords
-} from '@/lib/store';
+  dsGetQualityInspections, dsCreateQualityInspection, dsDeleteQualityInspection,
+  dsGetDefectRecords, dsCreateDefectRecord,
+  dsGetCAPARecords, dsCreateCAPARecord, dsUpdateCAPARecord,
+  dsGetMoldingBatches, dsGetWorkOrders, dsGetMeltingRecords,
+} from '@/lib/dataService';
+
+// Alias ds* to legacy names used in this file
+const getQualityInspections = dsGetQualityInspections as unknown as (...args: Parameters<typeof dsGetQualityInspections>) => Awaited<ReturnType<typeof dsGetQualityInspections>>;
+const createQualityInspection = dsCreateQualityInspection as unknown as (...args: Parameters<typeof dsCreateQualityInspection>) => Awaited<ReturnType<typeof dsCreateQualityInspection>>;
+const deleteQualityInspection = dsDeleteQualityInspection as unknown as (...args: Parameters<typeof dsDeleteQualityInspection>) => Awaited<ReturnType<typeof dsDeleteQualityInspection>>;
+const getDefectRecords = dsGetDefectRecords as unknown as (...args: Parameters<typeof dsGetDefectRecords>) => Awaited<ReturnType<typeof dsGetDefectRecords>>;
+const createDefectRecord = dsCreateDefectRecord as unknown as (...args: Parameters<typeof dsCreateDefectRecord>) => Awaited<ReturnType<typeof dsCreateDefectRecord>>;
+const getCAPARecords = dsGetCAPARecords as unknown as (...args: Parameters<typeof dsGetCAPARecords>) => Awaited<ReturnType<typeof dsGetCAPARecords>>;
+const createCAPARecord = dsCreateCAPARecord as unknown as (...args: Parameters<typeof dsCreateCAPARecord>) => Awaited<ReturnType<typeof dsCreateCAPARecord>>;
+const updateCAPARecord = dsUpdateCAPARecord as unknown as (...args: Parameters<typeof dsUpdateCAPARecord>) => Awaited<ReturnType<typeof dsUpdateCAPARecord>>;
+const getMoldingBatches = dsGetMoldingBatches as unknown as (...args: Parameters<typeof dsGetMoldingBatches>) => Awaited<ReturnType<typeof dsGetMoldingBatches>>;
+const getWorkOrders = dsGetWorkOrders as unknown as (...args: Parameters<typeof dsGetWorkOrders>) => Awaited<ReturnType<typeof dsGetWorkOrders>>;
+const getMeltingRecords = dsGetMeltingRecords as unknown as (...args: Parameters<typeof dsGetMeltingRecords>) => Awaited<ReturnType<typeof dsGetMeltingRecords>>;
 import {
   type QualityInspection, type InspectionType, type InspectionResult,
   type DefectRecord, type CAPARecord, type CAPAStatus, type DefectDisposition,
@@ -143,20 +156,39 @@ export default function Quality() {
 
   // Data refresh - also triggered by real-time sync from other devices
   const syncTrigger = useSyncTrigger();
-  const [refreshKey, setRefreshKey] = useState(0);
-  const refresh = () => setRefreshKey(k => k + 1);
+  const [inspections, setInspections] = useState<any[]>([]);
+  const [defectRecords, setDefectRecords] = useState<any[]>([]);
+  const [capaRecords, setCapaRecords] = useState<any[]>([]);
+  const [batches, setBatches] = useState<any[]>([]);
+  const [workOrders, setWorkOrders] = useState<any[]>([]);
+  const [meltingRecords, setMeltingRecords] = useState<any[]>([]);
 
-  // When sync trigger changes (data from another device), force refresh
+  const loadAllData = async () => {
+    const [insp, def, capa, bat, wo, melt] = await Promise.all([
+      getQualityInspections(),
+      getDefectRecords(),
+      getCAPARecords(),
+      getMoldingBatches(),
+      getWorkOrders(),
+      getMeltingRecords(),
+    ]);
+    setInspections(insp);
+    setDefectRecords(def);
+    setCapaRecords(capa);
+    setBatches(bat);
+    setWorkOrders(wo);
+    setMeltingRecords(melt);
+  };
+
+  const refresh = () => { loadAllData(); };
+
   useEffect(() => {
-    setRefreshKey(k => k + 1);
+    let cancelled = false;
+    (async () => {
+      await loadAllData();
+    })();
+    return () => { cancelled = true; };
   }, [syncTrigger]);
-
-  const inspections = useMemo(() => getQualityInspections(), [refreshKey]);
-  const defectRecords = useMemo(() => getDefectRecords(), [refreshKey]);
-  const capaRecords = useMemo(() => getCAPARecords(), [refreshKey]);
-  const batches = useMemo(() => getMoldingBatches(), [refreshKey]);
-  const workOrders = useMemo(() => getWorkOrders(), [refreshKey]);
-  const meltingRecords = useMemo(() => getMeltingRecords(), [refreshKey]);
 
   // Filtered inspections
   const filteredInspections = useMemo(() => {
@@ -234,7 +266,7 @@ export default function Quality() {
   };
 
   // Submit inspection
-  const submitInspection = () => {
+  const submitInspection = async () => {
     const ngCount = itemResults.filter(r => r.result === 'NG').length;
     const defectCount = inspForm.inspected_quantity - inspForm.pass_quantity;
     const yieldRate = inspForm.inspected_quantity > 0
@@ -245,7 +277,7 @@ export default function Quality() {
       result = defectCount > inspForm.inspected_quantity * 0.1 ? 'FAIL' : 'CONDITIONAL';
     }
 
-    createQualityInspection({
+    await createQualityInspection({
       type: inspForm.type,
       batch_id: inspForm.batch_id,
       batch_no: inspForm.batch_no,
@@ -272,8 +304,8 @@ export default function Quality() {
   };
 
   // Submit defect
-  const submitDefect = () => {
-    createDefectRecord({
+  const submitDefect = async () => {
+    await createDefectRecord({
       batch_id: defectForm.batch_id,
       batch_no: defectForm.batch_no,
       defect_code: defectForm.defect_code,
@@ -289,8 +321,8 @@ export default function Quality() {
   };
 
   // Submit CAPA
-  const submitCAPA = () => {
-    createCAPARecord({
+  const submitCAPA = async () => {
+    await createCAPARecord({
       inspection_id: capaForm.inspection_id,
       defect_id: capaForm.defect_id,
       status: 'OPEN',
@@ -307,11 +339,11 @@ export default function Quality() {
   };
 
   // Update CAPA status
-  const advanceCAPAStatus = (capa: CAPARecord) => {
+  const advanceCAPAStatus = async (capa: CAPARecord) => {
     const statusFlow: CAPAStatus[] = ['OPEN', 'ANALYZING', 'IMPLEMENTING', 'VERIFYING', 'CLOSED'];
     const currentIdx = statusFlow.indexOf(capa.status);
     if (currentIdx < statusFlow.length - 1) {
-      updateCAPARecord(capa.id, { status: statusFlow[currentIdx + 1] });
+      await updateCAPARecord(capa.id, { status: statusFlow[currentIdx + 1] });
       refresh();
     }
   };
@@ -501,7 +533,7 @@ export default function Quality() {
                                 size="sm"
                                 variant="ghost"
                                 className="text-red-400 hover:text-red-300"
-                                onClick={() => { deleteQualityInspection(insp.id); refresh(); }}
+                                onClick={async () => { await deleteQualityInspection(insp.id); refresh(); }}
                               >
                                 <Trash2 className="w-4 h-4" />
                               </Button>
