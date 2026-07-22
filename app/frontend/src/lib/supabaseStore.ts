@@ -194,11 +194,24 @@ export async function sbCreateWorkOrder(orderData: Omit<WorkOrder, 'id' | 'order
   const seq = (existingOrders?.length || 0) + 1;
   const orderNo = `WO-${today}-${customerCode}-${String(seq).padStart(4, '0')}`;
 
-  const { data, error } = await supabase.from('work_orders').insert({
-    ...orderData,
-    order_no: orderNo,
-    status: 'Open',
-  }).select().single();
+  const payload = {
+  ...orderData,
+
+  // 空日期改成 null，避免 PostgreSQL date 錯誤
+  due_date: orderData.due_date || null,
+
+  order_no: orderNo,
+  status: 'Open',
+};
+
+console.log("WorkOrder Payload:", payload);
+
+const { data, error } = await supabase
+  .from('work_orders')
+  .insert(payload)
+  .select()
+  .single();
+
   if (error) throw error;
   return mapWorkOrder(data);
 }

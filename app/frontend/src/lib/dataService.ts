@@ -318,15 +318,24 @@ async function withReadFallback<T>(
 // ============================================================
 export async function dsLogin(employeeId: string, password: string): Promise<UserProfile | null> {
   const connected = await isSupabaseConnected();
+
   if (connected) {
     try {
-      return await sbStore.sbLogin(employeeId, password);
+      const user = await sbStore.sbLogin(employeeId, password);
+
+      if (user) {
+        return user;
+      }
+
+      return localStore.login(employeeId, password);
+
     } catch {
       return localStore.login(employeeId, password);
     }
   }
+
   return localStore.login(employeeId, password);
-}
+}   // ← 就是少了這一個
 
 export async function dsGetAllUsers(): Promise<UserProfile[]> {
   return withReadFallback(
@@ -335,7 +344,6 @@ export async function dsGetAllUsers(): Promise<UserProfile[]> {
     'dsGetAllUsers'
   );
 }
-
 export async function dsCreateUser(userData: Omit<UserProfile, 'id'>): Promise<UserProfile> {
   return withRLSFallback(
     () => sbStore.sbCreateUser(userData),
