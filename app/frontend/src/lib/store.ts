@@ -50,6 +50,7 @@ const TABLE_MAP: Record<string, string> = {
   [STORAGE_KEYS.MELT_MATERIALS]: 'melt_materials',
   [STORAGE_KEYS.MELT_CHEMISTRY]: 'melt_chemistry',
   [STORAGE_KEYS.PATTERNS]: 'patterns',
+  [STORAGE_KEYS.PATTERN_VERSIONS]: 'pattern_versions',
   [STORAGE_KEYS.PATTERN_HISTORY]: 'pattern_history',
   [STORAGE_KEYS.PATTERN_MAINTENANCE]: 'pattern_maintenance',
   [STORAGE_KEYS.PATTERN_LOANS]: 'pattern_loans',
@@ -70,6 +71,7 @@ const KEY_MAP: Record<string, string> = {
   melt_materials: STORAGE_KEYS.MELT_MATERIALS,
   melt_chemistry: STORAGE_KEYS.MELT_CHEMISTRY,
   patterns: STORAGE_KEYS.PATTERNS,
+  pattern_versions: STORAGE_KEYS.PATTERN_VERSIONS,
   pattern_history: STORAGE_KEYS.PATTERN_HISTORY,
   pattern_maintenance: STORAGE_KEYS.PATTERN_MAINTENANCE,
   pattern_loans: STORAGE_KEYS.PATTERN_LOANS,
@@ -117,7 +119,7 @@ async function performFullSync(): Promise<void> {
       'customers', 'work_orders', 'molding_batches', 'melting_records',
       'quality_inspections', 'defect_records', 'capa_records',
       'warehouse_entries', 'shipment_orders', 'melt_records',
-      'melt_materials', 'melt_chemistry', 'patterns',
+      'melt_materials', 'melt_chemistry', 'patterns', 'pattern_versions',
       'pattern_history', 'pattern_maintenance', 'pattern_loans', 'users',
     ];
     await Promise.allSettled(tables.map(t => bgSyncCollection(t)));

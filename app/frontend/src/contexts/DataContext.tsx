@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { isSupabaseConnected, attemptReconnect, getConnectionStatus, syncPendingToSupabase, getPendingSyncCount, getSyncHistory, getSyncStats, clearSyncHistory, type SyncLogEntry, type SyncLogStatus } from '../lib/dataService';
-import { startRealtimeSync, stopRealtimeSync, fullSyncFromSupabase, onDataChange } from '../lib/realtimeSync';
+import { startRealtimeSync, cleanupRealtimeSync, fullSyncFromSupabase, onDataChange } from '../lib/realtimeSync';
 import { forceFullUpload } from '../lib/store';
 
 export type { SyncLogEntry, SyncLogStatus };
@@ -205,7 +205,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       if (unsubscribe) unsubscribe();
-      stopRealtimeSync();
+      cleanupRealtimeSync();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

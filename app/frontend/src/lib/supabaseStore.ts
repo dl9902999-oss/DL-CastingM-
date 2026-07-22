@@ -1189,6 +1189,7 @@ export async function sbUpsertBatch(table: string, items: Record<string, unknown
     melt_materials: 'melt_materials',
     melt_chemistry: 'melt_chemistries',
     patterns: 'patterns',
+    pattern_versions: 'pattern_versions',
     pattern_history: 'pattern_histories',
     pattern_maintenance: 'pattern_maintenances',
     pattern_loans: 'pattern_loans',
