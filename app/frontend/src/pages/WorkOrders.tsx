@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment, Pattern, Customer } from '@/lib/types';
-import { dsGetCustomers, dsGetWorkOrders, dsCreateWorkOrder, dsUpdateWorkOrder, dsDeleteWorkOrder, dsGetMoldingBatches, dsGetPatterns, dsGetMeltRecords } from '@/lib/dataService';
+import { dsGetCustomers, dsGetWorkOrders, dsCreateWorkOrder, dsUpdateWorkOrder, dsDeleteWorkOrder, dsGetMoldingBatches, dsGetPatterns, dsGetMeltRecords, getConnectionStatus } from '@/lib/dataService';
 import { Plus, Search, Edit, Image, FileImage, X, Trash2, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -423,7 +423,13 @@ export default function WorkOrders() {
       setBatches(mb);
       setIsCreateOpen(false);
       resetForm();
-      toast({ title: '工單已建立' });
+      // Check if we're in offline/fallback mode after the operation
+      const status = getConnectionStatus();
+      if (status.writeFailed) {
+        toast({ title: '工單已建立（離線模式，資料暫存本地）', description: '網路恢復後將自動嘗試同步' });
+      } else {
+        toast({ title: '工單已建立' });
+      }
     } catch (err) {
       console.error('[WorkOrders] 建立工單失敗:', err);
       const msg = err instanceof Error ? err.message : '';

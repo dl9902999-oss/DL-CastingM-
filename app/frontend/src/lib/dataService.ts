@@ -23,7 +23,19 @@ let _offlineReason: 'none' | 'no_connection' | 'rls_blocked' | 'error' = 'none';
 const CONNECTION_RETRY_INTERVAL = 60_000;
 
 export async function isSupabaseConnected(): Promise<boolean> {
-  if (_writeFailed) return false;
+  // If write previously failed, allow automatic retry after interval
+  if (_writeFailed) {
+    const elapsed = Date.now() - _lastCheckTime;
+    if (elapsed > CONNECTION_RETRY_INTERVAL) {
+      console.log('[DataService] Auto-retrying Supabase connection after write failure...');
+      _writeFailed = false;
+      _connectionChecked = false;
+      _checkPromise = null;
+      _offlineReason = 'none';
+    } else {
+      return false;
+    }
+  }
 
   // If previously checked and failed, allow retry after interval
   if (_connectionChecked && !_isConnected) {
@@ -132,15 +144,23 @@ async function withRLSFallback<T>(
       console.warn(`[DataService] ${operationName}: RLS blocked, switching to offline mode`);
       _writeFailed = true;
       _offlineReason = 'rls_blocked';
+      _lastCheckTime = Date.now();
       return localFallback();
     }
-    // Timeout or network error - fallback to localStorage
+    // Timeout or network error - mark write failed so reads also fallback to localStorage
     if (msg.includes('timeout')) {
-      console.warn(`[DataService] ${operationName}: timeout, falling back to localStorage`);
+      console.warn(`[DataService] ${operationName}: timeout, switching to offline mode`);
+      _writeFailed = true;
+      _offlineReason = 'error';
+      _lastCheckTime = Date.now();
       return localFallback();
     }
-    // Any other Supabase error (schema mismatch, constraint violation, etc.) - fallback to localStorage
-    console.warn(`[DataService] ${operationName}: Supabase error, falling back to localStorage:`, msg);
+    // Any other Supabase error (schema mismatch, constraint violation, etc.)
+    // Mark write failed so subsequent reads are consistent with localStorage writes
+    console.warn(`[DataService] ${operationName}: Supabase error, switching to offline mode:`, msg);
+    _writeFailed = true;
+    _offlineReason = 'error';
+    _lastCheckTime = Date.now();
     return localFallback();
   }
 }
