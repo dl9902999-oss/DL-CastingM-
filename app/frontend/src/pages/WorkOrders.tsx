@@ -411,13 +411,72 @@ export default function WorkOrders() {
     due_date: '', remarks: '', mold_photos: [], drawing_photos: []
   });
 
+  const validateWorkOrderForm = (): string | null => {
+    // 必填欄位檢查
+    if (!form.customer.trim()) return '請選擇或輸入客戶名稱';
+    if (!form.product_name.trim()) return '請輸入產品名稱';
+    if (!form.material.trim()) return '請輸入材質';
+    if (!form.quantity || form.quantity <= 0) return '數量必須大於 0';
+    if (form.quantity > 99999) return '數量不可超過 99,999';
+    if (!Number.isInteger(form.quantity)) return '數量必須為整數';
+
+    // 客戶名稱長度檢查
+    if (form.customer.trim().length > 50) return '客戶名稱不可超過 50 字';
+
+    // 產品名稱長度檢查
+    if (form.product_name.trim().length > 100) return '產品名稱不可超過 100 字';
+
+    // 材質長度檢查
+    if (form.material.trim().length > 50) return '材質名稱不可超過 50 字';
+
+    // 預估重量驗證（若有填寫）
+    if (form.estimated_weight && form.estimated_weight < 0) return '預估重量不可為負數';
+    if (form.estimated_weight && form.estimated_weight > 999999) return '預估重量數值過大';
+
+    // 交期驗證（若有填寫）
+    if (form.due_date) {
+      const dueDate = new Date(form.due_date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (isNaN(dueDate.getTime())) return '交期日期格式不正確';
+      if (dueDate < today) return '交期不可早於今天';
+    }
+
+    // 備註長度檢查
+    if (form.remarks && form.remarks.length > 500) return '備註不可超過 500 字';
+
+    // 客戶存在性檢查（警告但不阻擋）
+    const customerExists = customers.some(
+      c => c.name === form.customer.trim() || c.short_name === form.customer.trim()
+    );
+    if (!customerExists && customers.length > 0) {
+      // 不阻擋建立，但在後續流程中會使用預設客戶代碼
+      console.warn('[WorkOrders] 客戶不在系統中，將使用預設代碼');
+    }
+
+    return null; // 驗證通過
+  };
+
   const handleCreate = async () => {
-    if (!form.customer || !form.product_name || !form.material || form.quantity <= 0) {
-      toast({ title: '請填寫必要欄位', variant: 'destructive' });
+    const validationError = validateWorkOrderForm();
+    if (validationError) {
+      toast({ title: validationError, variant: 'destructive' });
       return;
     }
+
     try {
-      await dsCreateWorkOrder(form);
+      // 清理表單資料
+      const cleanedData = {
+        ...form,
+        customer: form.customer.trim(),
+        product_name: form.product_name.trim(),
+        material: form.material.trim(),
+        remarks: form.remarks?.trim() || '',
+        quantity: Math.floor(form.quantity),
+        estimated_weight: form.estimated_weight || 0,
+      };
+
+      await dsCreateWorkOrder(cleanedData);
       const [wo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
       setOrders(wo);
       setBatches(mb);
@@ -426,17 +485,22 @@ export default function WorkOrders() {
       // Check if we're in offline/fallback mode after the operation
       const status = getConnectionStatus();
       if (status.writeFailed) {
-        toast({ title: '工單已建立（離線模式，資料暫存本地）', description: '網路恢復後將自動嘗試同步' });
+        toast({
+          title: '✅ 工單已建立（離線模式）',
+          description: `資料暫存本地，目前有 ${status.pendingSyncCount} 筆待同步。網路恢復後將自動同步至雲端。`,
+        });
       } else {
-        toast({ title: '工單已建立' });
+        toast({ title: '✅ 工單已建立並同步至雲端' });
       }
     } catch (err) {
       console.error('[WorkOrders] 建立工單失敗:', err);
       const msg = err instanceof Error ? err.message : '';
       if (msg.includes('timeout')) {
         toast({ title: '連線逾時，請檢查網路後再試', variant: 'destructive' });
+      } else if (msg.includes('duplicate') || msg.includes('unique')) {
+        toast({ title: '工單編號重複，請稍後再試', variant: 'destructive' });
       } else {
-        toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+        toast({ title: '建立失敗，請稍後再試', variant: 'destructive', description: msg || undefined });
       }
     }
   };

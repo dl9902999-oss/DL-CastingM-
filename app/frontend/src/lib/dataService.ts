@@ -84,12 +84,116 @@ export function resetConnectionState(): void {
   _offlineReason = 'none';
 }
 
-export function getConnectionStatus(): { connected: boolean | null; writeFailed: boolean; reason: string } {
+export function getConnectionStatus(): { connected: boolean | null; writeFailed: boolean; reason: string; pendingSyncCount: number } {
   return {
     connected: _writeFailed ? false : _isConnected,
     writeFailed: _writeFailed,
     reason: _offlineReason,
+    pendingSyncCount: getPendingSyncCount(),
   };
+}
+
+// ============================================================
+// Pending Sync Queue - tracks locally-created data awaiting upload
+// ============================================================
+const PENDING_SYNC_KEY = 'foundry_pending_sync';
+
+interface PendingSyncEntry {
+  id: string;
+  table: string;
+  action: 'create' | 'update' | 'delete';
+  timestamp: number;
+  data?: Record<string, unknown>;
+}
+
+function getPendingSyncQueue(): PendingSyncEntry[] {
+  try {
+    const raw = localStorage.getItem(PENDING_SYNC_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingSyncQueue(queue: PendingSyncEntry[]): void {
+  localStorage.setItem(PENDING_SYNC_KEY, JSON.stringify(queue));
+}
+
+export function addPendingSync(table: string, action: 'create' | 'update' | 'delete', data?: Record<string, unknown>): void {
+  const queue = getPendingSyncQueue();
+  queue.push({
+    id: crypto.randomUUID(),
+    table,
+    action,
+    timestamp: Date.now(),
+    data,
+  });
+  savePendingSyncQueue(queue);
+}
+
+export function getPendingSyncCount(): number {
+  return getPendingSyncQueue().length;
+}
+
+export function clearPendingSyncQueue(): void {
+  localStorage.removeItem(PENDING_SYNC_KEY);
+}
+
+/**
+ * Upload all pending local data to Supabase.
+ * Returns { success: number; failed: number } indicating sync results.
+ */
+export async function syncPendingToSupabase(): Promise<{ success: number; failed: number }> {
+  const queue = getPendingSyncQueue();
+  if (queue.length === 0) return { success: 0, failed: 0 };
+
+  let success = 0;
+  let failed = 0;
+  const remainingQueue: PendingSyncEntry[] = [];
+
+  // Group by table for batch upsert
+  const tableGroups: Record<string, PendingSyncEntry[]> = {};
+  for (const entry of queue) {
+    if (!tableGroups[entry.table]) tableGroups[entry.table] = [];
+    tableGroups[entry.table].push(entry);
+  }
+
+  for (const [table, entries] of Object.entries(tableGroups)) {
+    try {
+      const items = entries
+        .filter(e => e.action !== 'delete' && e.data)
+        .map(e => e.data as Record<string, unknown>);
+
+      if (items.length > 0) {
+        await sbStore.sbUpsertBatch(table, items);
+        success += items.length;
+      }
+
+      // Handle deletes
+      const deletes = entries.filter(e => e.action === 'delete' && e.data?.id);
+      for (const del of deletes) {
+        try {
+          const { error } = await sbStore.supabaseClient().from(table).delete().eq('id', del.data!.id);
+          if (error) {
+            remainingQueue.push(del);
+            failed++;
+          } else {
+            success++;
+          }
+        } catch {
+          remainingQueue.push(del);
+          failed++;
+        }
+      }
+    } catch {
+      // If batch fails, keep all entries in queue for retry
+      remainingQueue.push(...entries);
+      failed += entries.length;
+    }
+  }
+
+  savePendingSyncQueue(remainingQueue);
+  return { success, failed };
 }
 
 /**
@@ -122,13 +226,26 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 const OPERATION_TIMEOUT = 10_000; // 10 seconds
 
+interface PendingSyncMeta {
+  table: string;
+  action: 'create' | 'update' | 'delete';
+}
+
 async function withRLSFallback<T>(
   sbOperation: () => Promise<T>,
   localFallback: () => T,
-  operationName: string
+  operationName: string,
+  syncMeta?: PendingSyncMeta
 ): Promise<T> {
   const connected = await isSupabaseConnected();
-  if (!connected) return localFallback();
+  if (!connected) {
+    const result = localFallback();
+    if (syncMeta) {
+      const data = result && typeof result === 'object' ? (result as Record<string, unknown>) : undefined;
+      addPendingSync(syncMeta.table, syncMeta.action, data);
+    }
+    return result;
+  }
 
   try {
     return await withTimeout(sbOperation(), OPERATION_TIMEOUT, operationName);
@@ -145,7 +262,12 @@ async function withRLSFallback<T>(
       _writeFailed = true;
       _offlineReason = 'rls_blocked';
       _lastCheckTime = Date.now();
-      return localFallback();
+      const result = localFallback();
+      if (syncMeta) {
+        const data = result && typeof result === 'object' ? (result as Record<string, unknown>) : undefined;
+        addPendingSync(syncMeta.table, syncMeta.action, data);
+      }
+      return result;
     }
     // Timeout or network error - mark write failed so reads also fallback to localStorage
     if (msg.includes('timeout')) {
@@ -153,7 +275,12 @@ async function withRLSFallback<T>(
       _writeFailed = true;
       _offlineReason = 'error';
       _lastCheckTime = Date.now();
-      return localFallback();
+      const result = localFallback();
+      if (syncMeta) {
+        const data = result && typeof result === 'object' ? (result as Record<string, unknown>) : undefined;
+        addPendingSync(syncMeta.table, syncMeta.action, data);
+      }
+      return result;
     }
     // Any other Supabase error (schema mismatch, constraint violation, etc.)
     // Mark write failed so subsequent reads are consistent with localStorage writes
@@ -161,7 +288,12 @@ async function withRLSFallback<T>(
     _writeFailed = true;
     _offlineReason = 'error';
     _lastCheckTime = Date.now();
-    return localFallback();
+    const result = localFallback();
+    if (syncMeta) {
+      const data = result && typeof result === 'object' ? (result as Record<string, unknown>) : undefined;
+      addPendingSync(syncMeta.table, syncMeta.action, data);
+    }
+    return result;
   }
 }
 
@@ -278,7 +410,8 @@ export async function dsCreateWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' 
   return withRLSFallback(
     () => sbStore.sbCreateWorkOrder(data),
     () => localStore.createWorkOrder(data),
-    'dsCreateWorkOrder'
+    'dsCreateWorkOrder',
+    { table: 'work_orders', action: 'create' }
   );
 }
 
@@ -286,7 +419,8 @@ export async function dsUpdateWorkOrder(id: string, data: Partial<WorkOrder>): P
   return withRLSFallback(
     () => sbStore.sbUpdateWorkOrder(id, data),
     () => localStore.updateWorkOrder(id, data),
-    'dsUpdateWorkOrder'
+    'dsUpdateWorkOrder',
+    { table: 'work_orders', action: 'update' }
   );
 }
 
@@ -294,7 +428,8 @@ export async function dsDeleteWorkOrder(id: string): Promise<void> {
   await withRLSFallback(
     async () => { await sbStore.sbDeleteWorkOrder(id); },
     () => { localStore.deleteWorkOrder(id); },
-    'dsDeleteWorkOrder'
+    'dsDeleteWorkOrder',
+    { table: 'work_orders', action: 'delete' }
   );
 }
 

@@ -1,6 +1,13 @@
 import { supabase } from './supabase';
 import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, MeltChemistry, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder, UserProfile, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
 
+/**
+ * Expose the Supabase client for direct operations (e.g., pending sync deletes).
+ */
+export function supabaseClient() {
+  return supabase;
+}
+
 // ============================================================
 // Supabase connection check
 // ============================================================
