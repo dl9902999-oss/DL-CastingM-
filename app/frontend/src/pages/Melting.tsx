@@ -7,14 +7,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { MeltingRecord, MoldingBatch, WorkOrder } from '@/lib/types';
 import { dsGetMeltingRecords, dsCreateMeltingRecord, dsUpdateMeltingRecord, dsDeleteMeltingRecord, dsGetMoldingBatches, dsGetWorkOrders } from '@/lib/dataService';
-
-// Alias ds* to legacy names used in this file
-const getMeltingRecords = dsGetMeltingRecords as unknown as (...args: Parameters<typeof dsGetMeltingRecords>) => Awaited<ReturnType<typeof dsGetMeltingRecords>>;
-const createMeltingRecord = dsCreateMeltingRecord as unknown as (...args: Parameters<typeof dsCreateMeltingRecord>) => Awaited<ReturnType<typeof dsCreateMeltingRecord>>;
-const updateMeltingRecord = dsUpdateMeltingRecord as unknown as (...args: Parameters<typeof dsUpdateMeltingRecord>) => Awaited<ReturnType<typeof dsUpdateMeltingRecord>>;
-const deleteMeltingRecord = dsDeleteMeltingRecord as unknown as (...args: Parameters<typeof dsDeleteMeltingRecord>) => Awaited<ReturnType<typeof dsDeleteMeltingRecord>>;
-const getMoldingBatches = dsGetMoldingBatches as unknown as (...args: Parameters<typeof dsGetMoldingBatches>) => Awaited<ReturnType<typeof dsGetMoldingBatches>>;
-const getWorkOrders = dsGetWorkOrders as unknown as (...args: Parameters<typeof dsGetWorkOrders>) => Awaited<ReturnType<typeof dsGetWorkOrders>>;
 import { Plus, Flame, Search, X, Pencil, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -35,9 +27,13 @@ export default function Melting() {
   const [selectedBatch, setSelectedBatch] = useState<MoldingBatch | null>(null);
 
   useEffect(() => {
-    setRecords(getMeltingRecords());
-    setBatches(getMoldingBatches());
-    setWorkOrders(getWorkOrders());
+    const loadData = async () => {
+      const [r, b, w] = await Promise.all([dsGetMeltingRecords(), dsGetMoldingBatches(), dsGetWorkOrders()]);
+      setRecords(r);
+      setBatches(b);
+      setWorkOrders(w);
+    };
+    loadData();
   }, []);
 
   const filteredBatches = batches.filter(b => {
@@ -79,7 +75,7 @@ export default function Melting() {
     setPouringWeights(new Array(qty).fill(0));
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!form.batch_id || !form.furnace_no) {
       toast({ title: '請填寫所有必要欄位', variant: 'destructive' });
       return;
@@ -92,14 +88,14 @@ export default function Melting() {
     const batch = batches.find(b => b.id === form.batch_id);
     if (!batch) return;
     const estimatedWeight = getEstimatedWeight(batch);
-    createMeltingRecord({
+    await dsCreateMeltingRecord({
       batch_id: form.batch_id,
       batch_no: batch.batch_no,
       furnace_no: form.furnace_no,
       melting_weight: estimatedWeight,
       pouring_weights: pouringWeights,
     });
-    setRecords(getMeltingRecords());
+    setRecords(await dsGetMeltingRecords());
     setIsCreateOpen(false);
     setForm({ batch_id: '', furnace_no: '' });
     setPouringWeights([0]);
@@ -119,7 +115,7 @@ export default function Melting() {
     setIsEditOpen(true);
   };
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     if (!editingRecord) return;
     if (!editForm.furnace_no) {
       toast({ title: '請填寫所有必要欄位', variant: 'destructive' });
@@ -131,21 +127,21 @@ export default function Melting() {
       return;
     }
     const estimatedWeight = getEstimatedWeightByBatchId(editingRecord.batch_id);
-    updateMeltingRecord(editingRecord.id, {
+    await dsUpdateMeltingRecord(editingRecord.id, {
       furnace_no: editForm.furnace_no,
       pouring_weights: editPouringWeights,
       melting_weight: estimatedWeight,
     });
-    setRecords(getMeltingRecords());
+    setRecords(await dsGetMeltingRecords());
     setIsEditOpen(false);
     setEditingRecord(null);
     toast({ title: '澆注紀錄已更新' });
   };
 
-  const handleDelete = (record: MeltingRecord) => {
+  const handleDelete = async (record: MeltingRecord) => {
     if (!window.confirm(`確定要刪除澆注紀錄 ${record.heat_no} 嗎？`)) return;
-    deleteMeltingRecord(record.id);
-    setRecords(getMeltingRecords());
+    await dsDeleteMeltingRecord(record.id);
+    setRecords(await dsGetMeltingRecords());
     toast({ title: '澆注紀錄已刪除' });
   };
 

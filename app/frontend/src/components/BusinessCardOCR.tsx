@@ -42,11 +42,11 @@ function parseBusinessCard(text: string): OCRResult {
   // Email pattern
   const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
   // Phone patterns (Taiwan style)
-  const phoneRegex = /(?:TEL|Tel|tel|電話|Phone|phone|T)[：:\s]*([(\d)\s\-+]+[\d\-]+)/;
-  const faxRegex = /(?:FAX|Fax|fax|傳真|F)[：:\s]*([(\d)\s\-+]+[\d\-]+)/;
-  const mobileRegex = /(?:手機|行動|Mobile|mobile|M|Cell|cell)[：:\s]*(09[\d\-\s]+)/;
+  const phoneRegex = /(?:TEL|Tel|tel|電話|Phone|phone|T)[：:\s]*([(\d)\s+-]+[\d-]+)/;
+  const faxRegex = /(?:FAX|Fax|fax|傳真|F)[：:\s]*([(\d)\s+-]+[\d-]+)/;
+  const mobileRegex = /(?:手機|行動|Mobile|mobile|M|Cell|cell)[：:\s]*(09[\d\s-]+)/;
   // Generic phone number (Taiwan landline or mobile)
-  const genericPhoneRegex = /(\+?886[\s\-]?\d[\s\-]?[\d\s\-]{7,}|0[2-9][\s\-]?[\d\s\-]{7,}|09\d{2}[\s\-]?\d{3}[\s\-]?\d{3})/;
+  const genericPhoneRegex = /(\+?886[\s-]?\d[\s-]?[\d\s-]{7,}|0[2-9][\s-]?[\d\s-]{7,}|09\d{2}[\s-]?\d{3}[\s-]?\d{3})/;
   // Website
   const websiteRegex = /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}(?:\/\S*)?/;
   // Address patterns (Taiwan)
@@ -92,7 +92,7 @@ function parseBusinessCard(text: string): OCRResult {
     if (usedLines.has(i)) continue;
     const match = lines[i].match(mobileRegex);
     if (match) {
-      result.mobile = match[1].replace(/[\s\-]/g, '').trim();
+      result.mobile = match[1].replace(/[\s-]/g, '').trim();
       usedLines.add(i);
       break;
     }
@@ -102,9 +102,9 @@ function parseBusinessCard(text: string): OCRResult {
   if (!result.mobile) {
     for (let i = 0; i < lines.length; i++) {
       if (usedLines.has(i)) continue;
-      const match = lines[i].match(/09\d{2}[\s\-]?\d{3}[\s\-]?\d{3}/);
+      const match = lines[i].match(/09\d{2}[\s-]?\d{3}[\s-]?\d{3}/);
       if (match) {
-        result.mobile = match[0].replace(/[\s\-]/g, '');
+        result.mobile = match[0].replace(/[\s-]/g, '');
         usedLines.add(i);
         break;
       }
@@ -115,7 +115,7 @@ function parseBusinessCard(text: string): OCRResult {
   if (!result.phone) {
     for (let i = 0; i < lines.length; i++) {
       if (usedLines.has(i)) continue;
-      const match = lines[i].match(/0[2-9][\s\-]?[\d\s\-]{7,}/);
+      const match = lines[i].match(/0[2-9][\s-]?[\d\s-]{7,}/);
       if (match && !match[0].startsWith('09')) {
         result.phone = match[0].replace(/\s+/g, '').trim();
         usedLines.add(i);
