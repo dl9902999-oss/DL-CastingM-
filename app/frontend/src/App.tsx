@@ -17,6 +17,7 @@ import Traceability from '@/pages/Traceability';
 import Customers from '@/pages/Customers';
 import UserManagement from '@/pages/UserManagement';
 import MoldManagement from '@/pages/MoldManagement';
+import SyncHistory from '@/pages/SyncHistory';
 
 const queryClient = new QueryClient();
 
@@ -48,6 +49,7 @@ const AppRoutes = () => (
     <Route path="/customers" element={<ProtectedRoute><Customers /></ProtectedRoute>} />
     <Route path="/mold-management" element={<ProtectedRoute><MoldManagement /></ProtectedRoute>} />
     <Route path="/user-management" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
+    <Route path="/sync-history" element={<ProtectedRoute><SyncHistory /></ProtectedRoute>} />
     <Route path="/" element={<Navigate to="/dashboard" replace />} />
     <Route path="*" element={<Navigate to="/dashboard" replace />} />
   </Routes>

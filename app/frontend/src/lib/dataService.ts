@@ -139,23 +139,114 @@ export function clearPendingSyncQueue(): void {
   localStorage.removeItem(PENDING_SYNC_KEY);
 }
 
+// ============================================================
+// Sync History Log - records every sync attempt and its result
+// ============================================================
+const SYNC_LOG_KEY = 'foundry_sync_log';
+const MAX_SYNC_LOG_ENTRIES = 100; // Keep last 100 entries
+
+export type SyncLogStatus = 'success' | 'partial' | 'failed' | 'skipped';
+
+export interface SyncLogEntry {
+  id: string;
+  timestamp: number;
+  status: SyncLogStatus;
+  trigger: 'auto_recovery' | 'manual_refresh' | 'periodic' | 'initial';
+  totalItems: number;
+  successCount: number;
+  failedCount: number;
+  duration: number; // ms
+  tables: string[];
+  errorMessage?: string;
+}
+
+function getSyncLog(): SyncLogEntry[] {
+  try {
+    const raw = localStorage.getItem(SYNC_LOG_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSyncLog(log: SyncLogEntry[]): void {
+  // Keep only the latest entries
+  const trimmed = log.slice(-MAX_SYNC_LOG_ENTRIES);
+  localStorage.setItem(SYNC_LOG_KEY, JSON.stringify(trimmed));
+}
+
+function addSyncLogEntry(entry: SyncLogEntry): void {
+  const log = getSyncLog();
+  log.push(entry);
+  saveSyncLog(log);
+}
+
+export function getSyncHistory(): SyncLogEntry[] {
+  return getSyncLog().sort((a, b) => b.timestamp - a.timestamp);
+}
+
+export function clearSyncHistory(): void {
+  localStorage.removeItem(SYNC_LOG_KEY);
+}
+
+export function getSyncStats(): {
+  totalSyncs: number;
+  successfulSyncs: number;
+  failedSyncs: number;
+  lastSyncTime: number | null;
+  lastSyncStatus: SyncLogStatus | null;
+  totalItemsSynced: number;
+} {
+  const log = getSyncLog();
+  const lastEntry = log.length > 0 ? log[log.length - 1] : null;
+  return {
+    totalSyncs: log.length,
+    successfulSyncs: log.filter(e => e.status === 'success').length,
+    failedSyncs: log.filter(e => e.status === 'failed').length,
+    lastSyncTime: lastEntry?.timestamp ?? null,
+    lastSyncStatus: lastEntry?.status ?? null,
+    totalItemsSynced: log.reduce((sum, e) => sum + e.successCount, 0),
+  };
+}
+
 /**
  * Upload all pending local data to Supabase.
  * Returns { success: number; failed: number } indicating sync results.
+ * Automatically records the sync attempt in the sync history log.
  */
-export async function syncPendingToSupabase(): Promise<{ success: number; failed: number }> {
+export async function syncPendingToSupabase(
+  trigger: SyncLogEntry['trigger'] = 'auto_recovery'
+): Promise<{ success: number; failed: number }> {
   const queue = getPendingSyncQueue();
-  if (queue.length === 0) return { success: 0, failed: 0 };
+  if (queue.length === 0) {
+    // Record a skipped sync (nothing to sync)
+    addSyncLogEntry({
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      status: 'skipped',
+      trigger,
+      totalItems: 0,
+      successCount: 0,
+      failedCount: 0,
+      duration: 0,
+      tables: [],
+    });
+    return { success: 0, failed: 0 };
+  }
 
+  const startTime = Date.now();
   let success = 0;
   let failed = 0;
   const remainingQueue: PendingSyncEntry[] = [];
+  let errorMessage: string | undefined;
+  const tablesInvolved = new Set<string>();
 
   // Group by table for batch upsert
   const tableGroups: Record<string, PendingSyncEntry[]> = {};
   for (const entry of queue) {
     if (!tableGroups[entry.table]) tableGroups[entry.table] = [];
     tableGroups[entry.table].push(entry);
+    tablesInvolved.add(entry.table);
   }
 
   for (const [table, entries] of Object.entries(tableGroups)) {
@@ -177,22 +268,48 @@ export async function syncPendingToSupabase(): Promise<{ success: number; failed
           if (error) {
             remainingQueue.push(del);
             failed++;
+            errorMessage = error.message;
           } else {
             success++;
           }
-        } catch {
+        } catch (e) {
           remainingQueue.push(del);
           failed++;
+          errorMessage = e instanceof Error ? e.message : String(e);
         }
       }
-    } catch {
+    } catch (e) {
       // If batch fails, keep all entries in queue for retry
       remainingQueue.push(...entries);
       failed += entries.length;
+      errorMessage = e instanceof Error ? e.message : String(e);
     }
   }
 
   savePendingSyncQueue(remainingQueue);
+
+  // Determine overall status
+  const duration = Date.now() - startTime;
+  let status: SyncLogStatus;
+  if (failed === 0 && success > 0) status = 'success';
+  else if (success > 0 && failed > 0) status = 'partial';
+  else if (success === 0 && failed > 0) status = 'failed';
+  else status = 'skipped';
+
+  // Record in sync history
+  addSyncLogEntry({
+    id: crypto.randomUUID(),
+    timestamp: Date.now(),
+    status,
+    trigger,
+    totalItems: queue.length,
+    successCount: success,
+    failedCount: failed,
+    duration,
+    tables: Array.from(tablesInvolved),
+    errorMessage,
+  });
+
   return { success, failed };
 }
 

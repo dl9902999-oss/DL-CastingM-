@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
-import { isSupabaseConnected, attemptReconnect, getConnectionStatus, syncPendingToSupabase, getPendingSyncCount } from '../lib/dataService';
+import { isSupabaseConnected, attemptReconnect, getConnectionStatus, syncPendingToSupabase, getPendingSyncCount, getSyncHistory, getSyncStats, clearSyncHistory, type SyncLogEntry, type SyncLogStatus } from '../lib/dataService';
 import { startRealtimeSync, stopRealtimeSync, fullSyncFromSupabase, onDataChange } from '../lib/realtimeSync';
 import { forceFullUpload } from '../lib/store';
+
+export type { SyncLogEntry, SyncLogStatus };
 
 interface DataContextType {
   isOnline: boolean | null; // null = checking, true = Supabase, false = localStorage
@@ -10,7 +12,10 @@ interface DataContextType {
   connectionReason: string; // reason for offline mode
   pendingSyncCount: number; // number of pending local items awaiting sync
   lastSyncResult: SyncResult | null; // result of last sync attempt
+  syncHistory: SyncLogEntry[]; // full sync history log
+  syncStats: ReturnType<typeof getSyncStats>; // aggregated sync stats
   refreshData: () => Promise<void>; // manually trigger a data refresh
+  clearHistory: () => void; // clear sync history
 }
 
 export interface SyncResult {
@@ -23,6 +28,9 @@ const DataContext = createContext<DataContextType>({
   isOnline: null,
   isLoading: true,
   lastSyncTime: 0,
+  syncHistory: [],
+  syncStats: { totalSyncs: 0, successfulSyncs: 0, failedSyncs: 0, lastSyncTime: null, lastSyncStatus: null, totalItemsSynced: 0 },
+  clearHistory: () => {},
   connectionReason: 'none',
   pendingSyncCount: 0,
   lastSyncResult: null,
@@ -47,13 +55,28 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const recoveryTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const wasOffline = useRef(false);
 
+  const [syncHistory, setSyncHistory] = useState<SyncLogEntry[]>(getSyncHistory());
+  const [syncStats, setSyncStatsState] = useState(getSyncStats());
+
+  // Refresh sync history state from localStorage
+  const refreshSyncHistory = useCallback(() => {
+    setSyncHistory(getSyncHistory());
+    setSyncStatsState(getSyncStats());
+  }, []);
+
+  // Clear sync history
+  const clearHistory = useCallback(() => {
+    clearSyncHistory();
+    refreshSyncHistory();
+  }, [refreshSyncHistory]);
+
   // Perform pending sync upload when connection is available
-  const performPendingSync = useCallback(async () => {
+  const performPendingSync = useCallback(async (trigger: 'auto_recovery' | 'manual_refresh' | 'periodic' | 'initial' = 'auto_recovery') => {
     const count = getPendingSyncCount();
     if (count === 0) return;
 
     try {
-      const result = await syncPendingToSupabase();
+      const result = await syncPendingToSupabase(trigger);
       setPendingSyncCount(getPendingSyncCount());
       if (result.success > 0) {
         setLastSyncResult({
@@ -62,10 +85,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           timestamp: Date.now(),
         });
       }
+      // Refresh sync history after each sync attempt
+      refreshSyncHistory();
     } catch (e) {
       console.warn('[DataContext] Pending sync failed:', e);
     }
-  }, []);
+  }, [refreshSyncHistory]);
 
   // Auto-recovery: periodically check if network is back when offline
   useEffect(() => {
@@ -103,7 +128,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     if (isOnline === true && wasOffline.current) {
       wasOffline.current = false;
       // Upload pending sync queue
-      performPendingSync().then(() => {
+      performPendingSync('auto_recovery').then(() => {
         // Also do a full upload to ensure all localStorage data is synced
         forceFullUpload().catch(e => console.warn('[DataContext] forceFullUpload error:', e));
       });
@@ -123,7 +148,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         const count = getPendingSyncCount();
         setPendingSyncCount(count);
         if (count > 0) {
-          performPendingSync();
+          performPendingSync('periodic');
         }
       }, AUTO_SYNC_INTERVAL);
     } else {
@@ -164,7 +189,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           // If there are pending items from a previous offline session, sync them now
           const pending = getPendingSyncCount();
           if (pending > 0) {
-            await performPendingSync();
+            await performPendingSync('initial');
           }
         }
 
@@ -199,7 +224,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
       if (connected) {
         // Upload pending local data first
-        await performPendingSync();
+        await performPendingSync('manual_refresh');
         // Then pull fresh data
         await fullSyncFromSupabase();
         // Re-start realtime sync if it was stopped
@@ -207,13 +232,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
       // Always trigger re-render for UI update
       setLastSyncTime(Date.now());
+      refreshSyncHistory();
     } finally {
       refreshInProgress.current = false;
     }
-  }, [performPendingSync]);
+  }, [performPendingSync, refreshSyncHistory]);
 
   return (
-    <DataContext.Provider value={{ isOnline, isLoading, lastSyncTime, connectionReason, pendingSyncCount, lastSyncResult, refreshData }}>
+    <DataContext.Provider value={{ isOnline, isLoading, lastSyncTime, connectionReason, pendingSyncCount, lastSyncResult, syncHistory, syncStats, refreshData, clearHistory }}>
       {children}
     </DataContext.Provider>
   );
