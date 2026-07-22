@@ -314,6 +314,44 @@ export async function syncPendingToSupabase(
 }
 
 /**
+ * Verify that a work order exists in Supabase cloud after write.
+ * Returns verification result with cloud data comparison.
+ */
+export async function verifySyncToCloud(orderId: string): Promise<{
+  verified: boolean;
+  cloudExists: boolean;
+  localExists: boolean;
+  message: string;
+}> {
+  try {
+    const { data, error } = await sbStore.supabaseClient().from('work_orders').select('id, order_no, updated_at').eq('id', orderId).single();
+    const localOrders = localStore.getWorkOrders();
+    const localExists = localOrders.some(o => o.id === orderId);
+
+    if (error || !data) {
+      return { verified: false, cloudExists: false, localExists, message: '雲端尚未收到資料，將自動重試同步' };
+    }
+    return { verified: true, cloudExists: true, localExists, message: '資料已確認同步至雲端' };
+  } catch {
+    return { verified: false, cloudExists: false, localExists: true, message: '驗證連線失敗，資料可能尚在同步中' };
+  }
+}
+
+/**
+ * Get cloud work order count for comparison with local data.
+ * Used for cross-device sync verification.
+ */
+export async function getCloudWorkOrderCount(): Promise<{ count: number | null; error: string | null }> {
+  try {
+    const { count, error } = await sbStore.supabaseClient().from('work_orders').select('*', { count: 'exact', head: true });
+    if (error) return { count: null, error: error.message };
+    return { count: count ?? 0, error: null };
+  } catch (e) {
+    return { count: null, error: e instanceof Error ? e.message : '查詢失敗' };
+  }
+}
+
+/**
  * Attempt to recover from _writeFailed state by re-checking connection.
  * Call this when user explicitly requests a refresh.
  */

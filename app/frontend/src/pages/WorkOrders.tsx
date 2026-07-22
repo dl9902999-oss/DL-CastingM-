@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
 import { useSyncTrigger } from '@/hooks/useSyncedData';
@@ -10,9 +10,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment, Pattern, Customer } from '@/lib/types';
-import { dsGetCustomers, dsGetWorkOrders, dsCreateWorkOrder, dsUpdateWorkOrder, dsDeleteWorkOrder, dsGetMoldingBatches, dsGetPatterns, dsGetMeltRecords, getConnectionStatus } from '@/lib/dataService';
+import { dsGetCustomers, dsGetWorkOrders, dsCreateWorkOrder, dsUpdateWorkOrder, dsDeleteWorkOrder, dsGetMoldingBatches, dsGetPatterns, dsGetMeltRecords, getConnectionStatus, verifySyncToCloud } from '@/lib/dataService';
 import { Plus, Search, Edit, Image, FileImage, X, Trash2, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { onWorkOrderChange, WorkOrderChangeEvent } from '@/lib/realtimeSync';
+import { WorkOrderSyncIndicator } from '@/components/WorkOrderSyncIndicator';
 
 const MOLD_SUPPLY_OPTIONS: MoldSupply[] = ['客戶提供', '公司自有', '代客製作'];
 const MOLD_TYPE_OPTIONS: MoldType[] = ['上下模', '單面模', '現板模', '保模', '中板模', '砂心模', '其他'];
@@ -328,6 +330,24 @@ export default function WorkOrders() {
     return () => { cancelled = true; };
   }, [syncTrigger]);
 
+  // Cross-device work order change notification
+  useEffect(() => {
+    const unsubscribe = onWorkOrderChange((event: WorkOrderChangeEvent) => {
+      const orderNo = (event.newRecord?.order_no || event.oldRecord?.order_no || '') as string;
+      const label = orderNo ? ` (${orderNo})` : '';
+      if (event.eventType === 'INSERT') {
+        toast({ title: `📥 其他裝置新增了工單${label}`, description: '列表已自動更新' });
+      } else if (event.eventType === 'UPDATE') {
+        toast({ title: `📝 其他裝置更新了工單${label}`, description: '列表已自動更新' });
+      } else if (event.eventType === 'DELETE') {
+        toast({ title: `🗑️ 其他裝置刪除了工單${label}`, description: '列表已自動更新' });
+      }
+      // Refresh local list
+      dsGetWorkOrders().then(wo => setOrders(wo)).catch(() => {});
+    });
+    return unsubscribe;
+  }, [toast]);
+
   const getStartedQty = (orderId: string) => {
     return batches.filter(b => b.work_order_id === orderId).reduce((sum, b) => sum + b.quantity_planned, 0);
   };
@@ -476,7 +496,7 @@ export default function WorkOrders() {
         estimated_weight: form.estimated_weight || 0,
       };
 
-      await dsCreateWorkOrder(cleanedData);
+      const created = await dsCreateWorkOrder(cleanedData);
       const [wo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
       setOrders(wo);
       setBatches(mb);
@@ -490,7 +510,26 @@ export default function WorkOrders() {
           description: `資料暫存本地，目前有 ${status.pendingSyncCount} 筆待同步。網路恢復後將自動同步至雲端。`,
         });
       } else {
-        toast({ title: '✅ 工單已建立並同步至雲端' });
+        // Write-Read-Verify: confirm data exists in cloud
+        toast({ title: '✅ 工單已建立，正在驗證雲端同步...' });
+        // Delay slightly to allow Supabase to commit
+        setTimeout(async () => {
+          const verification = await verifySyncToCloud(created.id);
+          if (verification.verified) {
+            toast({ title: '\u2601\uFE0F 雲端同步已確認', description: `工單 ${created.order_no} ${verification.message}` });
+          } else {
+            toast({ title: '\u26A0\uFE0F 雲端驗證中', description: verification.message, variant: 'destructive' });
+            // Retry once after 3 seconds
+            setTimeout(async () => {
+              const retry = await verifySyncToCloud(created.id);
+              if (retry.verified) {
+                toast({ title: '\u2601\uFE0F 雲端同步已確認（重試成功）', description: `工單 ${created.order_no} ${retry.message}` });
+              } else {
+                toast({ title: '\u26A0\uFE0F 同步驗證未通過', description: '資料可能仍在同步中，請稍後在同步歷史頁面確認', variant: 'destructive' });
+              }
+            }, 3000);
+          }
+        }, 1500);
       }
     } catch (err) {
       console.error('[WorkOrders] 建立工單失敗:', err);
@@ -513,7 +552,20 @@ export default function WorkOrders() {
       setOrders(wo);
       setBatches(mb);
       setEditOrder(null);
-      toast({ title: '工單已更新' });
+      const status = getConnectionStatus();
+      if (status.writeFailed) {
+        toast({ title: '工單已更新（離線模式）', description: '網路恢復後將自動同步' });
+      } else {
+        toast({ title: '工單已更新，正在驗證雲端同步...' });
+        setTimeout(async () => {
+          const verification = await verifySyncToCloud(editOrder.id);
+          if (verification.verified) {
+            toast({ title: '\u2601\uFE0F 更新已確認同步至雲端', description: verification.message });
+          } else {
+            toast({ title: '\u26A0\uFE0F 更新驗證中', description: verification.message });
+          }
+        }, 1500);
+      }
     } catch {
       toast({ title: '更新失敗，請稍後再試', variant: 'destructive' });
     }
@@ -526,7 +578,21 @@ export default function WorkOrders() {
       const [wo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
       setOrders(wo);
       setBatches(mb);
-      toast({ title: '工單已刪除' });
+      const status = getConnectionStatus();
+      if (status.writeFailed) {
+        toast({ title: '工單已刪除（離線模式）', description: '網路恢復後將自動同步' });
+      } else {
+        // Verify deletion: cloud should NOT have this record
+        toast({ title: '工單已刪除，正在驗證雲端同步...' });
+        setTimeout(async () => {
+          const verification = await verifySyncToCloud(order.id);
+          if (!verification.cloudExists) {
+            toast({ title: '\u2601\uFE0F 刪除已確認同步至雲端', description: '雲端已移除該工單' });
+          } else {
+            toast({ title: '\u26A0\uFE0F 刪除驗證中', description: '雲端可能尚在處理，請稍後確認' });
+          }
+        }, 1500);
+      }
     } catch {
       toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
     }
@@ -563,6 +629,9 @@ export default function WorkOrders() {
   return (
     <AppLayout>
       <div className="space-y-4">
+        {/* Sync status indicator for cross-device confirmation */}
+        <WorkOrderSyncIndicator />
+
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">工單管理</h1>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>

@@ -51,6 +51,34 @@ const TABLE_TO_STORAGE_KEY: Record<string, string> = {
 
 type ChangeListener = (table: string) => void;
 
+// Cross-device work order change event
+export type WorkOrderChangeEvent = {
+  eventType: 'INSERT' | 'UPDATE' | 'DELETE';
+  table: string;
+  newRecord?: Record<string, unknown>;
+  oldRecord?: Record<string, unknown>;
+  timestamp: number;
+};
+type WorkOrderChangeListener = (event: WorkOrderChangeEvent) => void;
+let _workOrderChangeListeners: WorkOrderChangeListener[] = [];
+
+/**
+ * Subscribe to cross-device work_orders change notifications.
+ * Fires when another device creates/updates/deletes a work order via Realtime.
+ */
+export function onWorkOrderChange(listener: WorkOrderChangeListener): () => void {
+  _workOrderChangeListeners.push(listener);
+  return () => {
+    _workOrderChangeListeners = _workOrderChangeListeners.filter(l => l !== listener);
+  };
+}
+
+function notifyWorkOrderChangeListeners(event: WorkOrderChangeEvent) {
+  _workOrderChangeListeners.forEach(l => {
+    try { l(event); } catch (e) { console.warn('[RealtimeSync] WO change listener error:', e); }
+  });
+}
+
 let _channel: RealtimeChannel | null = null;
 let _listeners: ChangeListener[] = [];
 let _isSubscribed = false;
@@ -146,6 +174,17 @@ export function startRealtimeSync(): void {
         console.log(`[RealtimeSync] Change on ${payload.table}:`, payload.eventType);
         await refreshLocalFromSupabase(payload.table);
         notifyListeners(payload.table);
+
+        // Fire cross-device work_orders change event
+        if (payload.table === 'work_orders') {
+          notifyWorkOrderChangeListeners({
+            eventType: payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE',
+            table: payload.table,
+            newRecord: payload.new as Record<string, unknown> | undefined,
+            oldRecord: payload.old as Record<string, unknown> | undefined,
+            timestamp: Date.now(),
+          });
+        }
       }
     );
   }
