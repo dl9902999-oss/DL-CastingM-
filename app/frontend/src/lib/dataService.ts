@@ -440,6 +440,8 @@ const LOCAL_STORAGE_KEY_MAP: Record<string, string> = {
   melt_records: 'foundry_melt_records',
   melt_materials: 'foundry_melt_materials',
   melt_chemistry: 'foundry_melt_chemistry',
+  melt_pourings: 'foundry_melt_pourings',
+  melt_preset_recipes: 'foundry_melt_preset_recipes',
   patterns: 'foundry_patterns',
   pattern_versions: 'foundry_pattern_versions',
   pattern_history: 'foundry_pattern_history',
@@ -651,7 +653,8 @@ export async function dsCreateUser(userData: Omit<UserProfile, 'id'>): Promise<U
   return withRLSFallback(
     () => sbStore.sbCreateUser(userData),
     () => localStore.createUser(userData),
-    'dsCreateUser'
+    'dsCreateUser',
+    { table: 'users', action: 'create' }
   );
 }
 
@@ -659,7 +662,8 @@ export async function dsUpdateUser(id: string, updates: Partial<Omit<UserProfile
   return withRLSFallback(
     () => sbStore.sbUpdateUser(id, updates),
     () => localStore.updateUser(id, updates),
-    'dsUpdateUser'
+    'dsUpdateUser',
+    { table: 'users', action: 'update' }
   );
 }
 
@@ -667,7 +671,8 @@ export async function dsDeleteUser(id: string): Promise<boolean> {
   return withRLSFallback(
     () => sbStore.sbDeleteUser(id),
     () => localStore.deleteUser(id),
-    'dsDeleteUser'
+    'dsDeleteUser',
+    { table: 'users', action: 'delete' }
   );
 }
 
@@ -686,7 +691,8 @@ export async function dsCreateCustomer(data: Omit<Customer, 'id' | 'customer_no'
   return withRLSFallback(
     () => sbStore.sbCreateCustomer(data),
     () => localStore.createCustomer(data),
-    'dsCreateCustomer'
+    'dsCreateCustomer',
+    { table: 'customers', action: 'create' }
   );
 }
 
@@ -694,7 +700,8 @@ export async function dsUpdateCustomer(id: string, data: Partial<Customer>): Pro
   return withRLSFallback(
     () => sbStore.sbUpdateCustomer(id, data),
     () => localStore.updateCustomer(id, data),
-    'dsUpdateCustomer'
+    'dsUpdateCustomer',
+    { table: 'customers', action: 'update' }
   );
 }
 
@@ -702,7 +709,8 @@ export async function dsDeleteCustomer(id: string): Promise<void> {
   await withRLSFallback(
     async () => { await sbStore.sbDeleteCustomer(id); },
     () => { localStore.deleteCustomer(id); },
-    'dsDeleteCustomer'
+    'dsDeleteCustomer',
+    { table: 'customers', action: 'delete' }
   );
 }
 
@@ -759,7 +767,8 @@ export async function dsCreateMoldingBatch(data: { work_order_id: string; order_
   return withRLSFallback(
     () => sbStore.sbCreateMoldingBatch(data),
     () => localStore.createMoldingBatch(data),
-    'dsCreateMoldingBatch'
+    'dsCreateMoldingBatch',
+    { table: 'molding_batches', action: 'create' }
   );
 }
 
@@ -767,7 +776,8 @@ export async function dsUpdateMoldingBatch(id: string, data: Partial<MoldingBatc
   return withRLSFallback(
     () => sbStore.sbUpdateMoldingBatch(id, data),
     () => localStore.updateMoldingBatch(id, data),
-    'dsUpdateMoldingBatch'
+    'dsUpdateMoldingBatch',
+    { table: 'molding_batches', action: 'update' }
   );
 }
 
@@ -775,7 +785,8 @@ export async function dsDeleteMoldingBatch(id: string): Promise<void> {
   await withRLSFallback(
     async () => { await sbStore.sbDeleteMoldingBatch(id); },
     () => { localStore.deleteMoldingBatch(id); },
-    'dsDeleteMoldingBatch'
+    'dsDeleteMoldingBatch',
+    { table: 'molding_batches', action: 'delete' }
   );
 }
 
@@ -794,7 +805,8 @@ export async function dsCreateMeltingRecord(data: { batch_id: string; batch_no: 
   return withRLSFallback(
     () => sbStore.sbCreateMeltingRecord(data),
     () => localStore.createMeltingRecord(data),
-    'dsCreateMeltingRecord'
+    'dsCreateMeltingRecord',
+    { table: 'melting_records', action: 'create' }
   );
 }
 
@@ -802,7 +814,8 @@ export async function dsUpdateMeltingRecord(id: string, data: { furnace_no?: str
   return withRLSFallback(
     () => sbStore.sbUpdateMeltingRecord(id, data),
     () => localStore.updateMeltingRecord(id, data),
-    'dsUpdateMeltingRecord'
+    'dsUpdateMeltingRecord',
+    { table: 'melting_records', action: 'update' }
   );
 }
 
@@ -810,7 +823,8 @@ export async function dsDeleteMeltingRecord(id: string): Promise<boolean> {
   return withRLSFallback(
     () => sbStore.sbDeleteMeltingRecord(id),
     () => localStore.deleteMeltingRecord(id),
-    'dsDeleteMeltingRecord'
+    'dsDeleteMeltingRecord',
+    { table: 'melting_records', action: 'delete' }
   );
 }
 
@@ -829,7 +843,8 @@ export async function dsCreateMeltRecord(data: Omit<MeltRecord, 'id' | 'melt_no'
   return withRLSFallback(
     () => sbStore.sbCreateMeltRecord(data),
     () => localStore.createMeltRecord(data),
-    'dsCreateMeltRecord'
+    'dsCreateMeltRecord',
+    { table: 'melt_records', action: 'create' }
   );
 }
 
@@ -837,7 +852,8 @@ export async function dsUpdateMeltRecord(id: string, data: Partial<Omit<MeltReco
   return withRLSFallback(
     () => sbStore.sbUpdateMeltRecord(id, data),
     () => localStore.updateMeltRecord(id, data),
-    'dsUpdateMeltRecord'
+    'dsUpdateMeltRecord',
+    { table: 'melt_records', action: 'update' }
   );
 }
 
@@ -845,7 +861,8 @@ export async function dsDeleteMeltRecord(id: string): Promise<boolean> {
   return withRLSFallback(
     () => sbStore.sbDeleteMeltRecord(id),
     () => localStore.deleteMeltRecord(id),
-    'dsDeleteMeltRecord'
+    'dsDeleteMeltRecord',
+    { table: 'melt_records', action: 'delete' }
   );
 }
 
@@ -853,7 +870,8 @@ export async function dsRecalcMeltRecord(meltId: string): Promise<MeltRecord | n
   return withRLSFallback(
     () => sbStore.sbRecalcMeltRecord(meltId),
     () => localStore.recalcMeltRecord(meltId),
-    'dsRecalcMeltRecord'
+    'dsRecalcMeltRecord',
+    { table: 'melt_records', action: 'update' }
   );
 }
 
@@ -872,7 +890,8 @@ export async function dsCreateMeltMaterial(data: Omit<MeltMaterial, 'id' | 'subt
   return withRLSFallback(
     () => sbStore.sbCreateMeltMaterial(data),
     () => localStore.createMeltMaterial(data),
-    'dsCreateMeltMaterial'
+    'dsCreateMeltMaterial',
+    { table: 'melt_materials', action: 'create' }
   );
 }
 
@@ -880,7 +899,8 @@ export async function dsUpdateMeltMaterial(id: string, data: Partial<Omit<MeltMa
   return withRLSFallback(
     () => sbStore.sbUpdateMeltMaterial(id, data),
     () => localStore.updateMeltMaterial(id, data),
-    'dsUpdateMeltMaterial'
+    'dsUpdateMeltMaterial',
+    { table: 'melt_materials', action: 'update' }
   );
 }
 
@@ -888,7 +908,8 @@ export async function dsDeleteMeltMaterial(id: string): Promise<boolean> {
   return withRLSFallback(
     () => sbStore.sbDeleteMeltMaterial(id),
     () => localStore.deleteMeltMaterial(id),
-    'dsDeleteMeltMaterial'
+    'dsDeleteMeltMaterial',
+    { table: 'melt_materials', action: 'delete' }
   );
 }
 
@@ -907,7 +928,8 @@ export async function dsCreateMeltChemistry(data: Omit<MeltChemistry, 'id'>): Pr
   return withRLSFallback(
     () => sbStore.sbCreateMeltChemistry(data),
     () => localStore.createMeltChemistry(data),
-    'dsCreateMeltChemistry'
+    'dsCreateMeltChemistry',
+    { table: 'melt_chemistry', action: 'create' }
   );
 }
 
@@ -915,7 +937,8 @@ export async function dsUpdateMeltChemistry(id: string, data: Partial<Omit<MeltC
   return withRLSFallback(
     () => sbStore.sbUpdateMeltChemistry(id, data),
     () => localStore.updateMeltChemistry(id, data),
-    'dsUpdateMeltChemistry'
+    'dsUpdateMeltChemistry',
+    { table: 'melt_chemistry', action: 'update' }
   );
 }
 
@@ -923,7 +946,8 @@ export async function dsDeleteMeltChemistry(id: string): Promise<boolean> {
   return withRLSFallback(
     () => sbStore.sbDeleteMeltChemistry(id),
     () => localStore.deleteMeltChemistry(id),
-    'dsDeleteMeltChemistry'
+    'dsDeleteMeltChemistry',
+    { table: 'melt_chemistry', action: 'delete' }
   );
 }
 
@@ -955,7 +979,8 @@ export async function dsCreateMeltPouring(data: Omit<sbStore.MeltPouring, 'id' |
       localStorage.setItem(key, JSON.stringify(all));
       return entry;
     },
-    'dsCreateMeltPouring'
+    'dsCreateMeltPouring',
+    { table: 'melt_pourings', action: 'create' }
   );
 }
 
@@ -972,7 +997,8 @@ export async function dsUpdateMeltPouring(id: string, updates: Partial<sbStore.M
       localStorage.setItem(key, JSON.stringify(all));
       return all[idx];
     },
-    'dsUpdateMeltPouring'
+    'dsUpdateMeltPouring',
+    { table: 'melt_pourings', action: 'update' }
   );
 }
 
@@ -987,7 +1013,8 @@ export async function dsDeleteMeltPouring(id: string): Promise<boolean> {
       localStorage.setItem(key, JSON.stringify(filtered));
       return filtered.length < all.length;
     },
-    'dsDeleteMeltPouring'
+    'dsDeleteMeltPouring',
+    { table: 'melt_pourings', action: 'delete' }
   );
 }
 
@@ -1018,7 +1045,8 @@ export async function dsCreateMeltPresetRecipe(data: { name: string; materials: 
       localStorage.setItem(key, JSON.stringify(all));
       return entry;
     },
-    'dsCreateMeltPresetRecipe'
+    'dsCreateMeltPresetRecipe',
+    { table: 'melt_preset_recipes', action: 'create' }
   );
 }
 
@@ -1035,7 +1063,8 @@ export async function dsUpdateMeltPresetRecipe(id: string, updates: Partial<{ na
       localStorage.setItem(key, JSON.stringify(all));
       return all[idx];
     },
-    'dsUpdateMeltPresetRecipe'
+    'dsUpdateMeltPresetRecipe',
+    { table: 'melt_preset_recipes', action: 'update' }
   );
 }
 
@@ -1050,7 +1079,8 @@ export async function dsDeleteMeltPresetRecipe(id: string): Promise<boolean> {
       localStorage.setItem(key, JSON.stringify(filtered));
       return filtered.length < all.length;
     },
-    'dsDeleteMeltPresetRecipe'
+    'dsDeleteMeltPresetRecipe',
+    { table: 'melt_preset_recipes', action: 'delete' }
   );
 }
 
@@ -1069,7 +1099,8 @@ export async function dsCreateQualityInspection(data: Omit<QualityInspection, 'i
   return withRLSFallback(
     () => sbStore.sbCreateQualityInspection(data),
     () => localStore.createQualityInspection(data),
-    'dsCreateQualityInspection'
+    'dsCreateQualityInspection',
+    { table: 'quality_inspections', action: 'create' }
   );
 }
 
@@ -1077,7 +1108,8 @@ export async function dsUpdateQualityInspection(id: string, data: Partial<Qualit
   await withRLSFallback(
     async () => { await sbStore.sbUpdateQualityInspection(id, data); },
     () => { localStore.updateQualityInspection(id, data); },
-    'dsUpdateQualityInspection'
+    'dsUpdateQualityInspection',
+    { table: 'quality_inspections', action: 'update' }
   );
 }
 
@@ -1085,7 +1117,8 @@ export async function dsDeleteQualityInspection(id: string): Promise<void> {
   await withRLSFallback(
     async () => { await sbStore.sbDeleteQualityInspection(id); },
     () => { localStore.deleteQualityInspection(id); },
-    'dsDeleteQualityInspection'
+    'dsDeleteQualityInspection',
+    { table: 'quality_inspections', action: 'delete' }
   );
 }
 
@@ -1104,7 +1137,8 @@ export async function dsCreateDefectRecord(data: Omit<DefectRecord, 'id' | 'crea
   return withRLSFallback(
     () => sbStore.sbCreateDefectRecord(data),
     () => localStore.createDefectRecord(data),
-    'dsCreateDefectRecord'
+    'dsCreateDefectRecord',
+    { table: 'defect_records', action: 'create' }
   );
 }
 
@@ -1123,7 +1157,8 @@ export async function dsCreateCAPARecord(data: Omit<CAPARecord, 'id' | 'capa_no'
   return withRLSFallback(
     () => sbStore.sbCreateCAPARecord(data),
     () => localStore.createCAPARecord(data),
-    'dsCreateCAPARecord'
+    'dsCreateCAPARecord',
+    { table: 'capa_records', action: 'create' }
   );
 }
 
@@ -1131,7 +1166,8 @@ export async function dsUpdateCAPARecord(id: string, data: Partial<CAPARecord>):
   await withRLSFallback(
     async () => { await sbStore.sbUpdateCAPARecord(id, data); },
     () => { localStore.updateCAPARecord(id, data); },
-    'dsUpdateCAPARecord'
+    'dsUpdateCAPARecord',
+    { table: 'capa_records', action: 'update' }
   );
 }
 
@@ -1150,7 +1186,8 @@ export async function dsCreateWarehouseEntry(data: { batch_id: string; batch_no:
   return withRLSFallback(
     () => sbStore.sbCreateWarehouseEntry(data),
     () => localStore.createWarehouseEntry(data),
-    'dsCreateWarehouseEntry'
+    'dsCreateWarehouseEntry',
+    { table: 'warehouse_entries', action: 'create' }
   );
 }
 
@@ -1169,7 +1206,8 @@ export async function dsCreateShipmentOrder(data: { work_order_id: string; order
   return withRLSFallback(
     () => sbStore.sbCreateShipmentOrder(data),
     () => localStore.createShipmentOrder(data),
-    'dsCreateShipmentOrder'
+    'dsCreateShipmentOrder',
+    { table: 'shipment_orders', action: 'create' }
   );
 }
 
@@ -1177,7 +1215,8 @@ export async function dsUpdateShipmentOrder(id: string, data: Partial<ShipmentOr
   return withRLSFallback(
     () => sbStore.sbUpdateShipmentOrder(id, data),
     () => localStore.updateShipmentOrder(id, data),
-    'dsUpdateShipmentOrder'
+    'dsUpdateShipmentOrder',
+    { table: 'shipment_orders', action: 'update' }
   );
 }
 
@@ -1196,7 +1235,8 @@ export async function dsCreatePattern(data: Omit<Pattern, 'id' | 'pattern_no' | 
   return withRLSFallback(
     () => sbStore.sbCreatePattern(data),
     () => localStore.createPattern(data),
-    'dsCreatePattern'
+    'dsCreatePattern',
+    { table: 'patterns', action: 'create' }
   );
 }
 
@@ -1204,7 +1244,8 @@ export async function dsUpdatePattern(id: string, updates: Partial<Pattern>): Pr
   await withRLSFallback(
     async () => { await sbStore.sbUpdatePattern(id, updates); },
     () => { localStore.updatePattern(id, updates); },
-    'dsUpdatePattern'
+    'dsUpdatePattern',
+    { table: 'patterns', action: 'update' }
   );
 }
 
@@ -1212,7 +1253,8 @@ export async function dsDeletePattern(id: string): Promise<void> {
   await withRLSFallback(
     async () => { await sbStore.sbDeletePattern(id); },
     () => { localStore.deletePattern(id); },
-    'dsDeletePattern'
+    'dsDeletePattern',
+    { table: 'patterns', action: 'delete' }
   );
 }
 
@@ -1228,7 +1270,8 @@ export async function dsCreatePatternVersion(data: Omit<PatternVersion, 'id' | '
   return withRLSFallback(
     () => sbStore.sbCreatePatternVersion(data),
     () => localStore.createPatternVersion(data),
-    'dsCreatePatternVersion'
+    'dsCreatePatternVersion',
+    { table: 'pattern_versions', action: 'create' }
   );
 }
 
@@ -1244,7 +1287,8 @@ export async function dsCreatePatternHistory(data: Omit<PatternHistory, 'id' | '
   return withRLSFallback(
     () => sbStore.sbCreatePatternHistory(data),
     () => localStore.createPatternHistory(data),
-    'dsCreatePatternHistory'
+    'dsCreatePatternHistory',
+    { table: 'pattern_history', action: 'create' }
   );
 }
 
@@ -1260,7 +1304,8 @@ export async function dsCreatePatternMaintenance(data: Omit<PatternMaintenance, 
   return withRLSFallback(
     () => sbStore.sbCreatePatternMaintenance(data),
     () => localStore.createPatternMaintenance(data),
-    'dsCreatePatternMaintenance'
+    'dsCreatePatternMaintenance',
+    { table: 'pattern_maintenance', action: 'create' }
   );
 }
 
@@ -1276,7 +1321,8 @@ export async function dsCreatePatternLoan(data: Omit<PatternLoan, 'id' | 'create
   return withRLSFallback(
     () => sbStore.sbCreatePatternLoan(data),
     () => localStore.createPatternLoan(data),
-    'dsCreatePatternLoan'
+    'dsCreatePatternLoan',
+    { table: 'pattern_loans', action: 'create' }
   );
 }
 
@@ -1284,7 +1330,8 @@ export async function dsReturnPatternLoan(loanId: string): Promise<void> {
   await withRLSFallback(
     async () => { await sbStore.sbReturnPatternLoan(loanId); },
     () => { localStore.returnPatternLoan(loanId); },
-    'dsReturnPatternLoan'
+    'dsReturnPatternLoan',
+    { table: 'pattern_loans', action: 'update' }
   );
 }
 

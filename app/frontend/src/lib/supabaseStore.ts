@@ -16,24 +16,54 @@ export async function checkSupabaseConnection(): Promise<boolean> {
     const url = import.meta.env.VITE_SUPABASE_URL;
     const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
     if (!url || !key) return false;
-    // Try a simple query - if RLS blocks it, we'll get a specific error
-    const { error } = await supabase.from('customers').select('id').limit(1);
-    if (error) {
-      // If the error is about the table not existing, connection works but schema not set up
-      if (error.code === '42P01') {
-        console.warn('[Supabase] 連接成功但資料表尚未建立，請執行 SQL schema');
-        return false;
-      }
-      // RLS permission denied - connection works but policies need fixing
-      if (error.code === '42501' || error.message?.includes('permission denied')) {
-        console.warn('[Supabase] 連接成功但 RLS 政策需要更新，請執行 supabase_rls_fix.sql');
-        return false;
-      }
-      console.warn('[Supabase] 連接錯誤:', error.message);
+
+    // Use a RLS-independent method to check connectivity.
+    // Previously we used `customers.select('id').limit(1)` which would fail
+    // if RLS blocked SELECT, causing the entire system to enter offline mode
+    // even though INSERT/UPDATE operations might work fine.
+    //
+    // Strategy: Use Supabase auth API (not affected by table RLS) to verify
+    // the connection is alive. If auth responds, the connection is good.
+    // Individual table operations will handle RLS errors gracefully via
+    // withRLSFallback's catch block.
+    const { error: authError } = await supabase.auth.getSession();
+    if (authError) {
+      // Auth API error could mean network issue or invalid credentials
+      console.warn('[Supabase] Auth API 錯誤，可能是網路問題:', authError.message);
       return false;
     }
-    // Connection is good if read succeeds - skip write test to avoid
-    // false negatives from RLS policies on empty result sets
+
+    // Auth responded successfully - connection is alive.
+    // Optionally verify the database is reachable with a lightweight query
+    // that doesn't depend on business table RLS policies.
+    // Use a simple RPC or system table if available, otherwise just trust auth.
+    try {
+      // Try a simple SELECT on a table - but treat RLS errors as "connected"
+      // because the network works, just permissions need fixing.
+      const { error } = await supabase.from('customers').select('id').limit(1);
+      if (error) {
+        if (error.code === '42P01') {
+          // Table doesn't exist - connection works but schema not set up
+          console.warn('[Supabase] 連接成功但資料表尚未建立，請執行 SQL schema');
+          // Still return true - connection is alive, schema issue is separate
+          return true;
+        }
+        if (error.code === '42501' || error.message?.includes('permission denied')) {
+          // RLS blocks SELECT - but connection works! Let writes attempt and
+          // fail gracefully via withRLSFallback if needed.
+          console.log('[Supabase] 連接成功（RLS 限制 SELECT，寫入將嘗試執行）');
+          return true;
+        }
+        // Other errors - still connected if auth worked
+        console.warn('[Supabase] 資料表查詢有錯誤但連線正常:', error.message);
+        return true;
+      }
+    } catch {
+      // Table query failed but auth worked - connection is alive
+      console.warn('[Supabase] 資料表查詢異常但 auth 連線正常');
+      return true;
+    }
+
     return true;
   } catch (e) {
     console.warn('[Supabase] 連接失敗:', e);
