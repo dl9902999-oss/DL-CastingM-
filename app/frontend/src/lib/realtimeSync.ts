@@ -113,8 +113,9 @@ function notifyListeners(table: string) {
  * Pull fresh data from Supabase for a specific table and update localStorage.
  * Strategy:
  * - If Supabase has data, it is authoritative - replace localStorage entirely.
- * - If Supabase returns empty array, also replace localStorage (supports delete sync).
- *   Exception: 'users_profile' table keeps local data if server is empty (demo users).
+ * - If Supabase returns empty array AND local has data, apply safety checks:
+ *   - Only clear local data if the empty result is confirmed (double-check query).
+ *   - Exception: 'users_profile' table always keeps local data if server is empty.
  * - On error, keep existing localStorage intact.
  */
 async function refreshLocalFromSupabase(table: string): Promise<void> {
@@ -131,14 +132,49 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
       // Supabase has data - it is authoritative, replace localStorage
       localStorage.setItem(storageKey, JSON.stringify(data));
     } else if (data && data.length === 0) {
-      // Server returned empty - for most tables, this means all records were deleted
-      // Exception: keep demo users if users_profile is empty on server
+      // Server returned empty - apply safety checks before clearing local data
       if (table === 'users_profile') {
-        // Keep existing localStorage intact for users
+        // Always keep existing localStorage intact for users
         return;
       }
-      // For other tables, clear localStorage to reflect server state (delete sync)
-      localStorage.setItem(storageKey, JSON.stringify([]));
+
+      // Safety check: if local has data but server says empty, verify with a count query
+      const localRaw = localStorage.getItem(storageKey);
+      const localItems = localRaw ? JSON.parse(localRaw) : [];
+
+      if (localItems.length > 0) {
+        // Local has data but server returned empty - this could be:
+        // 1. RLS blocking the query (session expired)
+        // 2. Legitimate deletion from another device
+        // 3. Upload not yet committed
+        // Perform a confirmation query with count to distinguish
+        const { count, error: countError } = await supabase
+          .from(table)
+          .select('*', { count: 'exact', head: true });
+
+        if (countError) {
+          // Query failed - likely RLS/auth issue, keep local data safe
+          console.warn(`[RealtimeSync] Count check failed for ${table}, keeping local data:`, countError.message);
+          return;
+        }
+
+        if (count === 0) {
+          // Confirmed: server truly has 0 records. Safe to clear local.
+          console.log(`[RealtimeSync] Confirmed ${table} is empty on server, clearing local (had ${localItems.length} items)`);
+          localStorage.setItem(storageKey, JSON.stringify([]));
+        } else if (count === null) {
+          // Count returned null - ambiguous, keep local data
+          console.warn(`[RealtimeSync] Ambiguous count for ${table} (null), keeping local data`);
+          return;
+        } else {
+          // Count > 0 but select returned empty - RLS issue, keep local data
+          console.warn(`[RealtimeSync] ${table}: count=${count} but select returned empty. Likely RLS issue, keeping local data.`);
+          return;
+        }
+      } else {
+        // Local is also empty, nothing to protect
+        localStorage.setItem(storageKey, JSON.stringify([]));
+      }
     }
   } catch (e) {
     console.warn(`[RealtimeSync] Exception refreshing ${table}:`, e);

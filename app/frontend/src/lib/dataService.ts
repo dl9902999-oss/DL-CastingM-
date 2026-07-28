@@ -386,6 +386,90 @@ interface PendingSyncMeta {
   action: 'create' | 'update' | 'delete';
 }
 
+// Map table names to localStorage keys
+const LOCAL_STORAGE_KEY_MAP: Record<string, string> = {
+  customers: 'foundry_customers',
+  work_orders: 'foundry_work_orders',
+  molding_batches: 'foundry_molding_batches',
+  melting_records: 'foundry_melting_records',
+  quality_inspections: 'foundry_quality_inspections',
+  defect_records: 'foundry_defect_records',
+  capa_records: 'foundry_capa_records',
+  warehouse_entries: 'foundry_warehouse_entries',
+  shipment_orders: 'foundry_shipment_orders',
+  melt_records: 'foundry_melt_records',
+  melt_materials: 'foundry_melt_materials',
+  melt_chemistry: 'foundry_melt_chemistry',
+  patterns: 'foundry_patterns',
+  pattern_versions: 'foundry_pattern_versions',
+  pattern_history: 'foundry_pattern_history',
+  pattern_maintenance: 'foundry_pattern_maintenance',
+  pattern_loans: 'foundry_pattern_loans',
+  users: 'foundry_users',
+};
+
+/**
+ * After a successful Supabase write, sync the result back to localStorage.
+ * This ensures that if subsequent reads fall back to localStorage (due to
+ * network issues, RLS, or timing), the local copy is up-to-date.
+ */
+function syncResultToLocalStorage<T>(table: string, action: string, result: T): void {
+  const storageKey = LOCAL_STORAGE_KEY_MAP[table];
+  if (!storageKey) {
+    console.warn(`[DataService] syncResultToLocalStorage: unknown table "${table}"`);
+    return;
+  }
+
+  const raw = localStorage.getItem(storageKey);
+  let items: Record<string, unknown>[] = [];
+  try {
+    items = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(items)) items = [];
+  } catch {
+    items = [];
+  }
+
+  if (action === 'create') {
+    // Add the new item to the local array
+    if (result && typeof result === 'object' && 'id' in (result as Record<string, unknown>)) {
+      const newItem = result as Record<string, unknown>;
+      // Avoid duplicates
+      const existingIdx = items.findIndex(i => i.id === newItem.id);
+      if (existingIdx >= 0) {
+        items[existingIdx] = newItem;
+      } else {
+        items.push(newItem);
+      }
+      localStorage.setItem(storageKey, JSON.stringify(items));
+    }
+  } else if (action === 'update') {
+    // Update the existing item in the local array
+    if (result && typeof result === 'object' && 'id' in (result as Record<string, unknown>)) {
+      const updatedItem = result as Record<string, unknown>;
+      const idx = items.findIndex(i => i.id === updatedItem.id);
+      if (idx >= 0) {
+        items[idx] = updatedItem;
+      } else {
+        // Item not found locally, add it
+        items.push(updatedItem);
+      }
+      localStorage.setItem(storageKey, JSON.stringify(items));
+    }
+  } else if (action === 'delete') {
+    // For delete, result might be void/boolean. We need the ID from the operation context.
+    // Since we don't have the ID directly here, we handle delete differently:
+    // The delete operation already removed from Supabase; localStorage will be synced
+    // on next fullSyncFromSupabase. This is acceptable because delete won't cause
+    // "data disappearing" - the item is intentionally removed.
+    // However, if result contains an id, remove it from local.
+    if (result && typeof result === 'object' && 'id' in (result as Record<string, unknown>)) {
+      const deletedId = (result as Record<string, unknown>).id;
+      const filtered = items.filter(i => i.id !== deletedId);
+      localStorage.setItem(storageKey, JSON.stringify(filtered));
+    }
+  }
+}
+
 async function withRLSFallback<T>(
   sbOperation: () => Promise<T>,
   localFallback: () => T,
@@ -403,7 +487,22 @@ async function withRLSFallback<T>(
   }
 
   try {
-    return await withTimeout(sbOperation(), OPERATION_TIMEOUT, operationName);
+    const result = await withTimeout(sbOperation(), OPERATION_TIMEOUT, operationName);
+    // IMPORTANT: Sync the Supabase result back to localStorage to keep local copy up-to-date.
+    // This prevents data loss if subsequent reads fall back to localStorage.
+    if (syncMeta) {
+      try {
+        if (syncMeta.action === 'delete') {
+          // For delete, also execute localFallback to remove from localStorage
+          localFallback();
+        } else {
+          syncResultToLocalStorage(syncMeta.table, syncMeta.action, result);
+        }
+      } catch (e) {
+        console.warn(`[DataService] ${operationName}: failed to sync result to localStorage:`, e);
+      }
+    }
+    return result;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (

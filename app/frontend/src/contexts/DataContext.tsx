@@ -123,21 +123,28 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     };
   }, [isOnline, isLoading]);
 
-  // When transitioning from offline to online, perform full upload of local data
+  // When transitioning from offline to online, perform full upload FIRST, then pull fresh data
   useEffect(() => {
     if (isOnline === true && wasOffline.current) {
       wasOffline.current = false;
-      // Upload pending sync queue
-      performPendingSync('auto_recovery').then(() => {
-        // Also do a full upload to ensure all localStorage data is synced
-        forceFullUpload().catch(e => console.warn('[DataContext] forceFullUpload error:', e));
-      });
-      // Pull fresh data from Supabase
-      fullSyncFromSupabase().then(() => {
-        setLastSyncTime(Date.now());
-      });
-      // Re-start realtime sync
-      startRealtimeSync();
+      // Sequential: upload first, then download to avoid race condition
+      (async () => {
+        try {
+          // Step 1: Upload pending sync queue
+          await performPendingSync('auto_recovery');
+          // Step 2: Full upload to ensure all localStorage data is synced to cloud
+          await forceFullUpload();
+          // Step 3: Wait a moment for server to commit writes
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          // Step 4: NOW pull fresh data from Supabase (safe because upload is done)
+          await fullSyncFromSupabase();
+          setLastSyncTime(Date.now());
+        } catch (e) {
+          console.warn('[DataContext] Recovery sync error:', e);
+        }
+        // Re-start realtime sync
+        startRealtimeSync();
+      })();
     }
   }, [isOnline, performPendingSync]);
 
@@ -180,17 +187,23 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (connected) {
-        // Perform initial full sync from Supabase to ensure localStorage is up-to-date
+        // Perform initial sync - upload pending first to avoid data loss
         if (!initialSyncDone.current) {
           initialSyncDone.current = true;
-          await fullSyncFromSupabase();
-          setLastSyncTime(Date.now());
 
-          // If there are pending items from a previous offline session, sync them now
+          // Step 1: If there are pending items from a previous offline session, upload them FIRST
           const pending = getPendingSyncCount();
           if (pending > 0) {
             await performPendingSync('initial');
+            // Also force full upload to ensure all local data reaches cloud
+            await forceFullUpload();
+            // Wait for server to commit
+            await new Promise(resolve => setTimeout(resolve, 800));
           }
+
+          // Step 2: NOW pull fresh data from Supabase (safe because local data is already uploaded)
+          await fullSyncFromSupabase();
+          setLastSyncTime(Date.now());
         }
 
         // Start real-time subscription
@@ -225,7 +238,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       if (connected) {
         // Upload pending local data first
         await performPendingSync('manual_refresh');
-        // Then pull fresh data
+        // Force full upload to ensure all local data reaches cloud
+        await forceFullUpload();
+        // Wait for server to commit before pulling
+        await new Promise(resolve => setTimeout(resolve, 500));
+        // Then pull fresh data (safe because upload is done)
         await fullSyncFromSupabase();
         // Re-start realtime sync if it was stopped
         startRealtimeSync();
