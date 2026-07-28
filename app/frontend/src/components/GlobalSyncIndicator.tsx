@@ -136,8 +136,19 @@ export function GlobalSyncIndicator() {
           <div className="h-4 w-px bg-zinc-600" />
           <div className="flex items-center gap-1">
             <AlertTriangle className="h-3.5 w-3.5 text-red-400" />
-            <span className="text-red-400">寫入失敗</span>
+            <span className="text-red-400">
+              {state.reason === 'rls_blocked' ? '權限受限（資料已暫存本地）' : '寫入失敗（資料已暫存本地）'}
+            </span>
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs text-red-300 hover:text-red-100 hover:bg-red-900/30"
+            onClick={checkSync}
+            disabled={state.checking}
+          >
+            重新連線
+          </Button>
         </>
       )}
 
