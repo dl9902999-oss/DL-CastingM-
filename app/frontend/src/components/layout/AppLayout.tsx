@@ -4,6 +4,7 @@ import { useDataConnection } from '@/contexts/DataContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import { GlobalSyncIndicator } from '@/components/GlobalSyncIndicator';
 import {
   LayoutDashboard,
   ClipboardList,
@@ -168,6 +169,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
         {/* Main Content */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
+          {/* 全域同步狀態指示器 - 所有頁面共用 */}
+          <div className="mb-4">
+            <GlobalSyncIndicator />
+          </div>
           {children}
         </main>
       </div>

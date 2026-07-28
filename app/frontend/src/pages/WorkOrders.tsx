@@ -14,7 +14,6 @@ import { dsGetCustomers, dsGetWorkOrders, dsCreateWorkOrder, dsUpdateWorkOrder, 
 import { Plus, Search, Edit, Image, FileImage, X, Trash2, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { onWorkOrderChange, WorkOrderChangeEvent } from '@/lib/realtimeSync';
-import { WorkOrderSyncIndicator } from '@/components/WorkOrderSyncIndicator';
 
 const MOLD_SUPPLY_OPTIONS: MoldSupply[] = ['客戶提供', '公司自有', '代客製作'];
 const MOLD_TYPE_OPTIONS: MoldType[] = ['上下模', '單面模', '現板模', '保模', '中板模', '砂心模', '其他'];
@@ -629,9 +628,6 @@ export default function WorkOrders() {
   return (
     <AppLayout>
       <div className="space-y-4">
-        {/* Sync status indicator for cross-device confirmation */}
-        <WorkOrderSyncIndicator />
-
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">工單管理</h1>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
