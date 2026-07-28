@@ -8,6 +8,7 @@
 import * as localStore from './store';
 import * as sbStore from './supabaseStore';
 import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, MeltChemistry, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder, UserProfile, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
+import { markRecentWrite } from './realtimeSync';
 
 // Connection state
 let _isConnected: boolean | null = null;
@@ -530,6 +531,9 @@ async function withRLSFallback<T>(
     // IMPORTANT: Sync the Supabase result back to localStorage to keep local copy up-to-date.
     // This prevents data loss if subsequent reads fall back to localStorage.
     if (syncMeta) {
+      // Mark this table as having a recent write - protects against
+      // refreshLocalFromSupabase clearing local data due to RLS blocking SELECT
+      markRecentWrite(syncMeta.table);
       try {
         if (syncMeta.action === 'delete') {
           // For delete, also execute localFallback to remove from localStorage
@@ -599,7 +603,21 @@ async function withReadFallback<T>(
   if (!connected) return localFallback();
 
   try {
-    return await withTimeout(sbOperation(), OPERATION_TIMEOUT, operationName);
+    const result = await withTimeout(sbOperation(), OPERATION_TIMEOUT, operationName);
+    // Safety check: if Supabase returned an empty array but localStorage has data,
+    // this is likely an RLS issue (SELECT blocked returns empty, not error).
+    // In this case, prefer localStorage to prevent data disappearing.
+    if (Array.isArray(result) && result.length === 0) {
+      const localResult = localFallback();
+      if (Array.isArray(localResult) && localResult.length > 0) {
+        console.warn(
+          `[DataService] ${operationName}: Supabase returned empty but localStorage has ${localResult.length} items. ` +
+          `Using localStorage to prevent data loss (possible RLS SELECT issue).`
+        );
+        return localResult;
+      }
+    }
+    return result;
   } catch (err) {
     console.warn(`[DataService] ${operationName} failed, falling back to localStorage:`, err);
     return localFallback();

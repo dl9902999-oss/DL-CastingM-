@@ -341,8 +341,25 @@ export default function WorkOrders() {
       } else if (event.eventType === 'DELETE') {
         toast({ title: `🗑️ 其他裝置刪除了工單${label}`, description: '列表已自動更新' });
       }
-      // Refresh local list
-      dsGetWorkOrders().then(wo => setOrders(wo)).catch(() => {});
+      // Refresh local list - merge with existing to prevent data loss from RLS/timing issues
+      dsGetWorkOrders().then(wo => {
+        setOrders(prev => {
+          if (wo.length === 0 && prev.length > 0) {
+            // Supabase returned empty but we have local data - keep existing to prevent data loss
+            console.warn('[WorkOrders] Realtime refresh returned empty, keeping existing list');
+            return prev;
+          }
+          // For INSERT events, ensure the new record from the event is included
+          if (event.eventType === 'INSERT' && event.newRecord?.id) {
+            const hasNew = wo.some(o => o.id === event.newRecord?.id);
+            if (!hasNew && event.newRecord) {
+              // The new record wasn't in the SELECT result yet - add it
+              return [event.newRecord as unknown as WorkOrder, ...wo];
+            }
+          }
+          return wo;
+        });
+      }).catch(() => {});
     });
     return unsubscribe;
   }, [toast]);
@@ -497,7 +514,11 @@ export default function WorkOrders() {
 
       const created = await dsCreateWorkOrder(cleanedData);
       const [wo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
-      setOrders(wo);
+      // Safety: ensure the newly created work order is present in the list.
+      // If dsGetWorkOrders() missed it due to RLS/timing, merge it in.
+      const hasCreated = wo.some(o => o.id === created.id);
+      const finalOrders = hasCreated ? wo : [created, ...wo];
+      setOrders(finalOrders);
       setBatches(mb);
       setIsCreateOpen(false);
       resetForm();
@@ -546,9 +567,20 @@ export default function WorkOrders() {
   const handleUpdate = async () => {
     if (!editOrder) return;
     try {
-      await dsUpdateWorkOrder(editOrder.id, editOrder);
+      const updated = await dsUpdateWorkOrder(editOrder.id, editOrder);
       const [wo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
-      setOrders(wo);
+      // Safety: ensure the updated work order is present in the list
+      let finalOrders = wo;
+      if (updated) {
+        const hasUpdated = wo.some(o => o.id === updated.id);
+        if (!hasUpdated) {
+          finalOrders = [updated, ...wo];
+        } else {
+          // Ensure the latest version is reflected
+          finalOrders = wo.map(o => o.id === updated.id ? updated : o);
+        }
+      }
+      setOrders(finalOrders);
       setBatches(mb);
       setEditOrder(null);
       const status = getConnectionStatus();

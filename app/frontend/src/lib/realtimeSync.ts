@@ -51,6 +51,21 @@ const TABLE_TO_STORAGE_KEY: Record<string, string> = {
 
 type ChangeListener = (table: string) => void;
 
+// Track recent write timestamps per table to protect against premature clearing
+const _recentWriteTimestamps: Record<string, number> = {};
+const RECENT_WRITE_PROTECTION_WINDOW = 10_000; // 10 seconds
+
+/**
+ * Mark a table as having a recent write operation.
+ * Called by dataService after successful Supabase writes.
+ * This prevents refreshLocalFromSupabase from clearing local data
+ * during the protection window (guards against RLS blocking SELECT
+ * while INSERT succeeded).
+ */
+export function markRecentWrite(table: string): void {
+  _recentWriteTimestamps[table] = Date.now();
+}
+
 // Cross-device work order change event
 export type WorkOrderChangeEvent = {
   eventType: 'INSERT' | 'UPDATE' | 'DELETE';
@@ -159,7 +174,18 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
         }
 
         if (count === 0) {
-          // Confirmed: server truly has 0 records. Safe to clear local.
+          // Before clearing, check if there was a recent write to this table.
+          // If so, the "0 count" is likely RLS blocking the count query too
+          // (RLS returns 0 for count when SELECT is blocked, not null).
+          const lastWrite = _recentWriteTimestamps[table] || 0;
+          if (Date.now() - lastWrite < RECENT_WRITE_PROTECTION_WINDOW) {
+            console.warn(
+              `[RealtimeSync] ${table}: count=0 but recent write detected (${Date.now() - lastWrite}ms ago). ` +
+              `Likely RLS blocking both SELECT and count. Keeping local data safe.`
+            );
+            return;
+          }
+          // Confirmed: server truly has 0 records and no recent writes. Safe to clear local.
           console.log(`[RealtimeSync] Confirmed ${table} is empty on server, clearing local (had ${localItems.length} items)`);
           localStorage.setItem(storageKey, JSON.stringify([]));
         } else if (count === null) {
