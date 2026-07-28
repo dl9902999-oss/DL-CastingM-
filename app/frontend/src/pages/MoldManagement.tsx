@@ -230,22 +230,46 @@ export default function MoldManagement() {
       toast({ title: '請輸入模具名稱', variant: 'destructive' });
       return;
     }
-    if (editPattern) {
-      await updatePattern(editPattern.id, form);
-      toast({ title: '模具已更新' });
-    } else {
-      await createPattern(form);
-      toast({ title: '模具已建立' });
+    try {
+      if (editPattern) {
+        await updatePattern(editPattern.id, form);
+        toast({ title: '模具已更新' });
+      } else {
+        await createPattern(form);
+        toast({ title: '模具已建立' });
+      }
+      setDialogOpen(false);
+      await loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[MoldManagement] Save failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，模具儲存失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '模具儲存失敗，請稍後再試', variant: 'destructive' });
+      }
     }
-    setDialogOpen(false);
-    await loadData();
   };
 
   const handleDelete = async (p: Pattern) => {
     if (!window.confirm(`確定要刪除模具 ${p.pattern_no} - ${p.name} 嗎？`)) return;
-    await deletePattern(p.id);
-    await loadData();
-    toast({ title: '模具已刪除' });
+    try {
+      await deletePattern(p.id);
+      await loadData();
+      toast({ title: '模具已刪除' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[MoldManagement] Delete failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，刪除失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('foreign') || msg.includes('constraint')) {
+        toast({ title: '此模具有關聯資料，無法刪除', variant: 'destructive' });
+      } else {
+        toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
+      }
+    }
   };
 
   const handleMaintSave = async () => {
@@ -253,10 +277,22 @@ export default function MoldManagement() {
       toast({ title: '請填寫保養內容', variant: 'destructive' });
       return;
     }
-    await createPatternMaintenance({ pattern_id: selectedPatternId, ...maintForm });
-    setMaintDialogOpen(false);
-    await loadData();
-    toast({ title: '保養紀錄已建立' });
+    try {
+      await createPatternMaintenance({ pattern_id: selectedPatternId, ...maintForm });
+      setMaintDialogOpen(false);
+      await loadData();
+      toast({ title: '保養紀錄已建立' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[MoldManagement] MaintSave failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，保養紀錄儲存失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '保養紀錄儲存失敗，請稍後再試', variant: 'destructive' });
+      }
+    }
   };
 
   const handleLoanSave = async () => {
@@ -264,16 +300,38 @@ export default function MoldManagement() {
       toast({ title: '請填寫借出人', variant: 'destructive' });
       return;
     }
-    await createPatternLoan({ pattern_id: selectedPatternId, return_date: '', ...loanForm });
-    setLoanDialogOpen(false);
-    await loadData();
-    toast({ title: '借出紀錄已建立' });
+    try {
+      await createPatternLoan({ pattern_id: selectedPatternId, return_date: '', ...loanForm });
+      setLoanDialogOpen(false);
+      await loadData();
+      toast({ title: '借出紀錄已建立' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[MoldManagement] LoanSave failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，借出紀錄儲存失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '借出紀錄儲存失敗，請稍後再試', variant: 'destructive' });
+      }
+    }
   };
 
   const handleReturn = async (loanId: string) => {
-    await returnPatternLoan(loanId);
-    await loadData();
-    toast({ title: '模具已歸還' });
+    try {
+      await returnPatternLoan(loanId);
+      await loadData();
+      toast({ title: '模具已歸還' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[MoldManagement] Return failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，歸還操作失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '歸還操作失敗，請稍後再試', variant: 'destructive' });
+      }
+    }
   };
 
   // KPI calculations

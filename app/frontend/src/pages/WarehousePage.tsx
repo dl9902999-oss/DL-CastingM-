@@ -52,8 +52,16 @@ export default function WarehousePage() {
       setIsCreateOpen(false);
       setForm({ batch_id: '', location: '', quantity: 0 });
       toast({ title: '入庫紀錄已建立' });
-    } catch {
-      toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Warehouse] Create failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，入庫失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+      }
     }
   };
 

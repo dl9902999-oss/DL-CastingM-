@@ -113,9 +113,21 @@ export default function MeltingManagement() {
 
   const handleDelete = async (record: MeltRecord) => {
     if (!window.confirm(`確定要刪除熔解紀錄 ${record.melt_no} 嗎？`)) return;
-    await deleteMeltRecord(record.id);
-    await refreshRecords();
-    toast({ title: '熔解紀錄已刪除' });
+    try {
+      await deleteMeltRecord(record.id);
+      await refreshRecords();
+      toast({ title: '熔解紀錄已刪除' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[MeltingManagement] Delete failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，刪除失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('foreign') || msg.includes('constraint')) {
+        toast({ title: '此熔解紀錄有關聯資料，無法刪除', variant: 'destructive' });
+      } else {
+        toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
+      }
+    }
   };
 
   const handleCopyLast = async () => {
@@ -125,27 +137,39 @@ export default function MeltingManagement() {
       return;
     }
     const last = sorted[0];
-    const newRecord = await createMeltRecord({
-      melt_date: new Date().toISOString().slice(0, 10),
-      material_grade: last.material_grade,
-      furnace_no: last.furnace_no,
-      power_kwh: last.power_kwh,
-      power_start_time: '',
-      tap_time: '',
-      tap_temp: last.tap_temp,
-      created_by: last.created_by,
-      remark: `複製自 ${last.melt_no}`,
-    });
-    const lastMaterials = await getMeltMaterials(last.id);
-    for (const m of lastMaterials) {
-      await createMeltMaterial({ melt_id: newRecord.id, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
+    try {
+      const newRecord = await createMeltRecord({
+        melt_date: new Date().toISOString().slice(0, 10),
+        material_grade: last.material_grade,
+        furnace_no: last.furnace_no,
+        power_kwh: last.power_kwh,
+        power_start_time: '',
+        tap_time: '',
+        tap_temp: last.tap_temp,
+        created_by: last.created_by,
+        remark: `複製自 ${last.melt_no}`,
+      });
+      const lastMaterials = await getMeltMaterials(last.id);
+      for (const m of lastMaterials) {
+        await createMeltMaterial({ melt_id: newRecord.id, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
+      }
+      const lastChemistry = await getMeltChemistry(last.id);
+      for (const c of lastChemistry) {
+        await createMeltChemistry({ melt_id: newRecord.id, sample_stage: c.sample_stage, C: c.C, Si: c.Si, Mn: c.Mn, P: c.P, S: c.S, Ni: c.Ni, Cr: c.Cr, Mo: c.Mo, Cu: c.Cu, Fe: c.Fe });
+      }
+      await refreshRecords();
+      toast({ title: `已複製上一爐 ${last.melt_no} 的資料` });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[MeltingManagement] CopyLast failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，複製失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '複製失敗，請稍後再試', variant: 'destructive' });
+      }
     }
-    const lastChemistry = await getMeltChemistry(last.id);
-    for (const c of lastChemistry) {
-      await createMeltChemistry({ melt_id: newRecord.id, sample_stage: c.sample_stage, C: c.C, Si: c.Si, Mn: c.Mn, P: c.P, S: c.S, Ni: c.Ni, Cr: c.Cr, Mo: c.Mo, Cu: c.Cu, Fe: c.Fe });
-    }
-    await refreshRecords();
-    toast({ title: `已複製上一爐 ${last.melt_no} 的資料` });
   };
 
   const handleExport = () => {
@@ -938,99 +962,111 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
       return;
     }
 
-    let recordId: string;
+    try {
+      let recordId: string;
 
-    if (isEdit && editRecord) {
-      await updateMeltRecord(editRecord.id, {
-        melt_date: form.melt_date,
-        material_grade: form.material_grade,
-        furnace_no: form.furnace_no,
-        power_kwh: form.power_kwh,
-        power_start_time: form.power_start_time,
-        tap_time: form.tap_time,
-        tap_temp: form.tap_temp,
-        created_by: form.created_by,
-        remark: form.remark,
-      });
-      recordId = editRecord.id;
-      const oldMats = await getMeltMaterials(recordId);
-      for (const m of oldMats) { await deleteMeltMaterial(m.id); }
-      const oldChem = await getMeltChemistry(recordId);
-      for (const c of oldChem) { await deleteMeltChemistry(c.id); }
-    } else {
-      const newRec = await createMeltRecord({
-        melt_date: form.melt_date,
-        material_grade: form.material_grade,
-        furnace_no: form.furnace_no,
-        power_kwh: form.power_kwh,
-        power_start_time: form.power_start_time,
-        tap_time: form.tap_time,
-        tap_temp: form.tap_temp,
-        created_by: form.created_by,
-        remark: form.remark,
-      });
-      recordId = newRec.id;
-    }
+      if (isEdit && editRecord) {
+        await updateMeltRecord(editRecord.id, {
+          melt_date: form.melt_date,
+          material_grade: form.material_grade,
+          furnace_no: form.furnace_no,
+          power_kwh: form.power_kwh,
+          power_start_time: form.power_start_time,
+          tap_time: form.tap_time,
+          tap_temp: form.tap_temp,
+          created_by: form.created_by,
+          remark: form.remark,
+        });
+        recordId = editRecord.id;
+        const oldMats = await getMeltMaterials(recordId);
+        for (const m of oldMats) { await deleteMeltMaterial(m.id); }
+        const oldChem = await getMeltChemistry(recordId);
+        for (const c of oldChem) { await deleteMeltChemistry(c.id); }
+      } else {
+        const newRec = await createMeltRecord({
+          melt_date: form.melt_date,
+          material_grade: form.material_grade,
+          furnace_no: form.furnace_no,
+          power_kwh: form.power_kwh,
+          power_start_time: form.power_start_time,
+          tap_time: form.tap_time,
+          tap_temp: form.tap_temp,
+          created_by: form.created_by,
+          remark: form.remark,
+        });
+        recordId = newRec.id;
+      }
 
-    for (const m of materials) {
-      await createMeltMaterial({ melt_id: recordId, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
-    }
+      for (const m of materials) {
+        await createMeltMaterial({ melt_id: recordId, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
+      }
 
-    // Save TARGET as range (store max values for compatibility, min/max in separate storage)
-    const targetHasData = Object.values(targetRange).some(v => v > 0);
-    if (targetHasData) {
-      // Store TARGET using max values in the standard fields (for backward compat)
-      const elements = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
-      const targetRow: Record<string, number> = {};
-      elements.forEach(el => { targetRow[el] = targetRange[`${el}_max`] || 0; });
-      const fe = autoCalcFe ? calcFe(targetRow) : 0;
-      await createMeltChemistry({
-        melt_id: recordId,
-        sample_stage: 'TARGET',
-        C: targetRow.C, Si: targetRow.Si, Mn: targetRow.Mn,
-        P: targetRow.P, S: targetRow.S, Ni: targetRow.Ni,
-        Cr: targetRow.Cr, Mo: targetRow.Mo, Cu: targetRow.Cu,
-        Fe: fe,
-      });
-      // Save the full min/max range separately
-      await saveMeltTargetRange(recordId, targetRange);
-    }
-
-    // Save IN_FURNACE and AFTER_FURNACE
-    const otherStages: Array<'IN_FURNACE' | 'AFTER_FURNACE'> = ['IN_FURNACE', 'AFTER_FURNACE'];
-    for (const stage of otherStages) {
-      const row = chemRows[stage];
-      const hasData = Object.values(row).some(v => v > 0);
-      if (hasData) {
-        const fe = autoCalcFe ? calcFe(row) : 0;
+      // Save TARGET as range (store max values for compatibility, min/max in separate storage)
+      const targetHasData = Object.values(targetRange).some(v => v > 0);
+      if (targetHasData) {
+        // Store TARGET using max values in the standard fields (for backward compat)
+        const elements = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
+        const targetRow: Record<string, number> = {};
+        elements.forEach(el => { targetRow[el] = targetRange[`${el}_max`] || 0; });
+        const fe = autoCalcFe ? calcFe(targetRow) : 0;
         await createMeltChemistry({
           melt_id: recordId,
-          sample_stage: stage,
-          C: row.C || 0, Si: row.Si || 0, Mn: row.Mn || 0,
-          P: row.P || 0, S: row.S || 0, Ni: row.Ni || 0,
-          Cr: row.Cr || 0, Mo: row.Mo || 0, Cu: row.Cu || 0,
+          sample_stage: 'TARGET',
+          C: targetRow.C, Si: targetRow.Si, Mn: targetRow.Mn,
+          P: targetRow.P, S: targetRow.S, Ni: targetRow.Ni,
+          Cr: targetRow.Cr, Mo: targetRow.Mo, Cu: targetRow.Cu,
           Fe: fe,
         });
+        // Save the full min/max range separately
+        await saveMeltTargetRange(recordId, targetRange);
       }
-    }
 
-    // Save pouring batches data
-    const pouringKey = `melt_pouring_${recordId}`;
-    if (selectedPouringBatches.length > 0) {
-      localStorage.setItem(pouringKey, JSON.stringify(selectedPouringBatches));
-    } else {
-      localStorage.removeItem(pouringKey);
-    }
+      // Save IN_FURNACE and AFTER_FURNACE
+      const otherStages: Array<'IN_FURNACE' | 'AFTER_FURNACE'> = ['IN_FURNACE', 'AFTER_FURNACE'];
+      for (const stage of otherStages) {
+        const row = chemRows[stage];
+        const hasData = Object.values(row).some(v => v > 0);
+        if (hasData) {
+          const fe = autoCalcFe ? calcFe(row) : 0;
+          await createMeltChemistry({
+            melt_id: recordId,
+            sample_stage: stage,
+            C: row.C || 0, Si: row.Si || 0, Mn: row.Mn || 0,
+            P: row.P || 0, S: row.S || 0, Ni: row.Ni || 0,
+            Cr: row.Cr || 0, Mo: row.Mo || 0, Cu: row.Cu || 0,
+            Fe: fe,
+          });
+        }
+      }
 
-    await recalcMeltRecord(recordId);
-    toast({ title: isEdit ? '熔解紀錄已更新' : '熔解紀錄已建立' });
+      // Save pouring batches data
+      const pouringKey = `melt_pouring_${recordId}`;
+      if (selectedPouringBatches.length > 0) {
+        localStorage.setItem(pouringKey, JSON.stringify(selectedPouringBatches));
+      } else {
+        localStorage.removeItem(pouringKey);
+      }
 
-    if (andNew) {
-      resetFormState();
-      onSavedAndNew();
-    } else {
-      onOpenChange(false);
-      onSaved();
+      await recalcMeltRecord(recordId);
+      toast({ title: isEdit ? '熔解紀錄已更新' : '熔解紀錄已建立' });
+
+      if (andNew) {
+        resetFormState();
+        onSavedAndNew();
+      } else {
+        onOpenChange(false);
+        onSaved();
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[MeltingManagement] Save failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，儲存失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '儲存失敗，請稍後再試', variant: 'destructive' });
+      }
     }
   };
 

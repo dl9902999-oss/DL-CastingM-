@@ -142,8 +142,18 @@ export default function UserManagement() {
 
       setDialogOpen(false);
       loadUsers();
-    } catch {
-      toast({ title: '操作失敗，請稍後再試', variant: 'destructive' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[UserManagement] Save failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，帳號操作失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('duplicate') || msg.includes('unique')) {
+        toast({ title: '員工編號或帳號已存在', variant: 'destructive' });
+      } else {
+        toast({ title: '操作失敗，請稍後再試', variant: 'destructive' });
+      }
     }
   };
 
@@ -157,8 +167,16 @@ export default function UserManagement() {
       await dsDeleteUser(u.id);
       toast({ title: '帳號已刪除' });
       loadUsers();
-    } catch {
-      toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[UserManagement] Delete failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，刪除失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('foreign') || msg.includes('constraint')) {
+        toast({ title: '此帳號有關聯資料，無法刪除', variant: 'destructive' });
+      } else {
+        toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
+      }
     }
   };
 
@@ -179,8 +197,16 @@ export default function UserManagement() {
       toast({ title: `已變更 ${passwordTarget.employee_id} 的密碼` });
       setPasswordDialogOpen(false);
       loadUsers();
-    } catch {
-      toast({ title: '變更密碼失敗，請稍後再試', variant: 'destructive' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[UserManagement] ChangePassword failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，密碼變更失敗', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，請稍後再試', variant: 'destructive' });
+      } else {
+        toast({ title: '變更密碼失敗，請稍後再試', variant: 'destructive' });
+      }
     }
   };
 

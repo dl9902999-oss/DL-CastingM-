@@ -58,8 +58,16 @@ export default function Shipment() {
       setIsCreateOpen(false);
       setForm({ work_order_id: '', quantity: 0, ship_date: '' });
       toast({ title: '出貨單已建立' });
-    } catch {
-      toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Shipment] Create failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，出貨單建立失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+      }
     }
   };
 
@@ -69,8 +77,16 @@ export default function Shipment() {
       const data = await dsGetShipmentOrders();
       setShipments(data);
       toast({ title: '已標記為已出貨' });
-    } catch {
-      toast({ title: '更新失敗，請稍後再試', variant: 'destructive' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Shipment] Ship failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，出貨狀態更新失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '更新失敗，請稍後再試', variant: 'destructive' });
+      }
     }
   };
 

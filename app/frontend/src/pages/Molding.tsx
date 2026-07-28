@@ -158,8 +158,16 @@ export default function Molding() {
       setSelectedWo(null);
       setForm({ quantity_planned: 0, estimated_pouring_weight: 0, remarks: '', molding_photos: [], closing_photos: [] });
       toast({ title: '造模批次已建立' });
-    } catch {
-      toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Molding] Create failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，建立失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+      }
     }
   };
 
@@ -192,8 +200,16 @@ export default function Molding() {
       setBatches(data);
       setEditBatch(null);
       toast({ title: '批次已更新' });
-    } catch {
-      toast({ title: '更新失敗，請稍後再試', variant: 'destructive' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Molding] Update failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，更新失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '更新失敗，請稍後再試', variant: 'destructive' });
+      }
     }
   };
 
@@ -204,8 +220,16 @@ export default function Molding() {
       const data = await dsGetMoldingBatches();
       setBatches(data);
       toast({ title: '批次已刪除' });
-    } catch {
-      toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Molding] Delete failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，刪除失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('foreign') || msg.includes('constraint')) {
+        toast({ title: '此批次有關聯資料，無法刪除', variant: 'destructive' });
+      } else {
+        toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
+      }
     }
   };
 

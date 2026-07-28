@@ -277,65 +277,101 @@ export default function Quality() {
       result = defectCount > inspForm.inspected_quantity * 0.1 ? 'FAIL' : 'CONDITIONAL';
     }
 
-    await createQualityInspection({
-      type: inspForm.type,
-      batch_id: inspForm.batch_id,
-      batch_no: inspForm.batch_no,
-      work_order_id: inspForm.work_order_id,
-      order_no: inspForm.order_no,
-      customer: inspForm.customer,
-      product_name: inspForm.product_name,
-      material: inspForm.material,
-      heat_no: inspForm.heat_no,
-      inspection_date: new Date().toISOString(),
-      inspector: inspForm.inspector,
-      result,
-      inspected_quantity: inspForm.inspected_quantity,
-      pass_quantity: inspForm.pass_quantity,
-      defect_count: defectCount,
-      yield_rate: Math.round(yieldRate * 100) / 100,
-      sampling_method: inspForm.sampling_method,
-      item_results: itemResults,
-      defects: [],
-      remarks: inspForm.remarks,
-    });
-    setShowInspectionDialog(false);
-    refresh();
+    try {
+      await createQualityInspection({
+        type: inspForm.type,
+        batch_id: inspForm.batch_id,
+        batch_no: inspForm.batch_no,
+        work_order_id: inspForm.work_order_id,
+        order_no: inspForm.order_no,
+        customer: inspForm.customer,
+        product_name: inspForm.product_name,
+        material: inspForm.material,
+        heat_no: inspForm.heat_no,
+        inspection_date: new Date().toISOString(),
+        inspector: inspForm.inspector,
+        result,
+        inspected_quantity: inspForm.inspected_quantity,
+        pass_quantity: inspForm.pass_quantity,
+        defect_count: defectCount,
+        yield_rate: Math.round(yieldRate * 100) / 100,
+        sampling_method: inspForm.sampling_method,
+        item_results: itemResults,
+        defects: [],
+        remarks: inspForm.remarks,
+      });
+      setShowInspectionDialog(false);
+      refresh();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Quality] submitInspection failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，檢驗紀錄儲存失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '檢驗紀錄儲存失敗，請稍後再試', variant: 'destructive' });
+      }
+    }
   };
 
   // Submit defect
   const submitDefect = async () => {
-    await createDefectRecord({
-      batch_id: defectForm.batch_id,
-      batch_no: defectForm.batch_no,
-      defect_code: defectForm.defect_code,
-      defect_label: defectForm.defect_label,
-      quantity: defectForm.quantity,
-      cause: defectForm.cause,
-      responsible_station: defectForm.responsible_station,
-      disposition: defectForm.disposition,
-      remarks: defectForm.remarks,
-    });
-    setShowDefectDialog(false);
-    refresh();
+    try {
+      await createDefectRecord({
+        batch_id: defectForm.batch_id,
+        batch_no: defectForm.batch_no,
+        defect_code: defectForm.defect_code,
+        defect_label: defectForm.defect_label,
+        quantity: defectForm.quantity,
+        cause: defectForm.cause,
+        responsible_station: defectForm.responsible_station,
+        disposition: defectForm.disposition,
+        remarks: defectForm.remarks,
+      });
+      setShowDefectDialog(false);
+      refresh();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Quality] submitDefect failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，缺陷紀錄儲存失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '缺陷紀錄儲存失敗，請稍後再試', variant: 'destructive' });
+      }
+    }
   };
 
   // Submit CAPA
   const submitCAPA = async () => {
-    await createCAPARecord({
-      inspection_id: capaForm.inspection_id,
-      defect_id: capaForm.defect_id,
-      status: 'OPEN',
-      problem_description: capaForm.problem_description,
-      five_why: capaForm.five_why,
-      root_cause: capaForm.root_cause,
-      corrective_action: capaForm.corrective_action,
-      preventive_action: capaForm.preventive_action,
-      responsible_person: capaForm.responsible_person,
-      due_date: capaForm.due_date,
-    });
-    setShowCAPADialog(false);
-    refresh();
+    try {
+      await createCAPARecord({
+        inspection_id: capaForm.inspection_id,
+        defect_id: capaForm.defect_id,
+        status: 'OPEN',
+        problem_description: capaForm.problem_description,
+        five_why: capaForm.five_why,
+        root_cause: capaForm.root_cause,
+        corrective_action: capaForm.corrective_action,
+        preventive_action: capaForm.preventive_action,
+        responsible_person: capaForm.responsible_person,
+        due_date: capaForm.due_date,
+      });
+      setShowCAPADialog(false);
+      refresh();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Quality] submitCAPA failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，CAPA 儲存失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: 'CAPA 儲存失敗，請稍後再試', variant: 'destructive' });
+      }
+    }
   };
 
   // Update CAPA status
@@ -343,8 +379,18 @@ export default function Quality() {
     const statusFlow: CAPAStatus[] = ['OPEN', 'ANALYZING', 'IMPLEMENTING', 'VERIFYING', 'CLOSED'];
     const currentIdx = statusFlow.indexOf(capa.status);
     if (currentIdx < statusFlow.length - 1) {
-      await updateCAPARecord(capa.id, { status: statusFlow[currentIdx + 1] });
-      refresh();
+      try {
+        await updateCAPARecord(capa.id, { status: statusFlow[currentIdx + 1] });
+        refresh();
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[Quality] advanceCAPAStatus failed:', err);
+        if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+          toast({ title: '權限不足，CAPA 狀態更新失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+        } else {
+          toast({ title: 'CAPA 狀態更新失敗，請稍後再試', variant: 'destructive' });
+        }
+      }
     }
   };
 
@@ -533,7 +579,7 @@ export default function Quality() {
                                 size="sm"
                                 variant="ghost"
                                 className="text-red-400 hover:text-red-300"
-                                onClick={async () => { await deleteQualityInspection(insp.id); refresh(); }}
+                                onClick={async () => { try { await deleteQualityInspection(insp.id); refresh(); } catch (e) { const m = e instanceof Error ? e.message : ''; console.error('[Quality] delete failed:', e); toast({ title: m.includes('policy') || m.includes('permission') ? '權限不足，刪除失敗' : '刪除失敗，請稍後再試', variant: 'destructive' }); } }}
                               >
                                 <Trash2 className="w-4 h-4" />
                               </Button>
