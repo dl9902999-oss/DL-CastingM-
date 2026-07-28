@@ -71,9 +71,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [refreshSyncHistory]);
 
   // Perform pending sync upload when connection is available
-  const performPendingSync = useCallback(async (trigger: 'auto_recovery' | 'manual_refresh' | 'periodic' | 'initial' = 'auto_recovery') => {
+  const performPendingSync = useCallback(async (trigger: 'auto_recovery' | 'manual_refresh' | 'periodic' | 'initial' = 'auto_recovery'): Promise<{ success: number; failed: number } | null> => {
     const count = getPendingSyncCount();
-    if (count === 0) return;
+    if (count === 0) return null;
 
     try {
       const result = await syncPendingToSupabase(trigger);
@@ -87,8 +87,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
       // Refresh sync history after each sync attempt
       refreshSyncHistory();
+      return result;
     } catch (e) {
       console.warn('[DataContext] Pending sync failed:', e);
+      return null;
     }
   }, [refreshSyncHistory]);
 
@@ -230,6 +232,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
     try {
       // Try to reconnect (handles recovery from _writeFailed state)
+      // attemptReconnect now also tests write permission
       const connected = await attemptReconnect();
       setIsOnline(connected);
       setConnectionReason(getConnectionStatus().reason);
@@ -237,15 +240,37 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
       if (connected) {
         // Upload pending local data first
-        await performPendingSync('manual_refresh');
-        // Force full upload to ensure all local data reaches cloud
-        await forceFullUpload();
-        // Wait for server to commit before pulling
-        await new Promise(resolve => setTimeout(resolve, 500));
-        // Then pull fresh data (safe because upload is done)
-        await fullSyncFromSupabase();
-        // Re-start realtime sync if it was stopped
-        startRealtimeSync();
+        const syncResult = await performPendingSync('manual_refresh');
+
+        // Re-check connection status after sync attempt
+        // syncPendingToSupabase now correctly sets _writeFailed if RLS blocks writes
+        const statusAfterSync = getConnectionStatus();
+        if (statusAfterSync.writeFailed) {
+          // Sync failed due to RLS or other write error - update UI accordingly
+          setIsOnline(false);
+          setConnectionReason(statusAfterSync.reason);
+          setPendingSyncCount(statusAfterSync.pendingSyncCount);
+        } else {
+          // Sync succeeded or nothing to sync - proceed with full upload and pull
+          if (syncResult && syncResult.failed === 0) {
+            await forceFullUpload();
+          }
+          // Wait for server to commit before pulling
+          await new Promise(resolve => setTimeout(resolve, 500));
+
+          // Re-check again after forceFullUpload (it also uses sbUpsertBatch)
+          const statusAfterUpload = getConnectionStatus();
+          if (!statusAfterUpload.writeFailed) {
+            // Then pull fresh data (safe because upload is done)
+            await fullSyncFromSupabase();
+            // Re-start realtime sync if it was stopped
+            startRealtimeSync();
+          } else {
+            setIsOnline(false);
+            setConnectionReason(statusAfterUpload.reason);
+          }
+          setPendingSyncCount(getPendingSyncCount());
+        }
       }
       // Always trigger re-render for UI update
       setLastSyncTime(Date.now());

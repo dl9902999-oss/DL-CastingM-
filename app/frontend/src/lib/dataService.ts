@@ -84,6 +84,16 @@ export function resetConnectionState(): void {
   _offlineReason = 'none';
 }
 
+/**
+ * Mark write as failed from external modules (e.g., store.ts bgSync).
+ * This allows background sync operations to correctly signal RLS/write failures.
+ */
+export function markWriteFailed(reason: 'rls_blocked' | 'error' = 'error'): void {
+  _writeFailed = true;
+  _offlineReason = reason;
+  _lastCheckTime = Date.now();
+}
+
 export function getConnectionStatus(): { connected: boolean | null; writeFailed: boolean; reason: string; pendingSyncCount: number } {
   return {
     connected: _writeFailed ? false : _isConnected,
@@ -288,6 +298,28 @@ export async function syncPendingToSupabase(
 
   savePendingSyncQueue(remainingQueue);
 
+  // If any sync failed, check if it's an RLS issue and update _writeFailed accordingly
+  if (failed > 0 && errorMessage) {
+    const isRLS = errorMessage.includes('policy') ||
+      errorMessage.includes('permission') ||
+      errorMessage.includes('row-level security') ||
+      errorMessage.includes('42501') ||
+      errorMessage.includes('new row violates');
+    if (isRLS) {
+      _writeFailed = true;
+      _offlineReason = 'rls_blocked';
+      _lastCheckTime = Date.now();
+    } else {
+      _writeFailed = true;
+      _offlineReason = 'error';
+      _lastCheckTime = Date.now();
+    }
+  } else if (failed === 0 && success > 0) {
+    // All pending items synced successfully - clear write failed state
+    _writeFailed = false;
+    _offlineReason = 'none';
+  }
+
   // Determine overall status
   const duration = Date.now() - startTime;
   let status: SyncLogStatus;
@@ -363,7 +395,14 @@ export async function attemptReconnect(): Promise<boolean> {
   _checkPromise = null;
   _offlineReason = 'none';
   const connected = await isSupabaseConnected();
-  return connected;
+  if (!connected) return false;
+
+  // Note: We don't test write permission here because:
+  // 1. syncPendingToSupabase now correctly sets _writeFailed on RLS errors
+  // 2. bgSyncCollection also calls markWriteFailed on RLS errors
+  // 3. The caller (refreshData) re-checks getConnectionStatus() after sync attempts
+  // This avoids false negatives from schema constraints on test data.
+  return true;
 }
 
 // ============================================================

@@ -4,6 +4,7 @@ import { WorkOrder, MoldingBatch, MeltingRecord, QualityInspection, WarehouseEnt
 // All writes go to localStorage first (instant), then sync to Supabase in background
 
 import * as sbStore from './supabaseStore';
+import { markWriteFailed } from './dataService';
 
 const STORAGE_KEYS = {
   WORK_ORDERS: 'foundry_work_orders',
@@ -139,6 +140,15 @@ async function bgSyncCollection(table: string): Promise<void> {
     if (!items || items.length === 0) return;
     await sbStore.sbUpsertBatch(table, items);
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const isRLS = msg.includes('policy') || msg.includes('permission') ||
+      msg.includes('row-level security') || msg.includes('42501') ||
+      msg.includes('new row violates');
+    if (isRLS) {
+      markWriteFailed('rls_blocked');
+    } else {
+      markWriteFailed('error');
+    }
     console.warn(`[Store] bgSync ${table} failed:`, e);
   }
 }
