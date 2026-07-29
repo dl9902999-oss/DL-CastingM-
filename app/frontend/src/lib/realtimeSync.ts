@@ -186,6 +186,7 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
       // Supabase has data - it is authoritative, but we must preserve:
       // 1. Pending local items that haven't been synced yet (offline creates)
       // 2. Recently written items that might not yet appear in SELECT due to replication lag
+      // 3. Any local items that would be lost if cloud returns fewer items (RLS partial block)
       const pendingRaw = localStorage.getItem('foundry_pending_sync');
       let pendingCreates: Record<string, unknown>[] = [];
       if (pendingRaw) {
@@ -199,14 +200,16 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
 
       // Check if there was a recent write to this table - if so, we must also
       // preserve any localStorage items that are missing from the Supabase result
-      // (they may not have propagated to the read replica yet).
+      // (they may not have propagated to the read replica yet, or RLS blocks SELECT
+      // for newly inserted rows).
       const lastWrite = _recentWriteTimestamps[table] || 0;
-      const hasRecentWrite = (Date.now() - lastWrite) < RECENT_WRITE_PROTECTION_WINDOW;
+      const recentWriteDetected = (Date.now() - lastWrite) < RECENT_WRITE_PROTECTION_WINDOW;
 
+      // ALWAYS check for missing local items when there's a recent write,
+      // regardless of whether pending queue has items. This covers the case where
+      // INSERT succeeded (pending queue cleared) but SELECT doesn't return the new row.
       let recentLocalCreates: Record<string, unknown>[] = [];
-      if (hasRecentWrite && pendingCreates.length === 0) {
-        // No pending queue items, but there was a recent write.
-        // Compare localStorage with Supabase result to find items that might be missing.
+      if (recentWriteDetected) {
         try {
           const localRaw = localStorage.getItem(storageKey);
           if (localRaw) {
@@ -225,14 +228,48 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
         } catch { /* ignore parse errors */ }
       }
 
+      // Additional safety: if local has MORE items than cloud and no recent write,
+      // still preserve local items that are missing from cloud (they might be from
+      // a previous session where RLS blocked the upload confirmation).
+      let orphanedLocalItems: Record<string, unknown>[] = [];
+      if (!recentWriteDetected && pendingCreates.length === 0) {
+        try {
+          const localRaw = localStorage.getItem(storageKey);
+          if (localRaw) {
+            const localItems = JSON.parse(localRaw) as Record<string, unknown>[];
+            if (localItems.length > data.length) {
+              const cloudIds = new Set(data.map((d: Record<string, unknown>) => d.id));
+              orphanedLocalItems = localItems.filter(
+                (item) => item.id && !cloudIds.has(item.id)
+              );
+              if (orphanedLocalItems.length > 0) {
+                console.warn(
+                  `[RealtimeSync] ${table}: Local has ${localItems.length} items but cloud only ${data.length}. ` +
+                  `Preserving ${orphanedLocalItems.length} orphaned local items (possible RLS partial block).`
+                );
+              }
+            }
+          }
+        } catch { /* ignore parse errors */ }
+      }
+
       const cloudIds = new Set(data.map((d: Record<string, unknown>) => d.id));
       const missingPending = pendingCreates.filter(p => !cloudIds.has(p.id));
       const missingRecent = recentLocalCreates.filter(r => !cloudIds.has(r.id));
-      const allMissing = [...missingPending, ...missingRecent];
+      const missingOrphaned = orphanedLocalItems.filter(o => !cloudIds.has(o.id));
+      const allMissing = [...missingPending, ...missingRecent, ...missingOrphaned];
 
-      if (allMissing.length > 0) {
-        console.log(`[RealtimeSync] ${table}: Preserving ${allMissing.length} local items during refresh (pending: ${missingPending.length}, recent: ${missingRecent.length})`);
-        localStorage.setItem(storageKey, JSON.stringify([...allMissing, ...data]));
+      // Deduplicate by id
+      const seenIds = new Set<unknown>();
+      const uniqueMissing = allMissing.filter(item => {
+        if (seenIds.has(item.id)) return false;
+        seenIds.add(item.id);
+        return true;
+      });
+
+      if (uniqueMissing.length > 0) {
+        console.log(`[RealtimeSync] ${table}: Preserving ${uniqueMissing.length} local items during refresh (pending: ${missingPending.length}, recent: ${missingRecent.length}, orphaned: ${missingOrphaned.length})`);
+        localStorage.setItem(storageKey, JSON.stringify([...uniqueMissing, ...data]));
       } else {
         localStorage.setItem(storageKey, JSON.stringify(data));
       }

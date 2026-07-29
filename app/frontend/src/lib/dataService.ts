@@ -8,7 +8,7 @@
 import * as localStore from './store';
 import * as sbStore from './supabaseStore';
 import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, MeltChemistry, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder, UserProfile, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
-import { markRecentWrite, hasRecentWrite } from './realtimeSync';
+import { markRecentWrite } from './realtimeSync';
 
 // Connection state
 let _isConnected: boolean | null = null;
@@ -657,16 +657,25 @@ async function withReadFallback<T>(
         return localResult;
       }
     }
-    // Safety check: if Supabase returned fewer items than localStorage AND there's a recent write,
-    // prefer localStorage to prevent newly written items from disappearing due to replication lag.
-    if (Array.isArray(result) && result.length > 0 && hasRecentWrite()) {
+    // Safety: if Supabase returned fewer items than localStorage, MERGE the results.
+    // This handles the case where RLS partially blocks SELECT (returns some rows but not all),
+    // or replication lag causes newly written items to be missing from the cloud result.
+    // Strategy: use Supabase data as base, then append any local-only items not in cloud.
+    if (Array.isArray(result) && result.length > 0) {
       const localResult = localFallback();
       if (Array.isArray(localResult) && localResult.length > result.length) {
-        console.warn(
-          `[DataService] ${operationName}: Supabase returned ${result.length} items but localStorage has ${localResult.length}. ` +
-          `Recent write detected - using localStorage to prevent data loss.`
+        // Find local items missing from cloud result and merge them
+        const cloudIds = new Set((result as Array<Record<string, unknown>>).map(r => r.id));
+        const missingLocal = (localResult as Array<Record<string, unknown>>).filter(
+          item => item.id && !cloudIds.has(item.id)
         );
-        return localResult;
+        if (missingLocal.length > 0) {
+          console.warn(
+            `[DataService] ${operationName}: Supabase returned ${result.length} items but localStorage has ${localResult.length}. ` +
+            `Merging ${missingLocal.length} local-only items to prevent data loss.`
+          );
+          return [...missingLocal, ...result] as T;
+        }
       }
     }
     return result;
