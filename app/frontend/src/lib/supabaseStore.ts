@@ -216,9 +216,17 @@ export async function sbCreateWorkOrder(orderData: Omit<WorkOrder, 'id' | 'order
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   
   // Find customer code - use fallback if SELECT is blocked by RLS
+  // Use a short 3-second timeout so this optional lookup doesn't block the INSERT
   let customerCode = 'X00';
   try {
-    const { data: customers, error: custErr } = await supabase.from('customers').select('customer_no, name, short_name');
+    const customerQuery = supabase.from('customers').select('customer_no, name, short_name');
+    const result = await Promise.race([
+      customerQuery,
+      new Promise<{ data: null; error: { message: string } }>((resolve) =>
+        setTimeout(() => resolve({ data: null, error: { message: 'customer lookup timeout' } }), 3000)
+      ),
+    ]);
+    const { data: customers, error: custErr } = result;
     if (!custErr && customers && customers.length > 0) {
       const matched = customers.find((c: Record<string, unknown>) => c.name === orderData.customer || c.short_name === orderData.customer);
       if (matched?.customer_no) {

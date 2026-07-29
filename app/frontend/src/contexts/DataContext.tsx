@@ -242,35 +242,21 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         // Upload pending local data first
         const syncResult = await performPendingSync('manual_refresh');
 
-        // Re-check connection status after sync attempt
-        // syncPendingToSupabase now correctly sets _writeFailed if RLS blocks writes
-        const statusAfterSync = getConnectionStatus();
-        if (statusAfterSync.writeFailed) {
-          // Sync failed due to RLS or other write error - update UI accordingly
-          setIsOnline(false);
-          setConnectionReason(statusAfterSync.reason);
-          setPendingSyncCount(statusAfterSync.pendingSyncCount);
-        } else {
-          // Sync succeeded or nothing to sync - proceed with full upload and pull
-          if (syncResult && syncResult.failed === 0) {
-            await forceFullUpload();
-          }
-          // Wait for server to commit before pulling
-          await new Promise(resolve => setTimeout(resolve, 500));
-
-          // Re-check again after forceFullUpload (it also uses sbUpsertBatch)
-          const statusAfterUpload = getConnectionStatus();
-          if (!statusAfterUpload.writeFailed) {
-            // Then pull fresh data (safe because upload is done)
-            await fullSyncFromSupabase();
-            // Re-start realtime sync if it was stopped
-            startRealtimeSync();
-          } else {
-            setIsOnline(false);
-            setConnectionReason(statusAfterUpload.reason);
-          }
-          setPendingSyncCount(getPendingSyncCount());
+        // Proceed with full upload if pending sync had no failures
+        if (syncResult && syncResult.failed === 0) {
+          await forceFullUpload();
         }
+
+        // Wait for server to commit before pulling
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Pull fresh data from Supabase
+        await fullSyncFromSupabase();
+        // Re-start realtime sync if it was stopped
+        startRealtimeSync();
+
+        // Update pending count after all operations
+        setPendingSyncCount(getPendingSyncCount());
       }
       // Always trigger re-render for UI update
       setLastSyncTime(Date.now());

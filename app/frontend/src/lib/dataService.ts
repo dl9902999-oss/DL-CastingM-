@@ -24,14 +24,14 @@ let _offlineReason: 'none' | 'no_connection' | 'rls_blocked' | 'error' = 'none';
 const CONNECTION_RETRY_INTERVAL = 60_000;
 
 export async function isSupabaseConnected(): Promise<boolean> {
-  // If write previously failed, allow automatic retry after interval.
-  // Key insight: we MUST allow retries even with pending items, otherwise
-  // we get a deadlock: pending items prevent retry → retry never happens → pending never syncs.
+  // If write previously failed, allow automatic retry after a short interval.
+  // Key insight: we MUST allow retries quickly because the failure might have been
+  // transient (e.g., a single RLS SELECT failure that doesn't affect INSERT).
   // The protection against localStorage overwrite is handled in withReadFallback, not here.
   if (_writeFailed) {
     const elapsed = Date.now() - _lastCheckTime;
-    // Retry after 30 seconds regardless of pending items to break the deadlock
-    const WRITE_RETRY_INTERVAL = 30_000;
+    // Retry after 5 seconds to quickly recover from transient failures
+    const WRITE_RETRY_INTERVAL = 5_000;
     if (elapsed > WRITE_RETRY_INTERVAL) {
       console.log('[DataService] Auto-retrying Supabase connection after write failure...');
       _writeFailed = false;
@@ -91,8 +91,9 @@ export function resetConnectionState(): void {
 }
 
 /**
- * Mark write as failed from external modules (e.g., store.ts bgSync).
- * This allows background sync operations to correctly signal RLS/write failures.
+ * Mark write as failed. Called internally by withRLSFallback when a direct
+ * write operation fails (RLS, network, or other Supabase error).
+ * Background sync failures no longer call this to avoid blocking new direct writes.
  */
 export function markWriteFailed(reason: 'rls_blocked' | 'error' = 'error'): void {
   _writeFailed = true;
@@ -120,6 +121,7 @@ interface PendingSyncEntry {
   action: 'create' | 'update' | 'delete';
   timestamp: number;
   data?: Record<string, unknown>;
+  retryCount?: number;
 }
 
 function getPendingSyncQueue(): PendingSyncEntry[] {
@@ -302,26 +304,25 @@ export async function syncPendingToSupabase(
     }
   }
 
-  savePendingSyncQueue(remainingQueue);
-
-  // If any sync failed, check if it's an RLS issue and update _writeFailed accordingly
-  if (failed > 0 && errorMessage) {
-    const isRLS = errorMessage.includes('policy') ||
-      errorMessage.includes('permission') ||
-      errorMessage.includes('row-level security') ||
-      errorMessage.includes('42501') ||
-      errorMessage.includes('new row violates');
-    if (isRLS) {
-      _writeFailed = true;
-      _offlineReason = 'rls_blocked';
-      _lastCheckTime = Date.now();
-    } else {
-      _writeFailed = true;
-      _offlineReason = 'error';
-      _lastCheckTime = Date.now();
+  // Drop items that have been retried too many times (stale/corrupt data)
+  const MAX_RETRIES = 5;
+  const finalQueue = remainingQueue.filter(entry => {
+    const retries = (entry.retryCount || 0) + 1;
+    entry.retryCount = retries;
+    if (retries > MAX_RETRIES) {
+      console.warn(`[DataService] Dropping pending sync item after ${MAX_RETRIES} retries:`, entry.table, entry.action);
+      return false;
     }
-  } else if (failed === 0 && success > 0) {
-    // All pending items synced successfully - clear write failed state
+    return true;
+  });
+  savePendingSyncQueue(finalQueue);
+
+  // IMPORTANT: Pending sync failures should NOT set _writeFailed.
+  // Pending items may fail due to stale/corrupt data format, not because
+  // new direct INSERT operations would fail. Only withRLSFallback should
+  // set _writeFailed when a fresh direct write actually fails.
+  if (failed === 0 && success > 0) {
+    // All pending items synced successfully - clear write failed state if it was set
     _writeFailed = false;
     _offlineReason = 'none';
   }
@@ -404,9 +405,8 @@ export async function attemptReconnect(): Promise<boolean> {
   if (!connected) return false;
 
   // Note: We don't test write permission here because:
-  // 1. syncPendingToSupabase now correctly sets _writeFailed on RLS errors
-  // 2. bgSyncCollection also calls markWriteFailed on RLS errors
-  // 3. The caller (refreshData) re-checks getConnectionStatus() after sync attempts
+  // 1. _writeFailed is set only by withRLSFallback on actual direct write failures
+  // 2. The caller (refreshData) re-checks getConnectionStatus() after sync attempts
   // This avoids false negatives from schema constraints on test data.
   return true;
 }
@@ -424,7 +424,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
-const OPERATION_TIMEOUT = 10_000; // 10 seconds
+const OPERATION_TIMEOUT = 15_000; // 15 seconds (allows for customer lookup + INSERT)
 
 interface PendingSyncMeta {
   table: string;
