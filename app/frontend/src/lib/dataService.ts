@@ -683,7 +683,14 @@ export async function dsLogin(employeeId: string, password: string): Promise<Use
   const connected = await isSupabaseConnected();
   if (connected) {
     try {
-      return await sbStore.sbLogin(employeeId, password);
+      const sbUser = await sbStore.sbLogin(employeeId, password);
+      if (sbUser) return sbUser;
+      // Supabase returned null - could be RLS blocking SELECT or user not in cloud.
+      // Fall through to localStorage login as backup.
+      const localUser = localStore.login(employeeId, password);
+      if (localUser) return localUser;
+      // Neither found - genuinely wrong credentials
+      return null;
     } catch {
       return localStore.login(employeeId, password);
     }
