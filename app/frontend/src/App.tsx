@@ -18,6 +18,7 @@ import Customers from '@/pages/Customers';
 import UserManagement from '@/pages/UserManagement';
 import MoldManagement from '@/pages/MoldManagement';
 import SyncHistory from '@/pages/SyncHistory';
+import DataSyncVerification from '@/pages/DataSyncVerification';
 
 const queryClient = new QueryClient();
 
@@ -50,6 +51,7 @@ const AppRoutes = () => (
     <Route path="/mold-management" element={<ProtectedRoute><MoldManagement /></ProtectedRoute>} />
     <Route path="/user-management" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
     <Route path="/sync-history" element={<ProtectedRoute><SyncHistory /></ProtectedRoute>} />
+    <Route path="/sync-verify" element={<ProtectedRoute><DataSyncVerification /></ProtectedRoute>} />
     <Route path="/" element={<Navigate to="/dashboard" replace />} />
     <Route path="*" element={<Navigate to="/dashboard" replace />} />
   </Routes>

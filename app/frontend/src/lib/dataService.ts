@@ -24,10 +24,15 @@ let _offlineReason: 'none' | 'no_connection' | 'rls_blocked' | 'error' = 'none';
 const CONNECTION_RETRY_INTERVAL = 60_000;
 
 export async function isSupabaseConnected(): Promise<boolean> {
-  // If write previously failed, allow automatic retry after interval
+  // If write previously failed, allow automatic retry after interval.
+  // Key insight: we MUST allow retries even with pending items, otherwise
+  // we get a deadlock: pending items prevent retry → retry never happens → pending never syncs.
+  // The protection against localStorage overwrite is handled in withReadFallback, not here.
   if (_writeFailed) {
     const elapsed = Date.now() - _lastCheckTime;
-    if (elapsed > CONNECTION_RETRY_INTERVAL) {
+    // Retry after 30 seconds regardless of pending items to break the deadlock
+    const WRITE_RETRY_INTERVAL = 30_000;
+    if (elapsed > WRITE_RETRY_INTERVAL) {
       console.log('[DataService] Auto-retrying Supabase connection after write failure...');
       _writeFailed = false;
       _connectionChecked = false;
@@ -550,13 +555,15 @@ async function withRLSFallback<T>(
     return result;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (
-      msg.includes('policy') ||
-      msg.includes('permission') ||
+    
+    // 1. RLS / Permission errors → switch to offline mode and queue for later sync
+    const isRLSError = (
       msg.includes('row-level security') ||
       msg.includes('42501') ||
-      msg.includes('new row violates')
-    ) {
+      (msg.includes('policy') && !msg.includes('violates')) ||
+      (msg.includes('permission') && !msg.includes('violates'))
+    );
+    if (isRLSError) {
       console.warn(`[DataService] ${operationName}: RLS blocked, switching to offline mode`);
       _writeFailed = true;
       _offlineReason = 'rls_blocked';
@@ -568,9 +575,26 @@ async function withRLSFallback<T>(
       }
       return result;
     }
-    // Timeout or network error - mark write failed so reads also fallback to localStorage
-    if (msg.includes('timeout')) {
-      console.warn(`[DataService] ${operationName}: timeout, switching to offline mode`);
+
+    // 2. Constraint violations (UNIQUE, FK, NOT NULL, CHECK) → business logic error.
+    //    Do NOT enter offline mode. Throw back to caller for proper UI handling.
+    const isConstraintError = (
+      msg.includes('duplicate') ||
+      msg.includes('unique') ||
+      msg.includes('violates') ||
+      msg.includes('23505') || // unique_violation
+      msg.includes('23503') || // foreign_key_violation
+      msg.includes('23502') || // not_null_violation
+      msg.includes('23514')    // check_violation
+    );
+    if (isConstraintError) {
+      console.warn(`[DataService] ${operationName}: Constraint violation (not RLS):`, msg);
+      throw err; // Let the UI handle this with appropriate error message
+    }
+
+    // 3. Timeout or network error → switch to offline mode
+    if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch') || msg.includes('ECONNREFUSED')) {
+      console.warn(`[DataService] ${operationName}: Network/timeout error, switching to offline mode`);
       _writeFailed = true;
       _offlineReason = 'error';
       _lastCheckTime = Date.now();
@@ -581,8 +605,8 @@ async function withRLSFallback<T>(
       }
       return result;
     }
-    // Any other Supabase error (schema mismatch, constraint violation, etc.)
-    // Mark write failed so subsequent reads are consistent with localStorage writes
+
+    // 4. Any other Supabase error (schema mismatch, etc.) → offline mode + queue
     console.warn(`[DataService] ${operationName}: Supabase error, switching to offline mode:`, msg);
     _writeFailed = true;
     _offlineReason = 'error';
@@ -603,6 +627,20 @@ async function withReadFallback<T>(
 ): Promise<T> {
   const connected = await isSupabaseConnected();
   if (!connected) return localFallback();
+
+  // If there are pending sync items for this table, prefer localStorage
+  // to avoid Supabase returning stale data that doesn't include pending creates.
+  const pendingQueue = getPendingSyncQueue();
+  if (pendingQueue.length > 0) {
+    const localResult = localFallback();
+    if (Array.isArray(localResult) && localResult.length > 0) {
+      console.warn(
+        `[DataService] ${operationName}: ${pendingQueue.length} pending sync items exist. ` +
+        `Using localStorage to prevent data loss until sync completes.`
+      );
+      return localResult;
+    }
+  }
 
   try {
     const result = await withTimeout(sbOperation(), OPERATION_TIMEOUT, operationName);

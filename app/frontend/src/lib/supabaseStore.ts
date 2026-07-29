@@ -214,15 +214,27 @@ export async function sbGetWorkOrders(): Promise<WorkOrder[]> {
 
 export async function sbCreateWorkOrder(orderData: Omit<WorkOrder, 'id' | 'order_no' | 'status' | 'created_at' | 'updated_at'>): Promise<WorkOrder> {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  // Find customer code
-  const { data: customers } = await supabase.from('customers').select('customer_no, name, short_name');
-  const matched = customers?.find((c: Record<string, unknown>) => c.name === orderData.customer || c.short_name === orderData.customer);
-  const customerCode = matched?.customer_no ? (matched.customer_no as string).replace(/-/g, '') : 'X00';
+  
+  // Find customer code - use fallback if SELECT is blocked by RLS
+  let customerCode = 'X00';
+  try {
+    const { data: customers, error: custErr } = await supabase.from('customers').select('customer_no, name, short_name');
+    if (!custErr && customers && customers.length > 0) {
+      const matched = customers.find((c: Record<string, unknown>) => c.name === orderData.customer || c.short_name === orderData.customer);
+      if (matched?.customer_no) {
+        customerCode = (matched.customer_no as string).replace(/-/g, '');
+      }
+    }
+  } catch (e) {
+    console.warn('[sbCreateWorkOrder] Failed to query customers for code, using fallback:', e);
+  }
 
-  // Count existing orders for this customer
-  const { data: existingOrders } = await supabase.from('work_orders').select('order_no').like('order_no', `%-${customerCode}-%`);
-  const seq = (existingOrders?.length || 0) + 1;
-  const orderNo = `WO-${today}-${customerCode}-${String(seq).padStart(4, '0')}`;
+  // Generate a unique order_no using timestamp + random suffix to avoid UNIQUE constraint violations.
+  // Previously we counted existing orders with a SELECT, but if RLS blocks that SELECT,
+  // it returns empty → seq always = 1 → duplicate order_no on second insert.
+  const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+  const timestamp = Date.now().toString(36).toUpperCase().slice(-4);
+  const orderNo = `WO-${today}-${customerCode}-${timestamp}${randomSuffix}`;
 
   const { data, error } = await supabase.from('work_orders').insert({
     ...orderData,

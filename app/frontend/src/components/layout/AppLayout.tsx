@@ -44,6 +44,7 @@ const navItems: NavItem[] = [
   { label: '生產追溯', path: '/traceability', icon: <Search className="w-5 h-5" />, roles: ['Admin', 'Production', 'QC', 'Warehouse'] },
   { label: '帳號管理', path: '/user-management', icon: <Shield className="w-5 h-5" />, roles: ['Admin'] },
   { label: '同步歷史', path: '/sync-history', icon: <History className="w-5 h-5" />, roles: ['Admin', 'Production', 'QC', 'Warehouse'] },
+  { label: '同步驗證', path: '/sync-verify', icon: <RefreshCw className="w-5 h-5" />, roles: ['Admin'] },
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {

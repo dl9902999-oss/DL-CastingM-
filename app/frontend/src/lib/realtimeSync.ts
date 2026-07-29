@@ -144,8 +144,32 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
       return;
     }
     if (data && data.length > 0) {
-      // Supabase has data - it is authoritative, replace localStorage
-      localStorage.setItem(storageKey, JSON.stringify(data));
+      // Supabase has data - it is authoritative, but we must preserve pending local items
+      // that haven't been synced yet (e.g., created offline or after a write failure).
+      const pendingRaw = localStorage.getItem('foundry_pending_sync');
+      let pendingCreates: Record<string, unknown>[] = [];
+      if (pendingRaw) {
+        try {
+          const queue = JSON.parse(pendingRaw) as Array<{ table: string; action: string; data?: Record<string, unknown> }>;
+          pendingCreates = queue
+            .filter(item => item.table === table && item.action === 'create' && item.data && item.data.id)
+            .map(item => item.data as Record<string, unknown>);
+        } catch { /* ignore parse errors */ }
+      }
+
+      if (pendingCreates.length > 0) {
+        // Merge: cloud data + pending local creates that aren't already in cloud
+        const cloudIds = new Set(data.map((d: Record<string, unknown>) => d.id));
+        const missingLocals = pendingCreates.filter(p => !cloudIds.has(p.id));
+        if (missingLocals.length > 0) {
+          console.log(`[RealtimeSync] ${table}: Preserving ${missingLocals.length} pending local creates during refresh`);
+          localStorage.setItem(storageKey, JSON.stringify([...missingLocals, ...data]));
+        } else {
+          localStorage.setItem(storageKey, JSON.stringify(data));
+        }
+      } else {
+        localStorage.setItem(storageKey, JSON.stringify(data));
+      }
     } else if (data && data.length === 0) {
       // Server returned empty - apply safety checks before clearing local data
       if (table === 'users_profile') {
