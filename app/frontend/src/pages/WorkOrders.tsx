@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment, Pattern, Customer } from '@/lib/types';
-import { dsGetCustomers, dsGetWorkOrders, dsCreateWorkOrder, dsUpdateWorkOrder, dsDeleteWorkOrder, dsGetMoldingBatches, dsGetPatterns, dsGetMeltRecords, getConnectionStatus, verifySyncToCloud } from '@/lib/dataService';
+import { dsGetCustomers, dsGetWorkOrders, dsCreateWorkOrder, dsUpdateWorkOrder, dsDeleteWorkOrder, dsGetMoldingBatches, dsGetPatterns, dsGetMeltRecords } from '@/lib/dataService';
 import { Plus, Search, Edit, Image, FileImage, X, Trash2, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { onWorkOrderChange, WorkOrderChangeEvent } from '@/lib/realtimeSync';
@@ -301,33 +301,39 @@ export default function WorkOrders() {
   const syncTrigger = useSyncTrigger();
 
   const [loading, setLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Stable reload function - mirrors the pattern used in Customers.tsx
+  const loadWorkOrders = useCallback(async () => {
+    try {
+      const [wo, mb, pl, cl] = await Promise.all([
+        dsGetWorkOrders(),
+        dsGetMoldingBatches(),
+        dsGetPatterns(),
+        dsGetCustomers(),
+      ]);
+      setOrders(wo);
+      setBatches(mb);
+      setPatternList(pl);
+      setCustomers(cl);
+    } catch {
+      // fallback already handled inside dataService
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     const loadData = async () => {
       setLoading(true);
       try {
-        const [wo, mb, pl, cl] = await Promise.all([
-          dsGetWorkOrders(),
-          dsGetMoldingBatches(),
-          dsGetPatterns(),
-          dsGetCustomers(),
-        ]);
-        if (!cancelled) {
-          setOrders(wo);
-          setBatches(mb);
-          setPatternList(pl);
-          setCustomers(cl);
-        }
-      } catch {
-        // fallback already handled inside dataService
+        await loadWorkOrders();
       } finally {
         if (!cancelled) setLoading(false);
       }
     };
     loadData();
     return () => { cancelled = true; };
-  }, [syncTrigger]);
+  }, [syncTrigger, loadWorkOrders]);
 
   // Cross-device work order change notification
   useEffect(() => {
@@ -341,28 +347,11 @@ export default function WorkOrders() {
       } else if (event.eventType === 'DELETE') {
         toast({ title: `🗑️ 其他裝置刪除了工單${label}`, description: '列表已自動更新' });
       }
-      // Refresh local list - merge with existing to prevent data loss from RLS/timing issues
-      dsGetWorkOrders().then(wo => {
-        setOrders(prev => {
-          if (wo.length === 0 && prev.length > 0) {
-            // Supabase returned empty but we have local data - keep existing to prevent data loss
-            console.warn('[WorkOrders] Realtime refresh returned empty, keeping existing list');
-            return prev;
-          }
-          // For INSERT events, ensure the new record from the event is included
-          if (event.eventType === 'INSERT' && event.newRecord?.id) {
-            const hasNew = wo.some(o => o.id === event.newRecord?.id);
-            if (!hasNew && event.newRecord) {
-              // The new record wasn't in the SELECT result yet - add it
-              return [event.newRecord as unknown as WorkOrder, ...wo];
-            }
-          }
-          return wo;
-        });
-      }).catch(() => {});
+      // Simple reload - mirrors Customers.tsx pattern
+      loadWorkOrders();
     });
     return unsubscribe;
-  }, [toast]);
+  }, [toast, loadWorkOrders]);
 
   const getStartedQty = (orderId: string) => {
     return batches.filter(b => b.work_order_id === orderId).reduce((sum, b) => sum + b.quantity_planned, 0);
@@ -499,6 +488,8 @@ export default function WorkOrders() {
       toast({ title: validationError, variant: 'destructive' });
       return;
     }
+    if (isSaving) return;
+    setIsSaving(true);
 
     try {
       // 清理表單資料
@@ -512,120 +503,78 @@ export default function WorkOrders() {
         estimated_weight: form.estimated_weight || 0,
       };
 
-      const created = await dsCreateWorkOrder(cleanedData);
-      const [wo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
-      // Safety: ensure the newly created work order is present in the list.
-      // If dsGetWorkOrders() missed it due to RLS/timing, merge it in.
-      const hasCreated = wo.some(o => o.id === created.id);
-      const finalOrders = hasCreated ? wo : [created, ...wo];
-      setOrders(finalOrders);
-      setBatches(mb);
-      setIsCreateOpen(false);
-      resetForm();
-      // Check if we're in offline/fallback mode after the operation
-      const status = getConnectionStatus();
-      if (status.writeFailed) {
-        toast({
-          title: '✅ 工單已建立（離線模式）',
-          description: `資料暫存本地，目前有 ${status.pendingSyncCount} 筆待同步。網路恢復後將自動同步至雲端。`,
-        });
+      const result = await dsCreateWorkOrder(cleanedData);
+      if (result) {
+        await loadWorkOrders();
+        setIsCreateOpen(false);
+        resetForm();
+        toast({ title: '✅ 工單已新增' });
       } else {
-        // Write-Read-Verify: confirm data exists in cloud
-        toast({ title: '✅ 工單已建立，正在驗證雲端同步...' });
-        // Delay slightly to allow Supabase to commit
-        setTimeout(async () => {
-          const verification = await verifySyncToCloud(created.id);
-          if (verification.verified) {
-            toast({ title: '\u2601\uFE0F 雲端同步已確認', description: `工單 ${created.order_no} ${verification.message}` });
-          } else {
-            toast({ title: '\u26A0\uFE0F 雲端驗證中', description: verification.message, variant: 'destructive' });
-            // Retry once after 3 seconds
-            setTimeout(async () => {
-              const retry = await verifySyncToCloud(created.id);
-              if (retry.verified) {
-                toast({ title: '\u2601\uFE0F 雲端同步已確認（重試成功）', description: `工單 ${created.order_no} ${retry.message}` });
-              } else {
-                toast({ title: '\u26A0\uFE0F 同步驗證未通過', description: '資料可能仍在同步中，請稍後在同步歷史頁面確認', variant: 'destructive' });
-              }
-            }, 3000);
-          }
-        }, 1500);
+        toast({ title: '新增失敗，請重試', variant: 'destructive' });
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('[WorkOrders] 建立工單失敗:', err);
-      const msg = err instanceof Error ? err.message : '';
-      if (msg.includes('timeout')) {
-        toast({ title: '連線逾時，請檢查網路後再試', variant: 'destructive' });
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '資料庫權限不足，請聯繫管理員執行 RLS 修正腳本', variant: 'destructive' });
       } else if (msg.includes('duplicate') || msg.includes('unique')) {
         toast({ title: '工單編號重複，請稍後再試', variant: 'destructive' });
+      } else if (msg.includes('timeout')) {
+        toast({ title: '連線逾時，已儲存至本地', variant: 'destructive' });
       } else {
         toast({ title: '建立失敗，請稍後再試', variant: 'destructive', description: msg || undefined });
       }
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleUpdate = async () => {
     if (!editOrder) return;
+    if (isSaving) return;
+    setIsSaving(true);
     try {
-      const updated = await dsUpdateWorkOrder(editOrder.id, editOrder);
-      const [wo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
-      // Safety: ensure the updated work order is present in the list
-      let finalOrders = wo;
-      if (updated) {
-        const hasUpdated = wo.some(o => o.id === updated.id);
-        if (!hasUpdated) {
-          finalOrders = [updated, ...wo];
-        } else {
-          // Ensure the latest version is reflected
-          finalOrders = wo.map(o => o.id === updated.id ? updated : o);
-        }
-      }
-      setOrders(finalOrders);
-      setBatches(mb);
-      setEditOrder(null);
-      const status = getConnectionStatus();
-      if (status.writeFailed) {
-        toast({ title: '工單已更新（離線模式）', description: '網路恢復後將自動同步' });
+      const result = await dsUpdateWorkOrder(editOrder.id, editOrder);
+      if (result) {
+        await loadWorkOrders();
+        setEditOrder(null);
+        toast({ title: '✅ 工單資料已更新' });
       } else {
-        toast({ title: '工單已更新，正在驗證雲端同步...' });
-        setTimeout(async () => {
-          const verification = await verifySyncToCloud(editOrder.id);
-          if (verification.verified) {
-            toast({ title: '\u2601\uFE0F 更新已確認同步至雲端', description: verification.message });
-          } else {
-            toast({ title: '\u26A0\uFE0F 更新驗證中', description: verification.message });
-          }
-        }, 1500);
+        toast({ title: '更新失敗，請重試', variant: 'destructive' });
       }
-    } catch {
-      toast({ title: '更新失敗，請稍後再試', variant: 'destructive' });
+    } catch (err: unknown) {
+      console.error('[WorkOrders] Update failed:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '資料庫權限不足，請聯繫管理員執行 RLS 修正腳本', variant: 'destructive' });
+      } else if (msg.includes('timeout')) {
+        toast({ title: '連線逾時，已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '更新失敗，請稍後再試', variant: 'destructive', description: msg || undefined });
+      }
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleDelete = async (order: WorkOrder) => {
-    if (!window.confirm(`確定要刪除工單 ${order.order_no} 嗎？`)) return;
+    if (!window.confirm(`確定要刪除工單 ${order.order_no} 嗎？此操作無法復原。`)) return;
     try {
       await dsDeleteWorkOrder(order.id);
-      const [wo, mb] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches()]);
-      setOrders(wo);
-      setBatches(mb);
-      const status = getConnectionStatus();
-      if (status.writeFailed) {
-        toast({ title: '工單已刪除（離線模式）', description: '網路恢復後將自動同步' });
+      await loadWorkOrders();
+      toast({ title: '✅ 工單已刪除' });
+    } catch (err: unknown) {
+      console.error('[WorkOrders] Delete failed:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，無法刪除此工單', variant: 'destructive' });
+      } else if (msg.includes('timeout')) {
+        toast({ title: '連線逾時，請重試', variant: 'destructive' });
+      } else if (msg.includes('foreign') || msg.includes('constraint') || msg.includes('referenced')) {
+        toast({ title: '此工單有關聯的造模批次或其他資料，無法刪除', description: '請先刪除相關批次後再試', variant: 'destructive' });
       } else {
-        // Verify deletion: cloud should NOT have this record
-        toast({ title: '工單已刪除，正在驗證雲端同步...' });
-        setTimeout(async () => {
-          const verification = await verifySyncToCloud(order.id);
-          if (!verification.cloudExists) {
-            toast({ title: '\u2601\uFE0F 刪除已確認同步至雲端', description: '雲端已移除該工單' });
-          } else {
-            toast({ title: '\u26A0\uFE0F 刪除驗證中', description: '雲端可能尚在處理，請稍後確認' });
-          }
-        }, 1500);
+        toast({ title: '刪除失敗，請重試', description: msg, variant: 'destructive' });
       }
-    } catch {
-      toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
     }
   };
 
@@ -774,7 +723,7 @@ export default function WorkOrders() {
                   onChange={(imgs) => setForm({ ...form, drawing_photos: imgs })}
                   icon={<FileImage className="w-4 h-4 text-green-400" />}
                 />
-                <Button onClick={handleCreate} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">建立</Button>
+                <Button onClick={handleCreate} disabled={isSaving} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">{isSaving ? '儲存中...' : '建立'}</Button>
               </div>
             </DialogContent>
           </Dialog>
@@ -1046,7 +995,7 @@ export default function WorkOrders() {
                   onChange={(imgs) => setEditOrder({ ...editOrder, drawing_photos: imgs })}
                   icon={<FileImage className="w-4 h-4 text-green-400" />}
                 />
-                <Button onClick={handleUpdate} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">更新</Button>
+                <Button onClick={handleUpdate} disabled={isSaving} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">{isSaving ? '儲存中...' : '更新'}</Button>
               </div>
             )}
           </DialogContent>
