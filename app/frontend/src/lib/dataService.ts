@@ -8,7 +8,7 @@
 import * as localStore from './store';
 import * as sbStore from './supabaseStore';
 import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, MeltChemistry, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder, UserProfile, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
-import { markRecentWrite } from './realtimeSync';
+import { markRecentWrite, hasRecentWrite } from './realtimeSync';
 
 // Connection state
 let _isConnected: boolean | null = null;
@@ -653,6 +653,18 @@ async function withReadFallback<T>(
         console.warn(
           `[DataService] ${operationName}: Supabase returned empty but localStorage has ${localResult.length} items. ` +
           `Using localStorage to prevent data loss (possible RLS SELECT issue).`
+        );
+        return localResult;
+      }
+    }
+    // Safety check: if Supabase returned fewer items than localStorage AND there's a recent write,
+    // prefer localStorage to prevent newly written items from disappearing due to replication lag.
+    if (Array.isArray(result) && result.length > 0 && hasRecentWrite()) {
+      const localResult = localFallback();
+      if (Array.isArray(localResult) && localResult.length > result.length) {
+        console.warn(
+          `[DataService] ${operationName}: Supabase returned ${result.length} items but localStorage has ${localResult.length}. ` +
+          `Recent write detected - using localStorage to prevent data loss.`
         );
         return localResult;
       }

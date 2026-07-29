@@ -51,9 +51,28 @@ const TABLE_TO_STORAGE_KEY: Record<string, string> = {
 
 type ChangeListener = (table: string) => void;
 
-// Track recent write timestamps per table to protect against premature clearing
-const _recentWriteTimestamps: Record<string, number> = {};
-const RECENT_WRITE_PROTECTION_WINDOW = 10_000; // 10 seconds
+// Track recent write timestamps per table to protect against premature clearing.
+// Also persisted to localStorage so page refresh doesn't lose the protection window.
+const RECENT_WRITE_PROTECTION_WINDOW = 30_000; // 30 seconds - survives page refresh
+const RECENT_WRITES_STORAGE_KEY = 'foundry_recent_writes';
+const _recentWriteTimestamps: Record<string, number> = (() => {
+  try {
+    const raw = localStorage.getItem(RECENT_WRITES_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      // Clean up expired entries on load
+      const now = Date.now();
+      const cleaned: Record<string, number> = {};
+      for (const [table, ts] of Object.entries(parsed)) {
+        if (now - ts < RECENT_WRITE_PROTECTION_WINDOW) {
+          cleaned[table] = ts;
+        }
+      }
+      return cleaned;
+    }
+  } catch { /* ignore */ }
+  return {};
+})();
 
 /**
  * Mark a table as having a recent write operation.
@@ -61,9 +80,29 @@ const RECENT_WRITE_PROTECTION_WINDOW = 10_000; // 10 seconds
  * This prevents refreshLocalFromSupabase from clearing local data
  * during the protection window (guards against RLS blocking SELECT
  * while INSERT succeeded).
+ * 
+ * Persisted to localStorage so the protection survives page refresh.
  */
 export function markRecentWrite(table: string): void {
   _recentWriteTimestamps[table] = Date.now();
+  // Persist to localStorage so page refresh doesn't lose the protection
+  try {
+    localStorage.setItem(RECENT_WRITES_STORAGE_KEY, JSON.stringify(_recentWriteTimestamps));
+  } catch { /* ignore quota errors */ }
+}
+
+/**
+ * Check if a table (or any table) has a recent write within the protection window.
+ * Used by withReadFallback to prefer localStorage when Supabase might return stale data.
+ */
+export function hasRecentWrite(table?: string): boolean {
+  const now = Date.now();
+  if (table) {
+    const ts = _recentWriteTimestamps[table] || 0;
+    return (now - ts) < RECENT_WRITE_PROTECTION_WINDOW;
+  }
+  // Check any table
+  return Object.values(_recentWriteTimestamps).some(ts => (now - ts) < RECENT_WRITE_PROTECTION_WINDOW);
 }
 
 // Cross-device work order change event
@@ -144,8 +183,9 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
       return;
     }
     if (data && data.length > 0) {
-      // Supabase has data - it is authoritative, but we must preserve pending local items
-      // that haven't been synced yet (e.g., created offline or after a write failure).
+      // Supabase has data - it is authoritative, but we must preserve:
+      // 1. Pending local items that haven't been synced yet (offline creates)
+      // 2. Recently written items that might not yet appear in SELECT due to replication lag
       const pendingRaw = localStorage.getItem('foundry_pending_sync');
       let pendingCreates: Record<string, unknown>[] = [];
       if (pendingRaw) {
@@ -157,16 +197,42 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
         } catch { /* ignore parse errors */ }
       }
 
-      if (pendingCreates.length > 0) {
-        // Merge: cloud data + pending local creates that aren't already in cloud
-        const cloudIds = new Set(data.map((d: Record<string, unknown>) => d.id));
-        const missingLocals = pendingCreates.filter(p => !cloudIds.has(p.id));
-        if (missingLocals.length > 0) {
-          console.log(`[RealtimeSync] ${table}: Preserving ${missingLocals.length} pending local creates during refresh`);
-          localStorage.setItem(storageKey, JSON.stringify([...missingLocals, ...data]));
-        } else {
-          localStorage.setItem(storageKey, JSON.stringify(data));
-        }
+      // Check if there was a recent write to this table - if so, we must also
+      // preserve any localStorage items that are missing from the Supabase result
+      // (they may not have propagated to the read replica yet).
+      const lastWrite = _recentWriteTimestamps[table] || 0;
+      const hasRecentWrite = (Date.now() - lastWrite) < RECENT_WRITE_PROTECTION_WINDOW;
+
+      let recentLocalCreates: Record<string, unknown>[] = [];
+      if (hasRecentWrite && pendingCreates.length === 0) {
+        // No pending queue items, but there was a recent write.
+        // Compare localStorage with Supabase result to find items that might be missing.
+        try {
+          const localRaw = localStorage.getItem(storageKey);
+          if (localRaw) {
+            const localItems = JSON.parse(localRaw) as Record<string, unknown>[];
+            const cloudIds = new Set(data.map((d: Record<string, unknown>) => d.id));
+            recentLocalCreates = localItems.filter(
+              (item) => item.id && !cloudIds.has(item.id)
+            );
+            if (recentLocalCreates.length > 0) {
+              console.log(
+                `[RealtimeSync] ${table}: Recent write detected (${Date.now() - lastWrite}ms ago). ` +
+                `Preserving ${recentLocalCreates.length} local items not yet in Supabase result.`
+              );
+            }
+          }
+        } catch { /* ignore parse errors */ }
+      }
+
+      const cloudIds = new Set(data.map((d: Record<string, unknown>) => d.id));
+      const missingPending = pendingCreates.filter(p => !cloudIds.has(p.id));
+      const missingRecent = recentLocalCreates.filter(r => !cloudIds.has(r.id));
+      const allMissing = [...missingPending, ...missingRecent];
+
+      if (allMissing.length > 0) {
+        console.log(`[RealtimeSync] ${table}: Preserving ${allMissing.length} local items during refresh (pending: ${missingPending.length}, recent: ${missingRecent.length})`);
+        localStorage.setItem(storageKey, JSON.stringify([...allMissing, ...data]));
       } else {
         localStorage.setItem(storageKey, JSON.stringify(data));
       }
