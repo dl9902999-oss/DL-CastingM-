@@ -206,6 +206,67 @@ function mapCustomer(row: Record<string, unknown>): Customer {
 // ============================================================
 // Work Orders
 // ============================================================
+
+/**
+ * Columns that actually exist on the `work_orders` table.
+ * Any extra key coming from the UI form (or from a legacy pending-sync payload)
+ * would make Postgres reject the whole INSERT/UPDATE, so we whitelist here.
+ */
+const WORK_ORDER_COLUMNS = [
+  'customer',
+  'product_name',
+  'material',
+  'quantity',
+  'estimated_weight',
+  'mold_supply',
+  'mold_type',
+  'pattern_id',
+  'heat_treatment',
+  'due_date',
+  'remarks',
+  'mold_photos',
+  'drawing_photos',
+  'status',
+] as const;
+
+/** DATE / TIMESTAMP columns: an empty string is invalid for Postgres, must be NULL. */
+const WORK_ORDER_DATE_COLUMNS = new Set<string>(['due_date']);
+
+/** Numeric columns: an empty string is invalid for Postgres, coerce to a number. */
+const WORK_ORDER_NUMERIC_COLUMNS = new Set<string>(['quantity', 'estimated_weight']);
+
+/**
+ * Build a Postgres-safe payload for work_orders.
+ * Root cause of "新增工單無法寫入": the form keeps `due_date` as '' when the user
+ * leaves it blank, and `''` is not a valid DATE literal — Postgres aborts the INSERT
+ * with `invalid input syntax for type date`. Empty dates must be sent as NULL.
+ */
+function buildWorkOrderPayload(source: Record<string, unknown>): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+
+  for (const column of WORK_ORDER_COLUMNS) {
+    if (!(column in source)) continue;
+    const value = source[column];
+
+    if (WORK_ORDER_DATE_COLUMNS.has(column)) {
+      // '' / null / undefined → NULL (column is nullable in the schema)
+      payload[column] = value === '' || value === null || value === undefined ? null : value;
+      continue;
+    }
+
+    if (WORK_ORDER_NUMERIC_COLUMNS.has(column)) {
+      const numeric = typeof value === 'number' ? value : Number(value);
+      payload[column] = Number.isFinite(numeric) ? numeric : 0;
+      continue;
+    }
+
+    if (value === undefined) continue;
+    payload[column] = value;
+  }
+
+  return payload;
+}
+
 export async function sbGetWorkOrders(): Promise<WorkOrder[]> {
   const { data, error } = await supabase.from('work_orders').select('*').order('created_at', { ascending: false });
   if (error) throw error;
@@ -244,18 +305,30 @@ export async function sbCreateWorkOrder(orderData: Omit<WorkOrder, 'id' | 'order
   const timestamp = Date.now().toString(36).toUpperCase().slice(-4);
   const orderNo = `WO-${today}-${customerCode}-${timestamp}${randomSuffix}`;
 
-  const { data, error } = await supabase.from('work_orders').insert({
-    ...orderData,
+  const insertPayload = {
+    ...buildWorkOrderPayload(orderData as unknown as Record<string, unknown>),
     order_no: orderNo,
     status: 'Open',
-  }).select().single();
-  if (error) throw error;
+  };
+
+  const { data, error } = await supabase.from('work_orders').insert(insertPayload).select().single();
+  if (error) {
+    console.error('[Supabase] sbCreateWorkOrder error:', error.code, error.message, error.details, error.hint);
+    throw new Error(`${error.message} [code: ${error.code}]`);
+  }
   return mapWorkOrder(data);
 }
 
 export async function sbUpdateWorkOrder(id: string, updates: Partial<WorkOrder>): Promise<WorkOrder | null> {
-  const { data, error } = await supabase.from('work_orders').update(updates).eq('id', id).select().single();
-  if (error) throw error;
+  // Strip non-column keys (id / order_no / created_at / updated_at) and normalize
+  // empty date strings to NULL, otherwise Postgres rejects the whole UPDATE.
+  const updatePayload = buildWorkOrderPayload(updates as unknown as Record<string, unknown>);
+
+  const { data, error } = await supabase.from('work_orders').update(updatePayload).eq('id', id).select().single();
+  if (error) {
+    console.error('[Supabase] sbUpdateWorkOrder error:', error.code, error.message, error.details, error.hint);
+    throw new Error(`${error.message} [code: ${error.code}]`);
+  }
   return data ? mapWorkOrder(data) : null;
 }
 
@@ -1221,8 +1294,35 @@ export async function sbReturnPatternLoan(loanId: string): Promise<void> {
 // ============================================================
 // Background Sync - Batch Upsert
 // ============================================================
+/**
+ * Normalize a localStorage row before sending it to Postgres.
+ *
+ * Two failure sources this guards against (both silently killed whole batches):
+ * 1. Empty-string dates/timestamps ('' is not a valid DATE/TIMESTAMPTZ literal).
+ *    We drop the key entirely so column defaults still apply.
+ * 2. Internal client-side flags (`_writeFailed`, `_offlineReason`, `_pendingSync`, ...)
+ *    which do not exist as columns — Postgres rejects the entire request.
+ */
+function sanitizeRowForUpsert(row: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(row)) {
+    // Drop internal client-only flags — they are not real columns.
+    if (key.startsWith('_')) continue;
+    if (value === undefined) continue;
+
+    // Empty date/timestamp strings are invalid for Postgres → omit the key.
+    if (value === '' && /(_date|_at)$/.test(key)) continue;
+
+    clean[key] = value;
+  }
+
+  return clean;
+}
+
 export async function sbUpsertBatch(table: string, items: Record<string, unknown>[]): Promise<void> {
   if (!items || items.length === 0) return;
+ 
   
   // Map internal table names to actual Supabase table names
   const tableNameMap: Record<string, string> = {
@@ -1256,13 +1356,18 @@ export async function sbUpsertBatch(table: string, items: Record<string, unknown
     // Upsert in batches of 50 to avoid payload limits
     const BATCH_SIZE = 50;
     for (let i = 0; i < items.length; i += BATCH_SIZE) {
-      const batch = items.slice(i, i + BATCH_SIZE);
+      const batch = items.slice(i, i + BATCH_SIZE).map(sanitizeRowForUpsert);
       const { error } = await supabase
         .from(supabaseTable)
         .upsert(batch, { onConflict: 'id', ignoreDuplicates: false });
-      
+
       if (error) {
-        console.warn(`[sbUpsertBatch] ${supabaseTable} batch ${i}-${i + batch.length} error:`, error.message);
+        console.warn(
+          `[sbUpsertBatch] ${supabaseTable} batch ${i}-${i + batch.length} error:`,
+          error.code,
+          error.message,
+          error.details
+        );
       }
     }
   } catch (e) {
