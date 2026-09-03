@@ -87,6 +87,82 @@ function deletePresetRecipe(id: string) {
   savePresetRecipes(recipes);
 }
 
+// === Material Spec (材質規範) Types & Storage ===
+// 每個材質規範保存各元素的成分範圍（min/max），新增熔解批次選擇材質後自動代入「目標」列
+interface MaterialSpec {
+  id: string;
+  name: string;
+  ranges: Record<string, number>;
+  remark: string;
+  created_at: string;
+}
+
+const MATERIAL_SPECS_KEY = 'melt_material_specs';
+
+const SPEC_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
+
+// 材質下拉選單中「新增材質規範」的特殊選項值
+const ADD_SPEC_OPTION = '__add_material_spec__';
+
+function emptySpecRanges(): Record<string, number> {
+  const ranges: Record<string, number> = {};
+  SPEC_ELEMENTS.forEach(el => { ranges[`${el}_min`] = 0; ranges[`${el}_max`] = 0; });
+  return ranges;
+}
+
+function getMaterialSpecs(): MaterialSpec[] {
+  try {
+    const data = localStorage.getItem(MATERIAL_SPECS_KEY);
+    const parsed = data ? JSON.parse(data) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMaterialSpecs(specs: MaterialSpec[]) {
+  localStorage.setItem(MATERIAL_SPECS_KEY, JSON.stringify(specs));
+}
+
+function createMaterialSpec(name: string, ranges: Record<string, number>, remark: string): MaterialSpec {
+  const specs = getMaterialSpecs();
+  const newSpec: MaterialSpec = {
+    id: crypto.randomUUID(),
+    name,
+    ranges: { ...emptySpecRanges(), ...ranges },
+    remark,
+    created_at: new Date().toISOString(),
+  };
+  specs.push(newSpec);
+  saveMaterialSpecs(specs);
+  return newSpec;
+}
+
+function updateMaterialSpec(id: string, patch: { name?: string; ranges?: Record<string, number>; remark?: string }) {
+  const specs = getMaterialSpecs();
+  const idx = specs.findIndex(s => s.id === id);
+  if (idx < 0) return;
+  specs[idx] = {
+    ...specs[idx],
+    ...(patch.name !== undefined ? { name: patch.name } : {}),
+    ...(patch.remark !== undefined ? { remark: patch.remark } : {}),
+    ...(patch.ranges !== undefined ? { ranges: { ...emptySpecRanges(), ...patch.ranges } } : {}),
+  };
+  saveMaterialSpecs(specs);
+}
+
+function deleteMaterialSpec(id: string) {
+  saveMaterialSpecs(getMaterialSpecs().filter(s => s.id !== id));
+}
+
+function formatSpecRange(ranges: Record<string, number>, el: string): string {
+  const min = ranges[`${el}_min`] || 0;
+  const max = ranges[`${el}_max`] || 0;
+  if (min <= 0 && max <= 0) return '-';
+  if (min > 0 && max > 0) return `${min} ~ ${max}`;
+  return min > 0 ? `≥ ${min}` : `≤ ${max}`;
+}
+
 export default function MeltingManagement() {
   const [records, setRecords] = useState<MeltRecord[]>([]);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -96,12 +172,15 @@ export default function MeltingManagement() {
   const [filterMaterial, setFilterMaterial] = useState('');
   const [filterFurnace, setFilterFurnace] = useState('');
   const [showPresetManager, setShowPresetManager] = useState(false);
+  const [showSpecManager, setShowSpecManager] = useState(false);
+  const [materialSpecs, setMaterialSpecs] = useState<MaterialSpec[]>([]);
   const { toast } = useToast();
 
   const syncTrigger = useSyncTrigger();
 
   useEffect(() => {
     let cancelled = false;
+    setMaterialSpecs(getMaterialSpecs());
     (async () => {
       const data = await getMeltRecords();
       if (!cancelled) setRecords(data);
@@ -217,6 +296,9 @@ export default function MeltingManagement() {
             <Button onClick={() => setShowPresetManager(true)} variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 text-xs h-8">
               <Settings className="w-3.5 h-3.5 mr-1" />預設配比
             </Button>
+            <Button onClick={() => setShowSpecManager(true)} variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 text-xs h-8">
+              <FlaskConical className="w-3.5 h-3.5 mr-1" />材質規範
+            </Button>
             <Button onClick={handleCopyLast} variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 text-xs h-8">
               <Copy className="w-3.5 h-3.5 mr-1" />複製上一爐
             </Button>
@@ -290,12 +372,21 @@ export default function MeltingManagement() {
           onSaved={() => { refreshRecords(); }}
           onSavedAndNew={() => { refreshRecords(); setEditingRecord(null); }}
           existingMaterials={uniqueMaterials}
+          materialSpecs={materialSpecs}
+          onRequestAddSpec={() => setShowSpecManager(true)}
         />
 
         {/* Preset Recipe Manager Dialog */}
         <PresetRecipeManager
           open={showPresetManager}
           onOpenChange={setShowPresetManager}
+        />
+
+        {/* Material Spec Manager Dialog */}
+        <MaterialSpecManager
+          open={showSpecManager}
+          onOpenChange={setShowSpecManager}
+          onChanged={() => setMaterialSpecs(getMaterialSpecs())}
         />
       </div>
     </AppLayout>
@@ -737,14 +828,243 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
   );
 }
 
+// === Material Spec Manager (材質規範管理) ===
+function MaterialSpecManager({ open, onOpenChange, onChanged }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChanged: () => void;
+}) {
+  const [specs, setSpecs] = useState<MaterialSpec[]>([]);
+  const [isAdding, setIsAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState('');
+  const [draftRemark, setDraftRemark] = useState('');
+  const [draftRanges, setDraftRanges] = useState<Record<string, number>>(emptySpecRanges());
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (open) {
+      setSpecs(getMaterialSpecs());
+      setIsAdding(false);
+      setEditingId(null);
+      setDraftName('');
+      setDraftRemark('');
+      setDraftRanges(emptySpecRanges());
+    }
+  }, [open]);
+
+  const refresh = () => {
+    setSpecs(getMaterialSpecs());
+    onChanged();
+  };
+
+  const resetDraft = () => {
+    setIsAdding(false);
+    setEditingId(null);
+    setDraftName('');
+    setDraftRemark('');
+    setDraftRanges(emptySpecRanges());
+  };
+
+  const validateDraft = (): string | null => {
+    if (!draftName.trim()) return '請輸入材質名稱';
+    const hasRange = SPEC_ELEMENTS.some(el => (draftRanges[`${el}_min`] || 0) > 0 || (draftRanges[`${el}_max`] || 0) > 0);
+    if (!hasRange) return '請至少填寫一項成分範圍';
+    for (const el of SPEC_ELEMENTS) {
+      const min = draftRanges[`${el}_min`] || 0;
+      const max = draftRanges[`${el}_max`] || 0;
+      if (min > 0 && max > 0 && min > max) return `${el} 的下限不可大於上限`;
+    }
+    return null;
+  };
+
+  const handleSaveNew = () => {
+    const error = validateDraft();
+    if (error) { toast({ title: error, variant: 'destructive' }); return; }
+    if (getMaterialSpecs().some(s => s.name.trim() === draftName.trim())) {
+      toast({ title: '此材質規範名稱已存在', variant: 'destructive' });
+      return;
+    }
+    createMaterialSpec(draftName.trim(), draftRanges, draftRemark.trim());
+    refresh();
+    resetDraft();
+    toast({ title: '材質規範已建立' });
+  };
+
+  const handleStartEdit = (spec: MaterialSpec) => {
+    setIsAdding(false);
+    setEditingId(spec.id);
+    setDraftName(spec.name);
+    setDraftRemark(spec.remark || '');
+    setDraftRanges({ ...emptySpecRanges(), ...spec.ranges });
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingId) return;
+    const error = validateDraft();
+    if (error) { toast({ title: error, variant: 'destructive' }); return; }
+    if (getMaterialSpecs().some(s => s.id !== editingId && s.name.trim() === draftName.trim())) {
+      toast({ title: '此材質規範名稱已存在', variant: 'destructive' });
+      return;
+    }
+    updateMaterialSpec(editingId, { name: draftName.trim(), ranges: draftRanges, remark: draftRemark.trim() });
+    refresh();
+    resetDraft();
+    toast({ title: '材質規範已更新' });
+  };
+
+  const handleDelete = (spec: MaterialSpec) => {
+    if (!window.confirm(`確定要刪除材質規範「${spec.name}」？`)) return;
+    deleteMaterialSpec(spec.id);
+    refresh();
+    if (editingId === spec.id) resetDraft();
+    toast({ title: '材質規範已刪除' });
+  };
+
+  const renderRangeEditor = () => (
+    <div className="space-y-2">
+      <div>
+        <Label className="text-zinc-400 text-xs">材質名稱 *</Label>
+        <Input value={draftName} onChange={e => setDraftName(e.target.value)} placeholder="例: SCM440、316L、FCD450" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
+      </div>
+      <div>
+        <Label className="text-zinc-400 text-xs">成分規範（%）</Label>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-1">
+          {SPEC_ELEMENTS.map(el => (
+            <div key={el} className="bg-zinc-800/60 border border-zinc-600 rounded-md p-1.5">
+              <p className="text-[11px] font-medium text-purple-300 mb-1">{el}</p>
+              <div className="flex items-center gap-1">
+                <Input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={draftRanges[`${el}_min`] || ''}
+                  onChange={e => setDraftRanges({ ...draftRanges, [`${el}_min`]: Math.max(0, Number(e.target.value)) })}
+                  placeholder="min"
+                  className="bg-zinc-700 border-zinc-600 text-zinc-100 h-6 text-[10px] text-center px-1"
+                />
+                <span className="text-[10px] text-zinc-500">~</span>
+                <Input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={draftRanges[`${el}_max`] || ''}
+                  onChange={e => setDraftRanges({ ...draftRanges, [`${el}_max`]: Math.max(0, Number(e.target.value)) })}
+                  placeholder="max"
+                  className="bg-zinc-700 border-zinc-600 text-zinc-100 h-6 text-[10px] text-center px-1"
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] text-zinc-500 mt-1">Fe 為餘量（Bal），無須輸入。</p>
+      </div>
+      <div>
+        <Label className="text-zinc-400 text-xs">備註</Label>
+        <Input value={draftRemark} onChange={e => setDraftRemark(e.target.value)} placeholder="例: 客戶指定規範 / 依 JIS 標準" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
+      </div>
+    </div>
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="bg-zinc-800 border-zinc-700 max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-zinc-100 flex items-center gap-2">
+            <FlaskConical className="w-5 h-5 text-purple-400" />
+            材質規範管理
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <p className="text-xs text-zinc-500">
+            建立各材質的成分規範後，新增熔解批次時選擇材質，最下方「成份紀錄」的目標值會自動代入，無須每次手動輸入。
+          </p>
+
+          {specs.length === 0 && !isAdding && (
+            <p className="text-sm text-zinc-400 text-center py-4">尚無材質規範，點擊下方按鈕新增</p>
+          )}
+
+          {specs.map(spec => (
+            <Card key={spec.id} className="bg-zinc-700/30 border-zinc-700">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-purple-300">{spec.name}</span>
+                  <div className="flex items-center gap-1">
+                    {editingId === spec.id ? (
+                      <>
+                        <Button size="sm" variant="ghost" onClick={resetDraft} className="text-zinc-400 hover:text-zinc-200 h-6 px-2 text-xs">取消</Button>
+                        <Button size="sm" onClick={handleSaveEdit} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-6 px-2 text-xs">儲存</Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button size="sm" variant="ghost" onClick={() => handleStartEdit(spec)} className="text-zinc-400 hover:text-blue-400 h-6 w-6 p-0">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => handleDelete(spec)} className="text-zinc-400 hover:text-red-400 h-6 w-6 p-0">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {editingId === spec.id ? renderRangeEditor() : (
+                  <>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-zinc-500 border-b border-zinc-700">
+                            {SPEC_ELEMENTS.map(el => (<th key={el} className="text-center py-1 px-1">{el}</th>))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="text-zinc-300">
+                            {SPEC_ELEMENTS.map(el => (
+                              <td key={el} className="text-center py-1 px-1 whitespace-nowrap">{formatSpecRange(spec.ranges, el)}</td>
+                            ))}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    {spec.remark && <p className="text-xs text-zinc-500 mt-1">備註: {spec.remark}</p>}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+
+          {isAdding ? (
+            <Card className="bg-zinc-700/20 border-zinc-600 border-dashed">
+              <CardContent className="p-3 space-y-3">
+                {renderRangeEditor()}
+                <div className="flex gap-2 justify-end">
+                  <Button size="sm" variant="ghost" onClick={resetDraft} className="text-zinc-400 h-7 text-xs">取消</Button>
+                  <Button size="sm" onClick={handleSaveNew} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-7 text-xs">儲存材質規範</Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Button onClick={() => { resetDraft(); setIsAdding(true); }} variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 w-full h-9">
+              <Plus className="w-4 h-4 mr-2" />新增材質規範
+            </Button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // === Single Page Form Dialog (No Tabs) ===
-function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew, existingMaterials }: {
+function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew, existingMaterials, materialSpecs, onRequestAddSpec }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editRecord: MeltRecord | null;
   onSaved: () => void;
   onSavedAndNew: () => void;
   existingMaterials: string[];
+  materialSpecs: MaterialSpec[];
+  onRequestAddSpec: () => void;
 }) {
   const isEdit = !!editRecord;
   const { toast } = useToast();
@@ -779,6 +1099,41 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
     AFTER_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
   });
   const [autoCalcFe, setAutoCalcFe] = useState(true);
+
+  // 材質規範：下拉選單選項（規範名稱 + 歷史材質），以及選取後自動代入目標值
+  const materialGradeOptions = [...new Set([
+    ...materialSpecs.map(s => s.name),
+    ...existingMaterials,
+    ...(form.material_grade ? [form.material_grade] : []),
+  ])].filter(Boolean);
+  const selectedSpec = materialSpecs.find(s => s.name === form.material_grade) || null;
+
+  const applySpecToTargetRange = (spec: MaterialSpec) => {
+    const applied: Record<string, number> = {
+      C_min: 0, C_max: 0, Si_min: 0, Si_max: 0, Mn_min: 0, Mn_max: 0,
+      P_min: 0, P_max: 0, S_min: 0, S_max: 0, Ni_min: 0, Ni_max: 0,
+      Cr_min: 0, Cr_max: 0, Mo_min: 0, Mo_max: 0, Cu_min: 0, Cu_max: 0,
+    };
+    SPEC_ELEMENTS.forEach(el => {
+      applied[`${el}_min`] = spec.ranges[`${el}_min`] || 0;
+      applied[`${el}_max`] = spec.ranges[`${el}_max`] || 0;
+    });
+    setTargetRange(applied);
+  };
+
+  const handleMaterialGradeChange = (value: string) => {
+    if (value === ADD_SPEC_OPTION) {
+      onOpenChange(false);
+      onRequestAddSpec();
+      return;
+    }
+    setForm(prev => ({ ...prev, material_grade: value }));
+    const spec = materialSpecs.find(s => s.name === value);
+    if (spec) {
+      applySpecToTargetRange(spec);
+      toast({ title: `已套用材質規範「${spec.name}」`, description: '成份紀錄的目標值已自動代入' });
+    }
+  };
 
   // Collapsible states
   const [materialsOpen, setMaterialsOpen] = useState(true);
@@ -1095,9 +1450,28 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
                   <Input type="date" value={form.melt_date} onChange={e => setForm({ ...form, melt_date: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
                 </div>
                 <div>
-                  <Label className="text-zinc-400 text-xs">材質 *</Label>
-                  <Input value={form.material_grade} onChange={e => setForm({ ...form, material_grade: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" placeholder="例: SCM440, 316L" list="mat-hist-list" />
-                  <datalist id="mat-hist-list">{existingMaterials.map(m => <option key={m} value={m} />)}</datalist>
+                  <Label className="text-zinc-400 text-xs">材質 *（來自材質規範）</Label>
+                  <Select value={form.material_grade} onValueChange={handleMaterialGradeChange}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8"><SelectValue placeholder="選擇材質規範" /></SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">
+                      {materialGradeOptions.length === 0 && (
+                        <SelectItem value="__none__" disabled className="text-zinc-400">尚無材質規範</SelectItem>
+                      )}
+                      {materialGradeOptions.map(name => (
+                        <SelectItem key={name} value={name} className="text-zinc-100">
+                          {name}{materialSpecs.some(s => s.name === name) ? '' : '（無規範）'}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value={ADD_SPEC_OPTION} className="text-purple-300">＋ 新增材質規範</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {selectedSpec ? (
+                    <p className="text-[11px] text-purple-300 mt-1">
+                      已套用「{selectedSpec.name}」規範，成份紀錄目標值已自動代入
+                    </p>
+                  ) : form.material_grade ? (
+                    <p className="text-[11px] text-zinc-500 mt-1">此材質尚無成分規範，目標值請手動輸入</p>
+                  ) : null}
                 </div>
                 <div>
                   <Label className="text-zinc-400 text-xs">爐號 *</Label>
