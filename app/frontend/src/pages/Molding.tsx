@@ -296,9 +296,15 @@ export default function Molding() {
                   )}
                 </div>
                 {selectedWo && (
-                  <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600">
-                    <Label className="text-zinc-400 text-xs">工單預估重量</Label>
-                    <p className="text-sm font-medium text-zinc-100">{selectedWo.estimated_weight > 0 ? `${selectedWo.estimated_weight} kg` : '未填寫'}</p>
+                  <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600 grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-zinc-400 text-xs">工單數量</Label>
+                      <p className="text-sm font-medium text-zinc-100">{selectedWo.quantity > 0 ? `${selectedWo.quantity} 件` : '未填寫'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-zinc-400 text-xs">工單預估重量</Label>
+                      <p className="text-sm font-medium text-zinc-100">{selectedWo.estimated_weight > 0 ? `${selectedWo.estimated_weight} kg` : '未填寫'}</p>
+                    </div>
                   </div>
                 )}
                 <div>
@@ -464,9 +470,15 @@ export default function Molding() {
                 {(() => {
                   const wo = allWorkOrders.find(w => w.id === editBatch.work_order_id);
                   return wo ? (
-                    <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600">
-                      <Label className="text-zinc-400 text-xs">工單預估重量</Label>
-                      <p className="text-sm font-medium text-zinc-100">{wo.estimated_weight > 0 ? `${wo.estimated_weight} kg` : '未填寫'}</p>
+                    <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600 grid grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-zinc-400 text-xs">工單數量</Label>
+                        <p className="text-sm font-medium text-zinc-100">{wo.quantity > 0 ? `${wo.quantity} 件` : '未填寫'}</p>
+                      </div>
+                      <div>
+                        <Label className="text-zinc-400 text-xs">工單預估重量</Label>
+                        <p className="text-sm font-medium text-zinc-100">{wo.estimated_weight > 0 ? `${wo.estimated_weight} kg` : '未填寫'}</p>
+                      </div>
                     </div>
                   ) : null;
                 })()}
