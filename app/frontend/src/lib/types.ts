@@ -194,8 +194,9 @@ export interface QualityInspection {
   created_at: string;
 }
 
-// 檢驗判定：OK 合格、NG 不合格、X 不適用／未檢驗
-export type InspectionItemVerdict = 'OK' | 'NG' | 'X';
+// 檢驗判定：OK 合格、PNG 部分不合格、ANG 全部不合格、X 不適用／未檢驗
+// 'NG' 為舊版判定值，保留以相容既有歷史紀錄
+export type InspectionItemVerdict = 'OK' | 'PNG' | 'ANG' | 'X' | 'NG';
 
 export interface InspectionItemResult {
   item: string;

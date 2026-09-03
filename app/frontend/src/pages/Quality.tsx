@@ -14,7 +14,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import {
   Plus, Search, ClipboardCheck, AlertTriangle, TrendingUp, FileText,
-  CheckCircle2, XCircle, AlertCircle, Eye, Trash2, BarChart3, Check, ChevronsUpDown
+  CheckCircle2, XCircle, AlertCircle, Eye, Trash2, BarChart3, Check, ChevronsUpDown,
+  Upload, Image as ImageIcon, Loader2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
@@ -143,22 +144,64 @@ function BatchCombobox({ batches, value, onSelect, placeholder, emptyText }: {
   );
 }
 
-// 檢驗項目判定：OK 合格、NG 不合格、X 不適用／未檢驗
-type ItemVerdict = 'OK' | 'NG' | 'X';
+// 檢驗項目判定：OK 合格、PNG 部分不合格、ANG 全部不合格、X 不適用／未檢驗
+type ItemVerdict = 'OK' | 'PNG' | 'ANG' | 'X';
 
-function getVerdictTriggerClass(v: ItemVerdict): string {
+const VERDICT_OPTIONS: { value: ItemVerdict; label: string }[] = [
+  { value: 'OK', label: 'OK（合格）' },
+  { value: 'PNG', label: 'PNG（部分不合格）' },
+  { value: 'ANG', label: 'ANG（全部不合格）' },
+  { value: 'X', label: 'X（不適用）' },
+];
+
+function getVerdictTriggerClass(v: string): string {
   switch (v) {
     case 'OK': return 'bg-green-900/30 border-green-700 text-green-300';
+    case 'PNG': return 'bg-amber-900/30 border-amber-700 text-amber-300';
+    case 'ANG':
     case 'NG': return 'bg-red-900/30 border-red-700 text-red-300';
     default: return 'bg-slate-700 border-slate-600 text-slate-300';
   }
 }
 
-function getVerdictBadgeClass(v: ItemVerdict): string {
+function getVerdictBadgeClass(v: string): string {
   switch (v) {
     case 'OK': return 'bg-green-600 text-white';
+    case 'PNG': return 'bg-amber-600 text-white';
+    case 'ANG':
     case 'NG': return 'bg-red-600 text-white';
     default: return 'bg-slate-600 text-slate-100';
+  }
+}
+
+// 上傳照片壓縮：等比縮至最長邊 1280px 並轉為 JPEG，避免資料量過大
+const MAX_PHOTOS = 6;
+
+async function compressImageToDataUrl(file: File, maxSize = 1280, quality = 0.72): Promise<string> {
+  const rawDataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('讀取檔案失敗'));
+    reader.readAsDataURL(file);
+  });
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('圖片解析失敗'));
+      image.src = rawDataUrl;
+    });
+    const longest = Math.max(img.width, img.height) || maxSize;
+    const scale = Math.min(1, maxSize / longest);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return rawDataUrl;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', quality);
+  } catch {
+    return rawDataUrl;
   }
 }
 
@@ -208,6 +251,9 @@ export default function Quality() {
     remarks: '',
   });
   const [itemResults, setItemResults] = useState<InspectionItemResult[]>([]);
+  // 檢驗照片（壓縮後的 data URL）
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [photoUploading, setPhotoUploading] = useState(false);
 
   // Form state for defect
   const [defectForm, setDefectForm] = useState({
@@ -317,11 +363,12 @@ export default function Quality() {
       inspector: '',
       inspected_quantity: 0,
       pass_quantity: 0,
-      sampling_method: type === 'OQC' ? '抽檢 AQL 2.5' : '全檢',
+      sampling_method: type === 'OQC' ? '抽檢' : '全檢',
       remarks: '',
     });
     const items = getInspectionItems(type);
     setItemResults(items.map(item => ({ item, result: 'OK' as const })));
+    setPhotos([]);
     setShowInspectionDialog(true);
   };
 
@@ -368,17 +415,57 @@ export default function Quality() {
     setItemResults(prev => prev.filter((_, i) => i !== idx));
   };
 
+  // 上傳檢驗照片（可多張，壓縮後保存）
+  const handlePhotoUpload = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+    if (files.length === 0) {
+      toast({ title: '請選擇圖片檔案', variant: 'destructive' });
+      return;
+    }
+    const available = MAX_PHOTOS - photos.length;
+    if (available <= 0) {
+      toast({ title: `照片數量已達上限（${MAX_PHOTOS} 張）`, variant: 'destructive' });
+      return;
+    }
+    setPhotoUploading(true);
+    try {
+      const accepted = files.slice(0, available);
+      const encoded: string[] = [];
+      for (const file of accepted) {
+        encoded.push(await compressImageToDataUrl(file));
+      }
+      setPhotos(prev => [...prev, ...encoded]);
+      if (files.length > accepted.length) {
+        toast({ title: `僅上傳前 ${accepted.length} 張`, description: `每筆檢驗最多 ${MAX_PHOTOS} 張照片` });
+      }
+    } catch (err) {
+      console.error('[Quality] photo upload failed:', err);
+      toast({ title: '照片處理失敗，請重新選擇', variant: 'destructive' });
+    } finally {
+      setPhotoUploading(false);
+    }
+  };
+
+  const removePhoto = (idx: number) => {
+    setPhotos(prev => prev.filter((_, i) => i !== idx));
+  };
+
   // Submit inspection
   const submitInspection = async () => {
     // 濾除未填項目名稱的空白列；量測值／標準值／備註皆可不填
     const validItems = itemResults.filter(r => (r.item || '').trim() !== '');
-    const ngCount = validItems.filter(r => r.result === 'NG').length;
+    // PNG（部分不合格）／ANG（全部不合格）／舊值 NG 皆視為不合格項目；X 不計入
+    const ngCount = validItems.filter(r => r.result === 'PNG' || r.result === 'ANG' || r.result === 'NG').length;
+    const hasAllNg = validItems.some(r => r.result === 'ANG');
     const defectCount = inspForm.inspected_quantity - inspForm.pass_quantity;
     const yieldRate = inspForm.inspected_quantity > 0
       ? (inspForm.pass_quantity / inspForm.inspected_quantity) * 100
       : 0;
     let result: InspectionResult = 'PASS';
-    if (ngCount > 0 || defectCount > 0) {
+    if (hasAllNg) {
+      result = 'FAIL';
+    } else if (ngCount > 0 || defectCount > 0) {
       result = defectCount > inspForm.inspected_quantity * 0.1 ? 'FAIL' : 'CONDITIONAL';
     }
 
@@ -403,6 +490,7 @@ export default function Quality() {
         sampling_method: inspForm.sampling_method,
         item_results: validItems,
         defects: [],
+        attachments: photos,
         remarks: inspForm.remarks,
       });
       setShowInspectionDialog(false);
@@ -1052,19 +1140,26 @@ export default function Quality() {
                   <span className="text-xs text-slate-400">Heat No</span>
                   <p className="text-sm text-slate-200">{inspForm.heat_no || '-'}</p>
                 </div>
-                <div>
-                  <span className="text-xs text-slate-400">抽樣方式</span>
-                  <Input
-                    value={inspForm.sampling_method}
-                    onChange={e => setInspForm(prev => ({ ...prev, sampling_method: e.target.value }))}
-                    className="bg-slate-700 border-slate-600 text-slate-200 h-7 text-sm"
-                  />
-                </div>
               </div>
             )}
 
             {/* Quantity */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label className="text-slate-300">抽樣方式</Label>
+                <Select
+                  value={inspForm.sampling_method}
+                  onValueChange={val => setInspForm(prev => ({ ...prev, sampling_method: val }))}
+                >
+                  <SelectTrigger className="bg-slate-700 border-slate-600 text-slate-200">
+                    <SelectValue placeholder="選擇抽樣方式" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="全檢">全檢</SelectItem>
+                    <SelectItem value="抽檢">抽檢</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div>
                 <Label className="text-slate-300">檢驗數量</Label>
                 <Input
@@ -1091,7 +1186,7 @@ export default function Quality() {
                 <Label className="text-slate-300">
                   檢驗項目
                   <span className="ml-2 text-xs font-normal text-slate-500">
-                    判定：OK 合格／NG 不合格／X 不適用；量測值、標準值、備註可不填
+                    判定：OK 合格／PNG 部分不合格／ANG 全部不合格／X 不適用；量測值、標準值、備註可不填
                   </span>
                 </Label>
                 <Button
@@ -1138,13 +1233,13 @@ export default function Quality() {
                             value={item.result}
                             onValueChange={(val: ItemVerdict) => updateInspectionItem(idx, { result: val })}
                           >
-                            <SelectTrigger className={`w-20 h-8 text-xs ${getVerdictTriggerClass(item.result)}`}>
+                            <SelectTrigger className={`w-24 h-8 text-xs ${getVerdictTriggerClass(item.result)}`}>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="OK">OK</SelectItem>
-                              <SelectItem value="NG">NG</SelectItem>
-                              <SelectItem value="X">X</SelectItem>
+                              {VERDICT_OPTIONS.map(opt => (
+                                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </TableCell>
@@ -1189,6 +1284,61 @@ export default function Quality() {
                   </TableBody>
                 </Table>
               </div>
+            </div>
+
+            {/* Photo Upload */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-slate-300">
+                  上傳照片
+                  <span className="ml-2 text-xs font-normal text-slate-500">
+                    最多 {MAX_PHOTOS} 張，選填
+                  </span>
+                </Label>
+                <label className="inline-flex">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    disabled={photoUploading || photos.length >= MAX_PHOTOS}
+                    onChange={e => { handlePhotoUpload(e.target.files); e.target.value = ''; }}
+                  />
+                  <span
+                    className={`inline-flex items-center h-7 px-3 rounded-md border text-xs cursor-pointer ${
+                      photoUploading || photos.length >= MAX_PHOTOS
+                        ? 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'
+                        : 'bg-slate-700 border-slate-600 text-slate-200 hover:bg-slate-600'
+                    }`}
+                  >
+                    {photoUploading
+                      ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />處理中</>
+                      : <><Upload className="w-3 h-3 mr-1" />選擇照片</>}
+                  </span>
+                </label>
+              </div>
+              {photos.length === 0 ? (
+                <div className="border border-dashed border-slate-600 rounded-lg py-6 text-center">
+                  <ImageIcon className="w-6 h-6 mx-auto text-slate-500 mb-1" />
+                  <p className="text-xs text-slate-400">尚未上傳照片，可點擊右上方「選擇照片」</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {photos.map((src, idx) => (
+                    <div key={idx} className="relative group rounded-md overflow-hidden border border-slate-600">
+                      <img src={src} alt={`檢驗照片 ${idx + 1}`} className="w-full h-20 object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removePhoto(idx)}
+                        className="absolute top-1 right-1 rounded-full bg-slate-900/80 p-1 text-slate-300 hover:text-red-400"
+                        title="移除此照片"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Remarks */}
@@ -1303,6 +1453,27 @@ export default function Quality() {
                       ))}
                     </TableBody>
                   </Table>
+                </div>
+              )}
+
+              {/* 檢驗照片 */}
+              {selectedInspection.attachments && selectedInspection.attachments.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-300 mb-2">檢驗照片</h4>
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                    {selectedInspection.attachments.map((src, idx) => (
+                      <a
+                        key={idx}
+                        href={src}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block rounded-md overflow-hidden border border-slate-600 hover:border-blue-500"
+                        title="點擊放大檢視"
+                      >
+                        <img src={src} alt={`檢驗照片 ${idx + 1}`} className="w-full h-20 object-cover" />
+                      </a>
+                    ))}
+                  </div>
                 </div>
               )}
 
