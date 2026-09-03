@@ -194,9 +194,12 @@ export interface QualityInspection {
   created_at: string;
 }
 
+// 檢驗判定：OK 合格、NG 不合格、X 不適用／未檢驗
+export type InspectionItemVerdict = 'OK' | 'NG' | 'X';
+
 export interface InspectionItemResult {
   item: string;
-  result: 'OK' | 'NG';
+  result: InspectionItemVerdict;
   measured_value?: string;
   standard_value?: string;
   remarks?: string;

@@ -143,6 +143,25 @@ function BatchCombobox({ batches, value, onSelect, placeholder, emptyText }: {
   );
 }
 
+// 檢驗項目判定：OK 合格、NG 不合格、X 不適用／未檢驗
+type ItemVerdict = 'OK' | 'NG' | 'X';
+
+function getVerdictTriggerClass(v: ItemVerdict): string {
+  switch (v) {
+    case 'OK': return 'bg-green-900/30 border-green-700 text-green-300';
+    case 'NG': return 'bg-red-900/30 border-red-700 text-red-300';
+    default: return 'bg-slate-700 border-slate-600 text-slate-300';
+  }
+}
+
+function getVerdictBadgeClass(v: ItemVerdict): string {
+  switch (v) {
+    case 'OK': return 'bg-green-600 text-white';
+    case 'NG': return 'bg-red-600 text-white';
+    default: return 'bg-slate-600 text-slate-100';
+  }
+}
+
 function getDispositionLabel(d: DefectDisposition): string {
   switch (d) {
     case 'REWORK': return '返工';
@@ -334,9 +353,26 @@ export default function Quality() {
     }));
   };
 
+  // 檢驗項目：更新單列欄位
+  const updateInspectionItem = (idx: number, patch: Partial<InspectionItemResult>) => {
+    setItemResults(prev => prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
+  };
+
+  // 檢驗項目：新增一列（可自行輸入項目名稱）
+  const addInspectionItem = () => {
+    setItemResults(prev => [...prev, { item: '', result: 'OK' as ItemVerdict, measured_value: '', standard_value: '', remarks: '' }]);
+  };
+
+  // 檢驗項目：刪除一列
+  const removeInspectionItem = (idx: number) => {
+    setItemResults(prev => prev.filter((_, i) => i !== idx));
+  };
+
   // Submit inspection
   const submitInspection = async () => {
-    const ngCount = itemResults.filter(r => r.result === 'NG').length;
+    // 濾除未填項目名稱的空白列；量測值／標準值／備註皆可不填
+    const validItems = itemResults.filter(r => (r.item || '').trim() !== '');
+    const ngCount = validItems.filter(r => r.result === 'NG').length;
     const defectCount = inspForm.inspected_quantity - inspForm.pass_quantity;
     const yieldRate = inspForm.inspected_quantity > 0
       ? (inspForm.pass_quantity / inspForm.inspected_quantity) * 100
@@ -365,7 +401,7 @@ export default function Quality() {
         defect_count: defectCount,
         yield_rate: Math.round(yieldRate * 100) / 100,
         sampling_method: inspForm.sampling_method,
-        item_results: itemResults,
+        item_results: validItems,
         defects: [],
         remarks: inspForm.remarks,
       });
@@ -1051,75 +1087,102 @@ export default function Quality() {
 
             {/* Inspection Items */}
             <div>
-              <Label className="text-slate-300 mb-2 block">檢驗項目</Label>
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-slate-300">
+                  檢驗項目
+                  <span className="ml-2 text-xs font-normal text-slate-500">
+                    判定：OK 合格／NG 不合格／X 不適用；量測值、標準值、備註可不填
+                  </span>
+                </Label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={addInspectionItem}
+                  className="h-7 text-xs bg-slate-700 border-slate-600 text-slate-200 hover:bg-slate-600 hover:text-slate-100"
+                >
+                  <Plus className="w-3 h-3 mr-1" />新增項目
+                </Button>
+              </div>
               <div className="border border-slate-600 rounded-lg overflow-hidden">
                 <Table>
                   <TableHeader>
                     <TableRow className="border-slate-600">
-                      <TableHead className="text-slate-300 w-32">項目</TableHead>
+                      <TableHead className="text-slate-300 w-40">項目</TableHead>
                       <TableHead className="text-slate-300 w-24">判定</TableHead>
                       <TableHead className="text-slate-300">量測值</TableHead>
                       <TableHead className="text-slate-300">標準值</TableHead>
                       <TableHead className="text-slate-300">備註</TableHead>
+                      <TableHead className="text-slate-300 w-12 text-center">刪除</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {itemResults.map((item, idx) => (
+                    {itemResults.length === 0 ? (
+                      <TableRow className="border-slate-600">
+                        <TableCell colSpan={6} className="text-center text-sm text-slate-400 py-4">
+                          尚無檢驗項目，請點擊右上方「新增項目」
+                        </TableCell>
+                      </TableRow>
+                    ) : itemResults.map((item, idx) => (
                       <TableRow key={idx} className="border-slate-600">
-                        <TableCell className="text-slate-200 text-sm">{item.item}</TableCell>
+                        <TableCell>
+                          <Input
+                            value={item.item}
+                            onChange={e => updateInspectionItem(idx, { item: e.target.value })}
+                            className="bg-slate-700 border-slate-600 text-slate-200 h-8 text-sm"
+                            placeholder="檢驗項目名稱"
+                          />
+                        </TableCell>
                         <TableCell>
                           <Select
                             value={item.result}
-                            onValueChange={(val: 'OK' | 'NG') => {
-                              const updated = [...itemResults];
-                              updated[idx] = { ...updated[idx], result: val };
-                              setItemResults(updated);
-                            }}
+                            onValueChange={(val: ItemVerdict) => updateInspectionItem(idx, { result: val })}
                           >
-                            <SelectTrigger className={`w-20 h-8 text-xs ${item.result === 'OK' ? 'bg-green-900/30 border-green-700' : 'bg-red-900/30 border-red-700'}`}>
+                            <SelectTrigger className={`w-20 h-8 text-xs ${getVerdictTriggerClass(item.result)}`}>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="OK">OK</SelectItem>
                               <SelectItem value="NG">NG</SelectItem>
+                              <SelectItem value="X">X</SelectItem>
                             </SelectContent>
                           </Select>
                         </TableCell>
                         <TableCell>
                           <Input
                             value={item.measured_value || ''}
-                            onChange={e => {
-                              const updated = [...itemResults];
-                              updated[idx] = { ...updated[idx], measured_value: e.target.value };
-                              setItemResults(updated);
-                            }}
+                            onChange={e => updateInspectionItem(idx, { measured_value: e.target.value })}
                             className="bg-slate-700 border-slate-600 text-slate-200 h-8 text-sm"
-                            placeholder="-"
+                            placeholder="可不填"
                           />
                         </TableCell>
                         <TableCell>
                           <Input
                             value={item.standard_value || ''}
-                            onChange={e => {
-                              const updated = [...itemResults];
-                              updated[idx] = { ...updated[idx], standard_value: e.target.value };
-                              setItemResults(updated);
-                            }}
+                            onChange={e => updateInspectionItem(idx, { standard_value: e.target.value })}
                             className="bg-slate-700 border-slate-600 text-slate-200 h-8 text-sm"
-                            placeholder="-"
+                            placeholder="可不填"
                           />
                         </TableCell>
                         <TableCell>
                           <Input
                             value={item.remarks || ''}
-                            onChange={e => {
-                              const updated = [...itemResults];
-                              updated[idx] = { ...updated[idx], remarks: e.target.value };
-                              setItemResults(updated);
-                            }}
+                            onChange={e => updateInspectionItem(idx, { remarks: e.target.value })}
                             className="bg-slate-700 border-slate-600 text-slate-200 h-8 text-sm"
-                            placeholder="-"
+                            placeholder="可不填"
                           />
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => removeInspectionItem(idx)}
+                            className="h-7 w-7 text-slate-400 hover:text-red-400 hover:bg-red-900/20"
+                            title="刪除此檢驗項目"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1229,7 +1292,7 @@ export default function Quality() {
                         <TableRow key={idx} className="border-slate-600">
                           <TableCell className="text-slate-200 text-sm">{item.item}</TableCell>
                           <TableCell>
-                            <Badge className={item.result === 'OK' ? 'bg-green-600' : 'bg-red-600'}>
+                            <Badge className={getVerdictBadgeClass(item.result)}>
                               {item.result}
                             </Badge>
                           </TableCell>
