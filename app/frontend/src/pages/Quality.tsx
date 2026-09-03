@@ -10,10 +10,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import {
   Plus, Search, ClipboardCheck, AlertTriangle, TrendingUp, FileText,
-  CheckCircle2, XCircle, AlertCircle, Eye, Trash2, BarChart3
+  CheckCircle2, XCircle, AlertCircle, Eye, Trash2, BarChart3, Check, ChevronsUpDown
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { toast } from '@/hooks/use-toast';
 import AppLayout from '@/components/layout/AppLayout';
 import {
   dsGetQualityInspections, dsCreateQualityInspection, dsDeleteQualityInspection,
@@ -81,6 +85,64 @@ function getCAPAStatusBadge(status: CAPAStatus) {
   return <Badge className={info.className}>{info.label}</Badge>;
 }
 
+// 可檢索的造模批次下拉選單（支援批次號、客戶、品名檢索）
+function BatchCombobox({ batches, value, onSelect, placeholder, emptyText }: {
+  batches: any[];
+  value: string;
+  onSelect: (batchId: string) => void;
+  placeholder: string;
+  emptyText: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = batches.find(b => b.id === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between bg-slate-700 border-slate-600 text-slate-200 hover:bg-slate-600 hover:text-slate-100 font-normal"
+        >
+          <span className="truncate">
+            {selected
+              ? `${selected.batch_no}｜${selected.customer || '-'}｜${selected.product_name || '-'}`
+              : placeholder}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] min-w-[320px] p-0 bg-slate-800 border-slate-700" align="start">
+        <Command className="bg-slate-800">
+          <CommandInput placeholder="搜尋批次號 / 客戶 / 品名..." className="text-slate-200" />
+          <CommandList>
+            <CommandEmpty className="py-4 text-center text-sm text-slate-400">{emptyText}</CommandEmpty>
+            <CommandGroup>
+              {batches.map(b => (
+                <CommandItem
+                  key={b.id}
+                  value={`${b.batch_no || ''} ${b.customer || ''} ${b.product_name || ''} ${b.order_no || ''}`}
+                  onSelect={() => { onSelect(b.id); setOpen(false); }}
+                  className="text-slate-200 aria-selected:bg-slate-700"
+                >
+                  <Check className={cn('mr-2 h-4 w-4 shrink-0', value === b.id ? 'opacity-100' : 'opacity-0')} />
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-sm font-mono truncate">{b.batch_no}</span>
+                    <span className="text-xs text-slate-400 truncate">
+                      {b.customer || '-'}｜{b.product_name || '-'}｜{b.quantity_completed || b.quantity_planned || b.quantity || 0}件
+                    </span>
+                  </div>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function getDispositionLabel(d: DefectDisposition): string {
   switch (d) {
     case 'REWORK': return '返工';
@@ -111,7 +173,7 @@ export default function Quality() {
 
   // Form state for new inspection
   const [inspForm, setInspForm] = useState({
-    type: 'IPQC' as InspectionType,
+    type: 'FAI' as InspectionType,
     batch_id: '',
     batch_no: '',
     work_order_id: '',
@@ -222,7 +284,7 @@ export default function Quality() {
   }, [inspections, defectRecords, capaRecords]);
 
   // Open new inspection dialog
-  const openNewInspection = (type: InspectionType = 'IPQC') => {
+  const openNewInspection = (type: InspectionType = 'FAI') => {
     setInspForm({
       type,
       batch_id: '',
@@ -244,6 +306,13 @@ export default function Quality() {
     setShowInspectionDialog(true);
   };
 
+  // 首件檢驗只可選擇「已完成」狀態之造模批次；其他檢驗類型維持全部批次
+  const selectableBatches = useMemo(() => {
+    const sorted = [...batches].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+    if (inspForm.type === 'FAI') return sorted.filter(b => b.status === 'Completed');
+    return sorted;
+  }, [batches, inspForm.type]);
+
   // Select batch for inspection
   const selectBatch = (batchId: string) => {
     const batch = batches.find(b => b.id === batchId);
@@ -260,8 +329,8 @@ export default function Quality() {
       product_name: wo?.product_name || '',
       material: wo?.material || '',
       heat_no: melting?.heat_no || '',
-      inspected_quantity: batch.quantity,
-      pass_quantity: batch.quantity,
+      inspected_quantity: batch.quantity_completed || batch.quantity_planned || batch.quantity || 0,
+      pass_quantity: batch.quantity_completed || batch.quantity_planned || batch.quantity || 0,
     }));
   };
 
@@ -489,7 +558,6 @@ export default function Quality() {
                 <SelectContent>
                   <SelectItem value="ALL">全部類型</SelectItem>
                   <SelectItem value="FAI">首件檢驗</SelectItem>
-                  <SelectItem value="IPQC">製程檢驗</SelectItem>
                   <SelectItem value="FQC">最終檢驗</SelectItem>
                   <SelectItem value="OQC">出貨檢驗</SelectItem>
                 </SelectContent>
@@ -509,9 +577,6 @@ export default function Quality() {
             <div className="flex gap-2">
               <Button size="sm" onClick={() => openNewInspection('FAI')} className="bg-blue-600 hover:bg-blue-700">
                 <Plus className="w-4 h-4 mr-1" />首件檢驗
-              </Button>
-              <Button size="sm" onClick={() => openNewInspection('IPQC')} className="bg-green-600 hover:bg-green-700">
-                <Plus className="w-4 h-4 mr-1" />製程檢驗
               </Button>
               <Button size="sm" onClick={() => openNewInspection('FQC')} className="bg-orange-600 hover:bg-orange-700">
                 <Plus className="w-4 h-4 mr-1" />最終檢驗
@@ -770,7 +835,7 @@ export default function Quality() {
                 <CardTitle className="text-sm text-slate-300">各類型檢驗良率</CardTitle>
               </CardHeader>
               <CardContent>
-                {(['FAI', 'IPQC', 'FQC', 'OQC'] as InspectionType[]).map(type => {
+                {(['FAI', 'FQC', 'OQC'] as InspectionType[]).map(type => {
                   const typeInsp = inspections.filter(i => i.type === type);
                   const avg = typeInsp.length > 0
                     ? typeInsp.reduce((sum, i) => sum + (i.yield_rate || 0), 0) / typeInsp.length
@@ -903,19 +968,19 @@ export default function Quality() {
             {/* Batch Selection */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label className="text-slate-300">選擇批次</Label>
-                <Select value={inspForm.batch_id} onValueChange={selectBatch}>
-                  <SelectTrigger className="bg-slate-700 border-slate-600 text-slate-200">
-                    <SelectValue placeholder="選擇造模批次" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {batches.map(b => (
-                      <SelectItem key={b.id} value={b.id}>
-                        {b.batch_no} ({b.quantity}件)
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label className="text-slate-300">
+                  選擇批次{inspForm.type === 'FAI' ? '（僅已完成造模批次）' : ''}
+                </Label>
+                <BatchCombobox
+                  batches={selectableBatches}
+                  value={inspForm.batch_id}
+                  onSelect={selectBatch}
+                  placeholder="選擇造模批次（可搜尋客戶／品名）"
+                  emptyText={inspForm.type === 'FAI' ? '查無已完成的造模批次' : '查無符合的造模批次'}
+                />
+                {inspForm.type === 'FAI' && selectableBatches.length === 0 && (
+                  <p className="text-xs text-amber-400 mt-1">目前沒有狀態為「已完成」的造模批次可供首件檢驗</p>
+                )}
               </div>
               <div>
                 <Label className="text-slate-300">檢驗員</Label>
