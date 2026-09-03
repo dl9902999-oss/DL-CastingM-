@@ -15,13 +15,13 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import {
   Plus, Search, ClipboardCheck, AlertTriangle, TrendingUp, FileText,
   CheckCircle2, XCircle, AlertCircle, Eye, Trash2, BarChart3, Check, ChevronsUpDown,
-  Upload, Image as ImageIcon, Loader2
+  Upload, Image as ImageIcon, Loader2, Pencil
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 import AppLayout from '@/components/layout/AppLayout';
 import {
-  dsGetQualityInspections, dsCreateQualityInspection, dsDeleteQualityInspection,
+  dsGetQualityInspections, dsCreateQualityInspection, dsUpdateQualityInspection, dsDeleteQualityInspection,
   dsGetDefectRecords, dsCreateDefectRecord,
   dsGetCAPARecords, dsCreateCAPARecord, dsUpdateCAPARecord,
   dsGetMoldingBatches, dsGetWorkOrders, dsGetMeltingRecords,
@@ -30,6 +30,7 @@ import {
 // Alias ds* to legacy names used in this file
 const getQualityInspections = dsGetQualityInspections as unknown as (...args: Parameters<typeof dsGetQualityInspections>) => Awaited<ReturnType<typeof dsGetQualityInspections>>;
 const createQualityInspection = dsCreateQualityInspection as unknown as (...args: Parameters<typeof dsCreateQualityInspection>) => Awaited<ReturnType<typeof dsCreateQualityInspection>>;
+const updateQualityInspection = dsUpdateQualityInspection as unknown as (...args: Parameters<typeof dsUpdateQualityInspection>) => Awaited<ReturnType<typeof dsUpdateQualityInspection>>;
 const deleteQualityInspection = dsDeleteQualityInspection as unknown as (...args: Parameters<typeof dsDeleteQualityInspection>) => Awaited<ReturnType<typeof dsDeleteQualityInspection>>;
 const getDefectRecords = dsGetDefectRecords as unknown as (...args: Parameters<typeof dsGetDefectRecords>) => Awaited<ReturnType<typeof dsGetDefectRecords>>;
 const createDefectRecord = dsCreateDefectRecord as unknown as (...args: Parameters<typeof dsCreateDefectRecord>) => Awaited<ReturnType<typeof dsCreateDefectRecord>>;
@@ -222,6 +223,9 @@ export default function Quality() {
 
   // Inspection dialog state
   const [showInspectionDialog, setShowInspectionDialog] = useState(false);
+  // 非空字串代表正在「編輯」既有檢驗紀錄，null 代表新增
+  const [editingInspectionId, setEditingInspectionId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
   const [selectedInspection, setSelectedInspection] = useState<QualityInspection | null>(null);
 
@@ -350,6 +354,7 @@ export default function Quality() {
 
   // Open new inspection dialog
   const openNewInspection = (type: InspectionType = 'FAI') => {
+    setEditingInspectionId(null);
     setInspForm({
       type,
       batch_id: '',
@@ -373,11 +378,44 @@ export default function Quality() {
   };
 
   // 首件檢驗只可選擇「已完成」狀態之造模批次；其他檢驗類型維持全部批次
+  // 編輯既有紀錄時，原批次一律保留於選單，避免狀態變更後無法顯示
   const selectableBatches = useMemo(() => {
     const sorted = [...batches].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
-    if (inspForm.type === 'FAI') return sorted.filter(b => b.status === 'Completed');
-    return sorted;
-  }, [batches, inspForm.type]);
+    if (inspForm.type !== 'FAI') return sorted;
+    return sorted.filter(b => b.status === 'Completed' || b.id === inspForm.batch_id);
+  }, [batches, inspForm.type, inspForm.batch_id]);
+
+  // 開啟編輯對話框：以既有紀錄回填表單、檢驗項目與照片
+  const openEditInspection = (insp: QualityInspection) => {
+    setEditingInspectionId(insp.id);
+    setInspForm({
+      type: insp.type,
+      batch_id: insp.batch_id || '',
+      batch_no: insp.batch_no || '',
+      work_order_id: insp.work_order_id || '',
+      order_no: insp.order_no || '',
+      customer: insp.customer || '',
+      product_name: insp.product_name || '',
+      material: insp.material || '',
+      heat_no: insp.heat_no || '',
+      inspector: insp.inspector || '',
+      inspected_quantity: insp.inspected_quantity || 0,
+      pass_quantity: insp.pass_quantity || 0,
+      sampling_method: insp.sampling_method === '抽檢' ? '抽檢' : '全檢',
+      remarks: insp.remarks || '',
+    });
+    setItemResults(
+      (insp.item_results || []).map(r => ({
+        item: r.item || '',
+        result: r.result || 'OK',
+        measured_value: r.measured_value || '',
+        standard_value: r.standard_value || '',
+        remarks: r.remarks || '',
+      })),
+    );
+    setPhotos(insp.attachments || []);
+    setShowInspectionDialog(true);
+  };
 
   // Select batch for inspection
   const selectBatch = (batchId: string) => {
@@ -469,31 +507,40 @@ export default function Quality() {
       result = defectCount > inspForm.inspected_quantity * 0.1 ? 'FAIL' : 'CONDITIONAL';
     }
 
+    const payload = {
+      type: inspForm.type,
+      batch_id: inspForm.batch_id,
+      batch_no: inspForm.batch_no,
+      work_order_id: inspForm.work_order_id,
+      order_no: inspForm.order_no,
+      customer: inspForm.customer,
+      product_name: inspForm.product_name,
+      material: inspForm.material,
+      heat_no: inspForm.heat_no,
+      inspector: inspForm.inspector,
+      result,
+      inspected_quantity: inspForm.inspected_quantity,
+      pass_quantity: inspForm.pass_quantity,
+      defect_count: defectCount,
+      yield_rate: Math.round(yieldRate * 100) / 100,
+      sampling_method: inspForm.sampling_method,
+      item_results: validItems,
+      defects: [],
+      attachments: photos,
+      remarks: inspForm.remarks,
+    };
+
+    setSubmitting(true);
     try {
-      await createQualityInspection({
-        type: inspForm.type,
-        batch_id: inspForm.batch_id,
-        batch_no: inspForm.batch_no,
-        work_order_id: inspForm.work_order_id,
-        order_no: inspForm.order_no,
-        customer: inspForm.customer,
-        product_name: inspForm.product_name,
-        material: inspForm.material,
-        heat_no: inspForm.heat_no,
-        inspection_date: new Date().toISOString(),
-        inspector: inspForm.inspector,
-        result,
-        inspected_quantity: inspForm.inspected_quantity,
-        pass_quantity: inspForm.pass_quantity,
-        defect_count: defectCount,
-        yield_rate: Math.round(yieldRate * 100) / 100,
-        sampling_method: inspForm.sampling_method,
-        item_results: validItems,
-        defects: [],
-        attachments: photos,
-        remarks: inspForm.remarks,
-      });
+      if (editingInspectionId) {
+        // 編輯既有紀錄：保留原檢驗單號與建立時間，僅更新內容
+        await updateQualityInspection(editingInspectionId, payload);
+        toast({ title: '檢驗紀錄已更新' });
+      } else {
+        await createQualityInspection({ ...payload, inspection_date: new Date().toISOString() });
+      }
       setShowInspectionDialog(false);
+      setEditingInspectionId(null);
       refresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -505,6 +552,8 @@ export default function Quality() {
       } else {
         toast({ title: '檢驗紀錄儲存失敗，請稍後再試', variant: 'destructive' });
       }
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -760,6 +809,7 @@ export default function Quality() {
                               <Button
                                 size="sm"
                                 variant="ghost"
+                                title="檢視詳情"
                                 onClick={() => { setSelectedInspection(insp); setShowDetailDialog(true); }}
                               >
                                 <Eye className="w-4 h-4" />
@@ -767,6 +817,16 @@ export default function Quality() {
                               <Button
                                 size="sm"
                                 variant="ghost"
+                                title="編輯修改"
+                                className="text-blue-400 hover:text-blue-300"
+                                onClick={() => openEditInspection(insp)}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                title="刪除"
                                 className="text-red-400 hover:text-red-300"
                                 onClick={async () => { try { await deleteQualityInspection(insp.id); refresh(); } catch (e) { const m = e instanceof Error ? e.message : ''; console.error('[Quality] delete failed:', e); toast({ title: m.includes('policy') || m.includes('permission') ? '權限不足，刪除失敗' : '刪除失敗，請稍後再試', variant: 'destructive' }); } }}
                               >
@@ -1084,7 +1144,7 @@ export default function Quality() {
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-slate-800 border-slate-700">
           <DialogHeader>
             <DialogTitle className="text-slate-100">
-              新增{getTypeLabel(inspForm.type)}
+              {editingInspectionId ? '編輯' : '新增'}{getTypeLabel(inspForm.type)}
             </DialogTitle>
           </DialogHeader>
 
@@ -1102,6 +1162,9 @@ export default function Quality() {
                   placeholder="選擇造模批次（可搜尋客戶／品名）"
                   emptyText={inspForm.type === 'FAI' ? '查無已完成的造模批次' : '查無符合的造模批次'}
                 />
+                {editingInspectionId && (
+                  <p className="text-xs text-slate-400 mt-1">編輯模式：檢驗單號與建立時間保持不變</p>
+                )}
                 {inspForm.type === 'FAI' && selectableBatches.length === 0 && (
                   <p className="text-xs text-amber-400 mt-1">目前沒有狀態為「已完成」的造模批次可供首件檢驗</p>
                 )}
@@ -1355,8 +1418,9 @@ export default function Quality() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowInspectionDialog(false)}>取消</Button>
-            <Button onClick={submitInspection} disabled={!inspForm.batch_id || !inspForm.inspector}>
-              提交檢驗
+            <Button onClick={submitInspection} disabled={!inspForm.batch_id || !inspForm.inspector || submitting}>
+              {submitting && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              {editingInspectionId ? '儲存修改' : '提交檢驗'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1483,6 +1547,17 @@ export default function Quality() {
                   <p className="text-sm text-slate-200 mt-1">{selectedInspection.remarks}</p>
                 </div>
               )}
+
+              {/* 由詳情直接進入編輯 */}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowDetailDialog(false)}>關閉</Button>
+                <Button
+                  className="bg-blue-600 hover:bg-blue-700"
+                  onClick={() => { setShowDetailDialog(false); openEditInspection(selectedInspection); }}
+                >
+                  <Pencil className="w-4 h-4 mr-1" />編輯此紀錄
+                </Button>
+              </DialogFooter>
             </div>
           )}
         </DialogContent>
