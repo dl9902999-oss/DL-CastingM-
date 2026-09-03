@@ -123,7 +123,7 @@ export default function Dashboard() {
                       order.status === 'Completed' ? 'bg-green-500/20 text-green-400' :
                       'bg-zinc-600 text-zinc-300'
                     }`}>
-                      {order.status === 'Open' ? '待開工' : order.status === 'Partial' ? '部分開工' : order.status === 'In Progress' ? '進行中' : order.status === 'Completed' ? '已完成' : '已取消'}
+                      {order.status === 'Open' ? '待造模' : order.status === 'Partial' ? '部分造模' : order.status === 'In Progress' ? '造模中' : order.status === 'Completed' ? '已完成' : '已取消'}
                     </span>
                   </div>
                 ))}

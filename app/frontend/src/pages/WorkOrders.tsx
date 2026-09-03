@@ -424,10 +424,10 @@ export default function WorkOrders() {
       return { label: '已完成', cls: 'bg-green-500/20 text-green-400' };
     }
 
-    if (startedQty > 0) return { label: '部分開工', cls: 'bg-cyan-500/20 text-cyan-400' };
-    if (order.status === 'Partial') return { label: '部分開工', cls: 'bg-cyan-500/20 text-cyan-400' };
-    if (order.status === 'In Progress') return { label: '進行中', cls: 'bg-amber-500/20 text-amber-400' };
-    return { label: '待開工', cls: 'bg-blue-500/20 text-blue-400' };
+    if (startedQty > 0) return { label: '部分造模', cls: 'bg-cyan-500/20 text-cyan-400' };
+    if (order.status === 'Partial') return { label: '部分造模', cls: 'bg-cyan-500/20 text-cyan-400' };
+    if (order.status === 'In Progress') return { label: '造模中', cls: 'bg-amber-500/20 text-amber-400' };
+    return { label: '待造模', cls: 'bg-blue-500/20 text-blue-400' };
   };
 
   const resetForm = () => setForm({
@@ -763,9 +763,9 @@ export default function WorkOrders() {
                 </SelectTrigger>
                 <SelectContent className="bg-zinc-800 border-zinc-700">
                   <SelectItem value="__all__" className="text-zinc-200">全部狀態</SelectItem>
-                  <SelectItem value="待開工" className="text-zinc-200">待開工</SelectItem>
-                  <SelectItem value="部分開工" className="text-zinc-200">部分開工</SelectItem>
-                  <SelectItem value="進行中" className="text-zinc-200">進行中</SelectItem>
+                  <SelectItem value="待造模" className="text-zinc-200">待造模</SelectItem>
+                  <SelectItem value="部分造模" className="text-zinc-200">部分造模</SelectItem>
+                  <SelectItem value="造模中" className="text-zinc-200">造模中</SelectItem>
                   <SelectItem value="合模完成" className="text-zinc-200">合模完成</SelectItem>
                   <SelectItem value="部分澆注" className="text-zinc-200">部分澆注</SelectItem>
                   <SelectItem value="全部澆注" className="text-zinc-200">全部澆注</SelectItem>
@@ -971,9 +971,9 @@ export default function WorkOrders() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-zinc-700 border-zinc-600">
-                      <SelectItem value="Open">待開工</SelectItem>
-                      <SelectItem value="Partial">部分開工</SelectItem>
-                      <SelectItem value="In Progress">進行中</SelectItem>
+                      <SelectItem value="Open">待造模</SelectItem>
+                      <SelectItem value="Partial">部分造模</SelectItem>
+                      <SelectItem value="In Progress">造模中</SelectItem>
                       <SelectItem value="Completed">已完成</SelectItem>
                       <SelectItem value="Cancelled">已取消</SelectItem>
                     </SelectContent>

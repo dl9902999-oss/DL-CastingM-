@@ -100,7 +100,7 @@ export default function Traceability() {
                       <span className="text-sm text-zinc-200">{o.order_no}</span>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-zinc-400">{o.customer}</span>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-300">{o.status === 'Open' ? '待開工' : o.status === 'Partial' ? '部分開工' : o.status === 'In Progress' ? '進行中' : o.status === 'Completed' ? '已完成' : '已取消'}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-300">{o.status === 'Open' ? '待造模' : o.status === 'Partial' ? '部分造模' : o.status === 'In Progress' ? '造模中' : o.status === 'Completed' ? '已完成' : '已取消'}</span>
                       </div>
                     </div>
                   ))}
