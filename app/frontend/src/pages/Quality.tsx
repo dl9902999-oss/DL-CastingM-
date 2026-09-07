@@ -15,7 +15,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import {
   Plus, Search, ClipboardCheck, AlertTriangle, TrendingUp, FileText,
   CheckCircle2, XCircle, AlertCircle, Eye, Trash2, BarChart3, Check, ChevronsUpDown,
-  Upload, Image as ImageIcon, Loader2, Pencil
+  Upload, Image as ImageIcon, Loader2, Pencil, PackagePlus, Truck
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
@@ -25,6 +25,7 @@ import {
   dsGetDefectRecords, dsCreateDefectRecord,
   dsGetCAPARecords, dsCreateCAPARecord, dsUpdateCAPARecord,
   dsGetMoldingBatches, dsGetWorkOrders, dsGetMeltingRecords,
+  dsCreateWarehouseEntry, dsCreateShipmentOrder,
 } from '@/lib/dataService';
 
 // Alias ds* to legacy names used in this file
@@ -45,26 +46,39 @@ import {
   type DefectRecord, type CAPARecord, type CAPAStatus, type DefectDisposition,
   type InspectionItemResult,
   DEFECT_CODES, INSPECTION_ITEMS_FAI, INSPECTION_ITEMS_IPQC,
-  INSPECTION_ITEMS_FQC, INSPECTION_ITEMS_OQC
+  INSPECTION_ITEMS_FQC, INSPECTION_ITEMS_OQC,
+  INSPECTION_ITEMS_CASTING, INSPECTION_ITEMS_OUTSOURCE
 } from '@/lib/types';
 
 // Helper functions
 function getInspectionItems(type: InspectionType): readonly string[] {
   switch (type) {
+    case 'CASTING': return INSPECTION_ITEMS_CASTING;
+    case 'OUTSOURCE': return INSPECTION_ITEMS_OUTSOURCE;
     case 'FAI': return INSPECTION_ITEMS_FAI;
     case 'IPQC': return INSPECTION_ITEMS_IPQC;
     case 'FQC': return INSPECTION_ITEMS_FQC;
     case 'OQC': return INSPECTION_ITEMS_OQC;
+    default: return INSPECTION_ITEMS_CASTING;
   }
 }
 
+// 舊類型（首件／最終／出貨／製程）皆已整併為「鑄件檢驗」，歷史紀錄一併以鑄件檢驗顯示
 function getTypeLabel(type: InspectionType): string {
   switch (type) {
-    case 'FAI': return '首件檢驗';
-    case 'IPQC': return '製程檢驗';
-    case 'FQC': return '最終檢驗';
-    case 'OQC': return '出貨檢驗';
+    case 'OUTSOURCE': return '外包檢驗';
+    case 'CASTING':
+    case 'FAI':
+    case 'IPQC':
+    case 'FQC':
+    case 'OQC':
+    default: return '鑄件檢驗';
   }
+}
+
+// 篩選用：將舊類型正規化為新的兩種類型
+function normalizeType(type: InspectionType): 'CASTING' | 'OUTSOURCE' {
+  return type === 'OUTSOURCE' ? 'OUTSOURCE' : 'CASTING';
 }
 
 function getResultBadge(result: InspectionResult) {
@@ -229,6 +243,12 @@ export default function Quality() {
   const [showDetailDialog, setShowDetailDialog] = useState(false);
   const [selectedInspection, setSelectedInspection] = useState<QualityInspection | null>(null);
 
+  // 放行處置（入庫／出貨）對話框狀態
+  const [releaseMode, setReleaseMode] = useState<'WAREHOUSE' | 'SHIPMENT' | null>(null);
+  const [releaseInspection, setReleaseInspection] = useState<QualityInspection | null>(null);
+  const [releaseForm, setReleaseForm] = useState({ location: '', quantity: 0, ship_date: '' });
+  const [releaseSubmitting, setReleaseSubmitting] = useState(false);
+
   // Defect dialog state
   const [showDefectDialog, setShowDefectDialog] = useState(false);
 
@@ -239,7 +259,7 @@ export default function Quality() {
 
   // Form state for new inspection
   const [inspForm, setInspForm] = useState({
-    type: 'FAI' as InspectionType,
+    type: 'CASTING' as InspectionType,
     batch_id: '',
     batch_no: '',
     work_order_id: '',
@@ -324,7 +344,7 @@ export default function Quality() {
   // Filtered inspections
   const filteredInspections = useMemo(() => {
     return inspections.filter(i => {
-      if (typeFilter !== 'ALL' && i.type !== typeFilter) return false;
+      if (typeFilter !== 'ALL' && normalizeType(i.type) !== typeFilter) return false;
       if (resultFilter !== 'ALL' && i.result !== resultFilter) return false;
       if (searchTerm) {
         const term = searchTerm.toLowerCase();
@@ -353,7 +373,7 @@ export default function Quality() {
   }, [inspections, defectRecords, capaRecords]);
 
   // Open new inspection dialog
-  const openNewInspection = (type: InspectionType = 'FAI') => {
+  const openNewInspection = (type: InspectionType = 'CASTING') => {
     setEditingInspectionId(null);
     setInspForm({
       type,
@@ -368,7 +388,7 @@ export default function Quality() {
       inspector: '',
       inspected_quantity: 0,
       pass_quantity: 0,
-      sampling_method: type === 'OQC' ? '抽檢' : '全檢',
+      sampling_method: type === 'OUTSOURCE' ? '抽檢' : '全檢',
       remarks: '',
     });
     const items = getInspectionItems(type);
@@ -381,7 +401,7 @@ export default function Quality() {
   // 編輯既有紀錄時，原批次一律保留於選單，避免狀態變更後無法顯示
   const selectableBatches = useMemo(() => {
     const sorted = [...batches].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
-    if (inspForm.type !== 'FAI') return sorted;
+    if (inspForm.type !== 'CASTING') return sorted;
     return sorted.filter(b => b.status === 'Completed' || b.id === inspForm.batch_id);
   }, [batches, inspForm.type, inspForm.batch_id]);
 
@@ -554,6 +574,80 @@ export default function Quality() {
       }
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // 開啟放行處置對話框（僅合格／條件放行之檢驗紀錄可使用）
+  const openRelease = (insp: QualityInspection, mode: 'WAREHOUSE' | 'SHIPMENT') => {
+    setReleaseInspection(insp);
+    setReleaseMode(mode);
+    setReleaseForm({
+      location: '',
+      quantity: insp.pass_quantity || insp.inspected_quantity || 0,
+      ship_date: new Date().toISOString().slice(0, 10),
+    });
+  };
+
+  const closeRelease = () => {
+    setReleaseMode(null);
+    setReleaseInspection(null);
+  };
+
+  // 送出放行處置：建立入庫紀錄或出貨單
+  const submitRelease = async () => {
+    if (!releaseInspection || !releaseMode) return;
+    if (releaseForm.quantity <= 0) {
+      toast({ title: '請輸入正確的數量', variant: 'destructive' });
+      return;
+    }
+    if (releaseMode === 'WAREHOUSE' && !releaseForm.location.trim()) {
+      toast({ title: '請輸入庫位', variant: 'destructive' });
+      return;
+    }
+    if (releaseMode === 'SHIPMENT') {
+      if (!releaseInspection.work_order_id) {
+        toast({ title: '此檢驗紀錄未關聯工單，無法建立出貨單', variant: 'destructive' });
+        return;
+      }
+      if (!releaseForm.ship_date) {
+        toast({ title: '請選擇出貨日期', variant: 'destructive' });
+        return;
+      }
+    }
+    setReleaseSubmitting(true);
+    try {
+      if (releaseMode === 'WAREHOUSE') {
+        await dsCreateWarehouseEntry({
+          batch_id: releaseInspection.batch_id,
+          batch_no: releaseInspection.batch_no,
+          location: releaseForm.location.trim(),
+          quantity: releaseForm.quantity,
+        });
+        toast({ title: '入庫紀錄已建立', description: `批次 ${releaseInspection.batch_no}｜${releaseForm.quantity} 件` });
+      } else {
+        await dsCreateShipmentOrder({
+          work_order_id: releaseInspection.work_order_id || '',
+          order_no: releaseInspection.order_no || '',
+          customer: releaseInspection.customer || '',
+          quantity: releaseForm.quantity,
+          ship_date: releaseForm.ship_date,
+        });
+        toast({ title: '出貨單已建立', description: `工單 ${releaseInspection.order_no || '-'}｜${releaseForm.quantity} 件` });
+      }
+      closeRelease();
+      refresh();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Quality] submitRelease failed:', err);
+      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+        toast({ title: '權限不足，建立失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+      } else {
+        toast({ title: '建立失敗，請稍後再試', variant: 'destructive' });
+      }
+    } finally {
+      setReleaseSubmitting(false);
     }
   };
 
@@ -730,9 +824,8 @@ export default function Quality() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL">全部類型</SelectItem>
-                  <SelectItem value="FAI">首件檢驗</SelectItem>
-                  <SelectItem value="FQC">最終檢驗</SelectItem>
-                  <SelectItem value="OQC">出貨檢驗</SelectItem>
+                  <SelectItem value="CASTING">鑄件檢驗</SelectItem>
+                  <SelectItem value="OUTSOURCE">外包檢驗</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={resultFilter} onValueChange={setResultFilter}>
@@ -748,14 +841,11 @@ export default function Quality() {
               </Select>
             </div>
             <div className="flex gap-2">
-              <Button size="sm" onClick={() => openNewInspection('FAI')} className="bg-blue-600 hover:bg-blue-700">
-                <Plus className="w-4 h-4 mr-1" />首件檢驗
+              <Button size="sm" onClick={() => openNewInspection('CASTING')} className="bg-blue-600 hover:bg-blue-700">
+                <Plus className="w-4 h-4 mr-1" />鑄件檢驗
               </Button>
-              <Button size="sm" onClick={() => openNewInspection('FQC')} className="bg-orange-600 hover:bg-orange-700">
-                <Plus className="w-4 h-4 mr-1" />最終檢驗
-              </Button>
-              <Button size="sm" onClick={() => openNewInspection('OQC')} className="bg-purple-600 hover:bg-purple-700">
-                <Plus className="w-4 h-4 mr-1" />出貨檢驗
+              <Button size="sm" onClick={() => openNewInspection('OUTSOURCE')} className="bg-purple-600 hover:bg-purple-700">
+                <Plus className="w-4 h-4 mr-1" />外包檢驗
               </Button>
             </div>
           </div>
@@ -823,6 +913,28 @@ export default function Quality() {
                               >
                                 <Pencil className="w-4 h-4" />
                               </Button>
+                              {(insp.result === 'PASS' || insp.result === 'CONDITIONAL') && (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    title="轉入庫"
+                                    className="text-amber-400 hover:text-amber-300"
+                                    onClick={() => openRelease(insp, 'WAREHOUSE')}
+                                  >
+                                    <PackagePlus className="w-4 h-4" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    title="轉出貨"
+                                    className="text-green-400 hover:text-green-300"
+                                    onClick={() => openRelease(insp, 'SHIPMENT')}
+                                  >
+                                    <Truck className="w-4 h-4" />
+                                  </Button>
+                                </>
+                              )}
                               <Button
                                 size="sm"
                                 variant="ghost"
@@ -1019,7 +1131,7 @@ export default function Quality() {
                 <CardTitle className="text-sm text-slate-300">各類型檢驗良率</CardTitle>
               </CardHeader>
               <CardContent>
-                {(['FAI', 'FQC', 'OQC'] as InspectionType[]).map(type => {
+                {(['CASTING', 'OUTSOURCE'] as InspectionType[]).map(type => {
                   const typeInsp = inspections.filter(i => i.type === type);
                   const avg = typeInsp.length > 0
                     ? typeInsp.reduce((sum, i) => sum + (i.yield_rate || 0), 0) / typeInsp.length
@@ -1153,20 +1265,20 @@ export default function Quality() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label className="text-slate-300">
-                  選擇批次{inspForm.type === 'FAI' ? '（僅已完成造模批次）' : ''}
+                  選擇批次{inspForm.type === 'CASTING' ? '（僅已完成造模批次）' : ''}
                 </Label>
                 <BatchCombobox
                   batches={selectableBatches}
                   value={inspForm.batch_id}
                   onSelect={selectBatch}
                   placeholder="選擇造模批次（可搜尋客戶／品名）"
-                  emptyText={inspForm.type === 'FAI' ? '查無已完成的造模批次' : '查無符合的造模批次'}
+                  emptyText={inspForm.type === 'CASTING' ? '查無已完成的造模批次' : '查無符合的造模批次'}
                 />
                 {editingInspectionId && (
                   <p className="text-xs text-slate-400 mt-1">編輯模式：檢驗單號與建立時間保持不變</p>
                 )}
-                {inspForm.type === 'FAI' && selectableBatches.length === 0 && (
-                  <p className="text-xs text-amber-400 mt-1">目前沒有狀態為「已完成」的造模批次可供首件檢驗</p>
+                {inspForm.type === 'CASTING' && selectableBatches.length === 0 && (
+                  <p className="text-xs text-amber-400 mt-1">目前沒有狀態為「已完成」的造模批次可供鑄件檢驗</p>
                 )}
               </div>
               <div>
@@ -1426,6 +1538,101 @@ export default function Quality() {
         </DialogContent>
       </Dialog>
 
+      {/* 放行處置對話框：合格／條件放行可轉入庫或出貨 */}
+      <Dialog open={releaseMode !== null} onOpenChange={open => { if (!open) closeRelease(); }}>
+        <DialogContent className="max-w-md bg-slate-800 border-slate-700">
+          <DialogHeader>
+            <DialogTitle className="text-slate-100">
+              {releaseMode === 'WAREHOUSE' ? '轉入庫' : '轉出貨'}
+            </DialogTitle>
+          </DialogHeader>
+          {releaseInspection && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-750 rounded-lg border border-slate-600">
+                <div>
+                  <span className="text-xs text-slate-400">檢驗單號</span>
+                  <p className="text-sm text-slate-200 font-mono">{releaseInspection.inspection_no}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-slate-400">檢驗結果</span>
+                  <div className="mt-0.5">{getResultBadge(releaseInspection.result)}</div>
+                </div>
+                <div>
+                  <span className="text-xs text-slate-400">批次號</span>
+                  <p className="text-sm text-slate-200">{releaseInspection.batch_no || '-'}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-slate-400">工單／客戶</span>
+                  <p className="text-sm text-slate-200">
+                    {releaseInspection.order_no || '-'}｜{releaseInspection.customer || '-'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-xs text-slate-400">品名</span>
+                  <p className="text-sm text-slate-200">{releaseInspection.product_name || '-'}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-slate-400">合格數量</span>
+                  <p className="text-sm text-slate-200">{releaseInspection.pass_quantity || 0}</p>
+                </div>
+              </div>
+
+              {releaseInspection.result === 'CONDITIONAL' && (
+                <p className="text-xs text-amber-400">此紀錄為條件放行，請確認處置條件後再執行</p>
+              )}
+
+              {releaseMode === 'WAREHOUSE' ? (
+                <div>
+                  <Label className="text-slate-300">庫位</Label>
+                  <Input
+                    value={releaseForm.location}
+                    onChange={e => setReleaseForm(prev => ({ ...prev, location: e.target.value }))}
+                    className="bg-slate-700 border-slate-600 text-slate-200"
+                    placeholder="例: A-01-03"
+                  />
+                </div>
+              ) : (
+                <div>
+                  <Label className="text-slate-300">出貨日期</Label>
+                  <Input
+                    type="date"
+                    value={releaseForm.ship_date}
+                    onChange={e => setReleaseForm(prev => ({ ...prev, ship_date: e.target.value }))}
+                    className="bg-slate-700 border-slate-600 text-slate-200"
+                  />
+                  {!releaseInspection.work_order_id && (
+                    <p className="text-xs text-red-400 mt-1">此檢驗紀錄未關聯工單，無法建立出貨單</p>
+                  )}
+                </div>
+              )}
+
+              <div>
+                <Label className="text-slate-300">
+                  {releaseMode === 'WAREHOUSE' ? '入庫數量' : '出貨數量'}
+                </Label>
+                <Input
+                  type="number"
+                  value={releaseForm.quantity}
+                  onChange={e => setReleaseForm(prev => ({ ...prev, quantity: Number(e.target.value) }))}
+                  className="bg-slate-700 border-slate-600 text-slate-200"
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={closeRelease}>取消</Button>
+            <Button
+              onClick={submitRelease}
+              disabled={releaseSubmitting || (releaseMode === 'SHIPMENT' && !releaseInspection?.work_order_id)}
+              className={releaseMode === 'WAREHOUSE' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}
+            >
+              {releaseSubmitting && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+              {releaseMode === 'WAREHOUSE' ? '建立入庫紀錄' : '建立出貨單'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Inspection Detail Dialog */}
       <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-slate-800 border-slate-700">
@@ -1548,7 +1755,7 @@ export default function Quality() {
                 </div>
               )}
 
-              {/* 由詳情直接進入編輯 */}
+              {/* 由詳情直接進入編輯或放行處置 */}
               <DialogFooter>
                 <Button variant="outline" onClick={() => setShowDetailDialog(false)}>關閉</Button>
                 <Button
@@ -1557,6 +1764,22 @@ export default function Quality() {
                 >
                   <Pencil className="w-4 h-4 mr-1" />編輯此紀錄
                 </Button>
+                {(selectedInspection.result === 'PASS' || selectedInspection.result === 'CONDITIONAL') && (
+                  <>
+                    <Button
+                      className="bg-amber-600 hover:bg-amber-700"
+                      onClick={() => { setShowDetailDialog(false); openRelease(selectedInspection, 'WAREHOUSE'); }}
+                    >
+                      <PackagePlus className="w-4 h-4 mr-1" />轉入庫
+                    </Button>
+                    <Button
+                      className="bg-green-600 hover:bg-green-700"
+                      onClick={() => { setShowDetailDialog(false); openRelease(selectedInspection, 'SHIPMENT'); }}
+                    >
+                      <Truck className="w-4 h-4 mr-1" />轉出貨
+                    </Button>
+                  </>
+                )}
               </DialogFooter>
             </div>
           )}

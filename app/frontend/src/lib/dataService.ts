@@ -1257,6 +1257,24 @@ export async function dsCreateWarehouseEntry(data: { batch_id: string; batch_no:
   );
 }
 
+export async function dsUpdateWarehouseEntry(id: string, data: Partial<WarehouseEntry>): Promise<WarehouseEntry | null> {
+  return withRLSFallback(
+    () => sbStore.sbUpdateWarehouseEntry(id, data),
+    () => localStore.updateWarehouseEntry(id, data),
+    'dsUpdateWarehouseEntry',
+    { table: 'warehouse_entries', action: 'update' }
+  );
+}
+
+export async function dsDeleteWarehouseEntry(id: string): Promise<void> {
+  return withRLSFallback(
+    () => sbStore.sbDeleteWarehouseEntry(id),
+    () => localStore.deleteWarehouseEntry(id),
+    'dsDeleteWarehouseEntry',
+    { table: 'warehouse_entries', action: 'delete' }
+  );
+}
+
 // ============================================================
 // Shipment Orders
 // ============================================================
@@ -1283,6 +1301,15 @@ export async function dsUpdateShipmentOrder(id: string, data: Partial<ShipmentOr
     () => localStore.updateShipmentOrder(id, data),
     'dsUpdateShipmentOrder',
     { table: 'shipment_orders', action: 'update' }
+  );
+}
+
+export async function dsDeleteShipmentOrder(id: string): Promise<void> {
+  return withRLSFallback(
+    () => sbStore.sbDeleteShipmentOrder(id),
+    () => localStore.deleteShipmentOrder(id),
+    'dsDeleteShipmentOrder',
+    { table: 'shipment_orders', action: 'delete' }
   );
 }
 

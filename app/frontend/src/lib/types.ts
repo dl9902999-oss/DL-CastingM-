@@ -140,7 +140,9 @@ export interface MeltChemistry {
 }
 
 // Quality Inspection Types
-export type InspectionType = 'FAI' | 'IPQC' | 'FQC' | 'OQC';
+// 檢驗類型：CASTING（鑄件檢驗，整併原首件／最終／出貨檢驗）、OUTSOURCE（外包檢驗）
+// 'FAI' | 'IPQC' | 'FQC' | 'OQC' 為舊版類型，保留以相容既有歷史紀錄
+export type InspectionType = 'CASTING' | 'OUTSOURCE' | 'FAI' | 'IPQC' | 'FQC' | 'OQC';
 export type InspectionResult = 'PASS' | 'FAIL' | 'CONDITIONAL';
 export type DefectDisposition = 'REWORK' | 'SCRAP' | 'CONCESSION' | 'RETURN';
 export type CAPAStatus = 'OPEN' | 'ANALYZING' | 'IMPLEMENTING' | 'VERIFYING' | 'CLOSED';
@@ -164,6 +166,10 @@ export const INSPECTION_ITEMS_FAI = ['尺寸', '重量', '外觀', '成份', '�
 export const INSPECTION_ITEMS_IPQC = ['尺寸', '外觀', '重量', '溫度', '砂模狀況', '氣孔', '縮孔', '裂紋'] as const;
 export const INSPECTION_ITEMS_FQC = ['尺寸', '重量', '材質', '表面', '外觀', '組裝', '包裝', '文件'] as const;
 export const INSPECTION_ITEMS_OQC = ['數量', '標籤', '包裝', '外觀', '文件', '客戶要求'] as const;
+// 鑄件檢驗：整併尺寸／重量／材質／外觀等常用項目
+export const INSPECTION_ITEMS_CASTING = ['尺寸', '重量', '材質', '外觀', '硬度', '外觀缺陷', '數量', '包裝'] as const;
+// 外包檢驗：委外加工／表面處理回廠檢驗項目
+export const INSPECTION_ITEMS_OUTSOURCE = ['外包廠商', '加工項目', '尺寸', '外觀', '表面處理', '數量', '文件'] as const;
 
 export interface QualityInspection {
   id: string;

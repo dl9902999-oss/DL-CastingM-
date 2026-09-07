@@ -605,6 +605,20 @@ export function createWarehouseEntry(data: { batch_id: string; batch_no: string;
   return newEntry;
 }
 
+export function updateWarehouseEntry(id: string, data: Partial<WarehouseEntry>): WarehouseEntry | null {
+  const entries = getWarehouseEntries();
+  const idx = entries.findIndex(e => e.id === id);
+  if (idx === -1) return null;
+  entries[idx] = { ...entries[idx], ...data };
+  setItems(STORAGE_KEYS.WAREHOUSE_ENTRIES, entries);
+  return entries[idx];
+}
+
+export function deleteWarehouseEntry(id: string): void {
+  const entries = getWarehouseEntries().filter(e => e.id !== id);
+  setItems(STORAGE_KEYS.WAREHOUSE_ENTRIES, entries);
+}
+
 // Shipment Orders
 export function getShipmentOrders(): ShipmentOrder[] {
   return getItems<ShipmentOrder>(STORAGE_KEYS.SHIPMENT_ORDERS);
@@ -631,6 +645,11 @@ export function updateShipmentOrder(id: string, data: Partial<ShipmentOrder>): S
   orders[idx] = { ...orders[idx], ...data };
   setItems(STORAGE_KEYS.SHIPMENT_ORDERS, orders);
   return orders[idx];
+}
+
+export function deleteShipmentOrder(id: string): void {
+  const orders = getShipmentOrders().filter(o => o.id !== id);
+  setItems(STORAGE_KEYS.SHIPMENT_ORDERS, orders);
 }
 
 // Dashboard Stats

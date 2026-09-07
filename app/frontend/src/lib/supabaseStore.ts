@@ -1017,6 +1017,30 @@ export async function sbCreateWarehouseEntry(entryData: { batch_id: string; batc
   };
 }
 
+export async function sbUpdateWarehouseEntry(id: string, updates: Partial<WarehouseEntry>): Promise<WarehouseEntry | null> {
+  const payload: Record<string, unknown> = {};
+  if (updates.batch_id !== undefined) payload.batch_id = updates.batch_id;
+  if (updates.batch_no !== undefined) payload.batch_no = updates.batch_no;
+  if (updates.location !== undefined) payload.location = updates.location;
+  if (updates.quantity !== undefined) payload.quantity = updates.quantity;
+  const { data, error } = await supabase.from('warehouse_entries').update(payload).eq('id', id).select().single();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    id: data.id as string,
+    batch_id: (data.batch_id as string) || '',
+    batch_no: (data.batch_no as string) || '',
+    location: (data.location as string) || '',
+    quantity: (data.quantity as number) || 0,
+    created_at: (data.created_at as string) || '',
+  };
+}
+
+export async function sbDeleteWarehouseEntry(id: string): Promise<void> {
+  const { error } = await supabase.from('warehouse_entries').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // ============================================================
 // Shipment Orders
 // ============================================================
@@ -1072,6 +1096,11 @@ export async function sbUpdateShipmentOrder(id: string, updates: Partial<Shipmen
     status: (data.status as ShipmentOrder['status']) || 'Pending',
     created_at: (data.created_at as string) || '',
   };
+}
+
+export async function sbDeleteShipmentOrder(id: string): Promise<void> {
+  const { error } = await supabase.from('shipment_orders').delete().eq('id', id);
+  if (error) throw error;
 }
 
 // ============================================================
