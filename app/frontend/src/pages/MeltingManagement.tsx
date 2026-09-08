@@ -17,7 +17,9 @@ import {
   dsGetMoldingBatches, dsGetWorkOrders,
   dsGetMeltPourings, dsCreateMeltPouring, dsUpdateMeltPouring, dsDeleteMeltPouring,
   dsGetMeltPresetRecipes, dsCreateMeltPresetRecipe, dsUpdateMeltPresetRecipe, dsDeleteMeltPresetRecipe,
+  dsGetMeltMaterialSpecs, dsCreateMeltMaterialSpec, dsUpdateMeltMaterialSpec, dsDeleteMeltMaterialSpec,
 } from '@/lib/dataService';
+import type { MeltMaterialSpec } from '@/lib/supabaseStore';
 
 // Alias ds* functions to legacy names used throughout this file (sync-compatible wrappers)
 const getMeltRecords = dsGetMeltRecords as unknown as (...args: Parameters<typeof dsGetMeltRecords>) => Awaited<ReturnType<typeof dsGetMeltRecords>>;
@@ -89,15 +91,7 @@ function deletePresetRecipe(id: string) {
 
 // === Material Spec (材質規範) Types & Storage ===
 // 每個材質規範保存各元素的成分範圍（min/max），新增熔解批次選擇材質後自動代入「目標」列
-interface MaterialSpec {
-  id: string;
-  name: string;
-  ranges: Record<string, number>;
-  remark: string;
-  created_at: string;
-}
-
-const MATERIAL_SPECS_KEY = 'melt_material_specs';
+type MaterialSpec = MeltMaterialSpec;
 
 const SPEC_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
 
@@ -110,49 +104,34 @@ function emptySpecRanges(): Record<string, number> {
   return ranges;
 }
 
-function getMaterialSpecs(): MaterialSpec[] {
+// 材質規範改由雲端資料層存取以支援跨裝置同步；
+// 離線或權限受限時 dataService 會自動退回本地暫存並排入待同步佇列，連線恢復後自動補傳。
+async function getMaterialSpecs(): Promise<MaterialSpec[]> {
   try {
-    const data = localStorage.getItem(MATERIAL_SPECS_KEY);
-    const parsed = data ? JSON.parse(data) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
+    return await dsGetMeltMaterialSpecs();
+  } catch (err: unknown) {
+    console.error('[MaterialSpec] load failed:', err);
     return [];
   }
 }
 
-function saveMaterialSpecs(specs: MaterialSpec[]) {
-  localStorage.setItem(MATERIAL_SPECS_KEY, JSON.stringify(specs));
+async function createMaterialSpec(name: string, ranges: Record<string, number>, remark: string): Promise<MaterialSpec> {
+  return dsCreateMeltMaterialSpec({ name, ranges: { ...emptySpecRanges(), ...ranges }, remark });
 }
 
-function createMaterialSpec(name: string, ranges: Record<string, number>, remark: string): MaterialSpec {
-  const specs = getMaterialSpecs();
-  const newSpec: MaterialSpec = {
-    id: crypto.randomUUID(),
-    name,
-    ranges: { ...emptySpecRanges(), ...ranges },
-    remark,
-    created_at: new Date().toISOString(),
-  };
-  specs.push(newSpec);
-  saveMaterialSpecs(specs);
-  return newSpec;
-}
-
-function updateMaterialSpec(id: string, patch: { name?: string; ranges?: Record<string, number>; remark?: string }) {
-  const specs = getMaterialSpecs();
-  const idx = specs.findIndex(s => s.id === id);
-  if (idx < 0) return;
-  specs[idx] = {
-    ...specs[idx],
+async function updateMaterialSpec(
+  id: string,
+  patch: { name?: string; ranges?: Record<string, number>; remark?: string }
+): Promise<MaterialSpec | null> {
+  return dsUpdateMeltMaterialSpec(id, {
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.remark !== undefined ? { remark: patch.remark } : {}),
     ...(patch.ranges !== undefined ? { ranges: { ...emptySpecRanges(), ...patch.ranges } } : {}),
-  };
-  saveMaterialSpecs(specs);
+  });
 }
 
-function deleteMaterialSpec(id: string) {
-  saveMaterialSpecs(getMaterialSpecs().filter(s => s.id !== id));
+async function deleteMaterialSpec(id: string): Promise<boolean> {
+  return dsDeleteMeltMaterialSpec(id);
 }
 
 function formatSpecRange(ranges: Record<string, number>, el: string): string {
@@ -180,10 +159,10 @@ export default function MeltingManagement() {
 
   useEffect(() => {
     let cancelled = false;
-    setMaterialSpecs(getMaterialSpecs());
     (async () => {
-      const data = await getMeltRecords();
-      if (!cancelled) setRecords(data);
+      // 材質規範與熔解紀錄一併由雲端載入，syncTrigger 變動時自動重新拉取
+      const [data, specs] = await Promise.all([getMeltRecords(), getMaterialSpecs()]);
+      if (!cancelled) { setRecords(data); setMaterialSpecs(specs); }
     })();
     return () => { cancelled = true; };
   }, [syncTrigger]);
@@ -386,7 +365,7 @@ export default function MeltingManagement() {
         <MaterialSpecManager
           open={showSpecManager}
           onOpenChange={setShowSpecManager}
-          onChanged={() => setMaterialSpecs(getMaterialSpecs())}
+          onChanged={async () => setMaterialSpecs(await getMaterialSpecs())}
         />
       </div>
     </AppLayout>
@@ -840,22 +819,40 @@ function MaterialSpecManager({ open, onOpenChange, onChanged }: {
   const [draftName, setDraftName] = useState('');
   const [draftRemark, setDraftRemark] = useState('');
   const [draftRanges, setDraftRanges] = useState<Record<string, number>>(emptySpecRanges());
+  const [saving, setSaving] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
-    if (open) {
-      setSpecs(getMaterialSpecs());
-      setIsAdding(false);
-      setEditingId(null);
-      setDraftName('');
-      setDraftRemark('');
-      setDraftRanges(emptySpecRanges());
-    }
+    if (!open) return;
+    let cancelled = false;
+    setIsAdding(false);
+    setEditingId(null);
+    setDraftName('');
+    setDraftRemark('');
+    setDraftRanges(emptySpecRanges());
+    (async () => {
+      const cloudSpecs = await getMaterialSpecs();
+      if (!cancelled) setSpecs(cloudSpecs);
+    })();
+    return () => { cancelled = true; };
   }, [open]);
 
-  const refresh = () => {
-    setSpecs(getMaterialSpecs());
+  const refresh = async () => {
+    setSpecs(await getMaterialSpecs());
     onChanged();
+  };
+
+  // 統一的錯誤提示：區分權限、連線與其他失敗
+  const notifyError = (err: unknown, fallback: string) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[MaterialSpec] operation failed:', err);
+    if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+      toast({ title: '權限不足，已暫存本地', description: '連線恢復後將自動同步至雲端', variant: 'destructive' });
+    } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+      toast({ title: '連線異常，已暫存本地', description: '連線恢復後將自動同步至雲端', variant: 'destructive' });
+    } else {
+      toast({ title: fallback, variant: 'destructive' });
+    }
   };
 
   const resetDraft = () => {
@@ -878,17 +875,24 @@ function MaterialSpecManager({ open, onOpenChange, onChanged }: {
     return null;
   };
 
-  const handleSaveNew = () => {
+  const handleSaveNew = async () => {
     const error = validateDraft();
     if (error) { toast({ title: error, variant: 'destructive' }); return; }
-    if (getMaterialSpecs().some(s => s.name.trim() === draftName.trim())) {
+    if (specs.some(s => s.name.trim() === draftName.trim())) {
       toast({ title: '此材質規範名稱已存在', variant: 'destructive' });
       return;
     }
-    createMaterialSpec(draftName.trim(), draftRanges, draftRemark.trim());
-    refresh();
-    resetDraft();
-    toast({ title: '材質規範已建立' });
+    setSaving(true);
+    try {
+      await createMaterialSpec(draftName.trim(), draftRanges, draftRemark.trim());
+      await refresh();
+      resetDraft();
+      toast({ title: '材質規範已建立', description: '已同步至雲端，其他裝置可看到此規範' });
+    } catch (err: unknown) {
+      notifyError(err, '建立失敗，請稍後再試');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleStartEdit = (spec: MaterialSpec) => {
@@ -899,26 +903,37 @@ function MaterialSpecManager({ open, onOpenChange, onChanged }: {
     setDraftRanges({ ...emptySpecRanges(), ...spec.ranges });
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editingId) return;
     const error = validateDraft();
     if (error) { toast({ title: error, variant: 'destructive' }); return; }
-    if (getMaterialSpecs().some(s => s.id !== editingId && s.name.trim() === draftName.trim())) {
+    if (specs.some(s => s.id !== editingId && s.name.trim() === draftName.trim())) {
       toast({ title: '此材質規範名稱已存在', variant: 'destructive' });
       return;
     }
-    updateMaterialSpec(editingId, { name: draftName.trim(), ranges: draftRanges, remark: draftRemark.trim() });
-    refresh();
-    resetDraft();
-    toast({ title: '材質規範已更新' });
+    setSaving(true);
+    try {
+      await updateMaterialSpec(editingId, { name: draftName.trim(), ranges: draftRanges, remark: draftRemark.trim() });
+      await refresh();
+      resetDraft();
+      toast({ title: '材質規範已更新', description: '已同步至雲端' });
+    } catch (err: unknown) {
+      notifyError(err, '更新失敗，請稍後再試');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleDelete = (spec: MaterialSpec) => {
+  const handleDelete = async (spec: MaterialSpec) => {
     if (!window.confirm(`確定要刪除材質規範「${spec.name}」？`)) return;
-    deleteMaterialSpec(spec.id);
-    refresh();
-    if (editingId === spec.id) resetDraft();
-    toast({ title: '材質規範已刪除' });
+    try {
+      await deleteMaterialSpec(spec.id);
+      await refresh();
+      if (editingId === spec.id) resetDraft();
+      toast({ title: '材質規範已刪除' });
+    } catch (err: unknown) {
+      notifyError(err, '刪除失敗，請稍後再試');
+    }
   };
 
   const renderRangeEditor = () => (
@@ -994,7 +1009,7 @@ function MaterialSpecManager({ open, onOpenChange, onChanged }: {
                     {editingId === spec.id ? (
                       <>
                         <Button size="sm" variant="ghost" onClick={resetDraft} className="text-zinc-400 hover:text-zinc-200 h-6 px-2 text-xs">取消</Button>
-                        <Button size="sm" onClick={handleSaveEdit} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-6 px-2 text-xs">儲存</Button>
+                        <Button size="sm" onClick={handleSaveEdit} disabled={saving} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-6 px-2 text-xs">儲存</Button>
                       </>
                     ) : (
                       <>
@@ -1040,7 +1055,7 @@ function MaterialSpecManager({ open, onOpenChange, onChanged }: {
                 {renderRangeEditor()}
                 <div className="flex gap-2 justify-end">
                   <Button size="sm" variant="ghost" onClick={resetDraft} className="text-zinc-400 h-7 text-xs">取消</Button>
-                  <Button size="sm" onClick={handleSaveNew} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-7 text-xs">儲存材質規範</Button>
+                  <Button size="sm" onClick={handleSaveNew} disabled={saving} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-7 text-xs">儲存材質規範</Button>
                 </div>
               </CardContent>
             </Card>

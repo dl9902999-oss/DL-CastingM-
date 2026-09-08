@@ -447,6 +447,7 @@ const LOCAL_STORAGE_KEY_MAP: Record<string, string> = {
   melt_chemistry: 'foundry_melt_chemistry',
   melt_pourings: 'foundry_melt_pourings',
   melt_preset_recipes: 'foundry_melt_preset_recipes',
+  melt_material_specs: 'foundry_melt_material_specs',
   patterns: 'foundry_patterns',
   pattern_versions: 'foundry_pattern_versions',
   pattern_history: 'foundry_pattern_history',
@@ -1147,6 +1148,162 @@ export async function dsDeleteMeltPresetRecipe(id: string): Promise<boolean> {
     },
     'dsDeleteMeltPresetRecipe',
     { table: 'melt_preset_recipes', action: 'delete' }
+  );
+}
+
+// ============================================================
+// Melt Material Specs (材質規範)
+// 舊版本材質規範僅存放於 localStorage key `melt_material_specs`，
+// 這裡統一改用 `foundry_melt_material_specs` 並在讀取時自動遷移舊資料。
+// ============================================================
+const MATERIAL_SPEC_KEY = 'foundry_melt_material_specs';
+const LEGACY_MATERIAL_SPEC_KEY = 'melt_material_specs';
+
+function readLocalMaterialSpecs(): sbStore.MeltMaterialSpec[] {
+  const raw = localStorage.getItem(MATERIAL_SPEC_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  // 遷移舊 key 資料
+  const legacy = localStorage.getItem(LEGACY_MATERIAL_SPEC_KEY);
+  if (legacy) {
+    try {
+      const parsed = JSON.parse(legacy);
+      if (Array.isArray(parsed)) {
+        const migrated: sbStore.MeltMaterialSpec[] = parsed.map((s: Record<string, unknown>) => ({
+          id: (s.id as string) || crypto.randomUUID(),
+          name: (s.name as string) || '',
+          ranges: (s.ranges as Record<string, number>) || {},
+          remark: (s.remark as string) || '',
+          created_at: (s.created_at as string) || new Date().toISOString(),
+          updated_at: (s.updated_at as string) || new Date().toISOString(),
+        }));
+        localStorage.setItem(MATERIAL_SPEC_KEY, JSON.stringify(migrated));
+        return migrated;
+      }
+    } catch { /* ignore */ }
+  }
+  return [];
+}
+
+function writeLocalMaterialSpecs(specs: sbStore.MeltMaterialSpec[]): void {
+  localStorage.setItem(MATERIAL_SPEC_KEY, JSON.stringify(specs));
+}
+
+const MATERIAL_SPEC_MIGRATED_FLAG = 'foundry_melt_material_specs_migrated';
+
+/**
+ * 將舊版僅存在本機的材質規範一次性上傳至雲端，
+ * 讓先前在單一裝置建立的規範也能跨裝置看到。
+ * 上傳失敗時不設定完成旗標，下次讀取會再嘗試。
+ */
+async function migrateLocalMaterialSpecsToCloud(
+  cloudSpecs: sbStore.MeltMaterialSpec[]
+): Promise<sbStore.MeltMaterialSpec[]> {
+  if (localStorage.getItem(MATERIAL_SPEC_MIGRATED_FLAG) === '1') return cloudSpecs;
+
+  const localSpecs = readLocalMaterialSpecs();
+  const missing = localSpecs.filter(
+    local => !cloudSpecs.some(cloud => cloud.name.trim() === local.name.trim())
+  );
+
+  if (missing.length === 0) {
+    localStorage.setItem(MATERIAL_SPEC_MIGRATED_FLAG, '1');
+    return cloudSpecs;
+  }
+
+  const created: sbStore.MeltMaterialSpec[] = [];
+  for (const spec of missing) {
+    try {
+      created.push(await sbStore.sbCreateMeltMaterialSpec({
+        name: spec.name,
+        ranges: spec.ranges || {},
+        remark: spec.remark || '',
+      }));
+    } catch (err) {
+      console.warn('[DataService] migrate material spec to cloud failed:', err);
+      return [...cloudSpecs, ...created];
+    }
+  }
+
+  localStorage.setItem(MATERIAL_SPEC_MIGRATED_FLAG, '1');
+  console.info(`[DataService] migrated ${created.length} local material specs to cloud`);
+  return [...cloudSpecs, ...created];
+}
+
+/**
+ * 取得所有材質規範。優先讀取 Supabase 以確保跨裝置一致，
+ * 讀取成功後回寫本地快取；連線失敗時退回本地暫存。
+ */
+export async function dsGetMeltMaterialSpecs(): Promise<sbStore.MeltMaterialSpec[]> {
+  try {
+    const cloudSpecs = await sbStore.sbGetMeltMaterialSpecs();
+    const merged = await migrateLocalMaterialSpecsToCloud(cloudSpecs);
+    writeLocalMaterialSpecs(merged);
+    return merged;
+  } catch (err) {
+    console.warn('[DataService] dsGetMeltMaterialSpecs fallback to local cache:', err);
+    return readLocalMaterialSpecs();
+  }
+}
+
+export async function dsCreateMeltMaterialSpec(
+  data: { name: string; ranges: Record<string, number>; remark: string }
+): Promise<sbStore.MeltMaterialSpec> {
+  return withRLSFallback(
+    () => sbStore.sbCreateMeltMaterialSpec(data),
+    () => {
+      const all = readLocalMaterialSpecs();
+      const entry: sbStore.MeltMaterialSpec = {
+        ...data,
+        id: crypto.randomUUID(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      all.push(entry);
+      writeLocalMaterialSpecs(all);
+      return entry;
+    },
+    'dsCreateMeltMaterialSpec',
+    { table: 'melt_material_specs', action: 'create' }
+  );
+}
+
+export async function dsUpdateMeltMaterialSpec(
+  id: string,
+  updates: Partial<{ name: string; ranges: Record<string, number>; remark: string }>
+): Promise<sbStore.MeltMaterialSpec | null> {
+  return withRLSFallback(
+    () => sbStore.sbUpdateMeltMaterialSpec(id, updates),
+    () => {
+      const all = readLocalMaterialSpecs();
+      const idx = all.findIndex(s => s.id === id);
+      if (idx < 0) return null;
+      all[idx] = { ...all[idx], ...updates, updated_at: new Date().toISOString() };
+      writeLocalMaterialSpecs(all);
+      return all[idx];
+    },
+    'dsUpdateMeltMaterialSpec',
+    { table: 'melt_material_specs', action: 'update' }
+  );
+}
+
+export async function dsDeleteMeltMaterialSpec(id: string): Promise<boolean> {
+  return withRLSFallback(
+    () => sbStore.sbDeleteMeltMaterialSpec(id),
+    () => {
+      const all = readLocalMaterialSpecs();
+      const filtered = all.filter(s => s.id !== id);
+      writeLocalMaterialSpecs(filtered);
+      return filtered.length < all.length;
+    },
+    'dsDeleteMeltMaterialSpec',
+    { table: 'melt_material_specs', action: 'delete' }
   );
 }
 

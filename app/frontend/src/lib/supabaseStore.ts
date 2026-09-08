@@ -851,6 +851,61 @@ export async function sbDeleteMeltPresetRecipe(id: string): Promise<boolean> {
 }
 
 // ============================================================
+// Melt Material Specs (材質規範)
+// ============================================================
+export interface MeltMaterialSpec {
+  id: string;
+  name: string;
+  ranges: Record<string, number>;
+  remark: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapMeltMaterialSpec(row: Record<string, unknown>): MeltMaterialSpec {
+  return {
+    id: row.id as string,
+    name: (row.name as string) || '',
+    ranges: (row.ranges as Record<string, number>) || {},
+    remark: (row.remark as string) || '',
+    created_at: (row.created_at as string) || '',
+    updated_at: (row.updated_at as string) || '',
+  };
+}
+
+export async function sbGetMeltMaterialSpecs(): Promise<MeltMaterialSpec[]> {
+  const { data, error } = await supabase
+    .from('melt_material_specs')
+    .select('*')
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapMeltMaterialSpec);
+}
+
+export async function sbCreateMeltMaterialSpec(
+  data: { name: string; ranges: Record<string, number>; remark: string }
+): Promise<MeltMaterialSpec> {
+  const { data: result, error } = await supabase.from('melt_material_specs').insert(data).select().single();
+  if (error) throw error;
+  return mapMeltMaterialSpec(result);
+}
+
+export async function sbUpdateMeltMaterialSpec(
+  id: string,
+  updates: Partial<{ name: string; ranges: Record<string, number>; remark: string }>
+): Promise<MeltMaterialSpec | null> {
+  const { data, error } = await supabase.from('melt_material_specs').update(updates).eq('id', id).select().single();
+  if (error) throw error;
+  if (!data) return null;
+  return mapMeltMaterialSpec(data);
+}
+
+export async function sbDeleteMeltMaterialSpec(id: string): Promise<boolean> {
+  const { error } = await supabase.from('melt_material_specs').delete().eq('id', id);
+  return !error;
+}
+
+// ============================================================
 // Quality Inspections
 // ============================================================
 export async function sbGetQualityInspections(): Promise<QualityInspection[]> {
