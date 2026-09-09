@@ -931,6 +931,128 @@ export async function sbDeleteMeltMaterialSpec(id: string): Promise<boolean> {
 }
 
 // ============================================================
+// Raw Material Receipts (原料入庫)
+// ============================================================
+export interface RawMaterialReceipt {
+  id: string;
+  receipt_no: string;
+  receipt_date: string;
+  raw_material: string;
+  weight: number;
+  unit_price: number;
+  supplier: string;
+  lot_no: string;
+  spec: Record<string, number>;
+  remark: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type RawMaterialReceiptInput = Omit<RawMaterialReceipt, 'id' | 'receipt_no' | 'created_at' | 'updated_at'>;
+
+function mapRawMaterialReceipt(row: Record<string, unknown>): RawMaterialReceipt {
+  return {
+    id: row.id as string,
+    receipt_no: (row.receipt_no as string) || '',
+    receipt_date: (row.receipt_date as string) || '',
+    raw_material: (row.raw_material as string) || '',
+    weight: Number(row.weight) || 0,
+    unit_price: Number(row.unit_price) || 0,
+    supplier: (row.supplier as string) || '',
+    lot_no: (row.lot_no as string) || '',
+    spec: (row.spec as Record<string, number>) || {},
+    remark: (row.remark as string) || '',
+    created_by: (row.created_by as string) || '',
+    created_at: (row.created_at as string) || '',
+    updated_at: (row.updated_at as string) || '',
+  };
+}
+
+/** 產生原料入庫單號：RM-yyyymmdd-流水序號 */
+function buildReceiptNo(dateStr: string, existing: string[]): string {
+  const compact = (dateStr || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
+  const prefix = `RM-${compact}-`;
+  const used = existing
+    .filter(no => no.startsWith(prefix))
+    .map(no => parseInt(no.slice(prefix.length), 10))
+    .filter(n => !Number.isNaN(n));
+  const next = used.length > 0 ? Math.max(...used) + 1 : 1;
+  return `${prefix}${next.toString().padStart(3, '0')}`;
+}
+
+/** 過濾出資料表實際存在的欄位，避免多餘鍵導致整筆寫入失敗 */
+function buildReceiptPayload(data: Partial<RawMaterialReceiptInput>): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  if (data.receipt_date !== undefined) payload.receipt_date = data.receipt_date || null;
+  if (data.raw_material !== undefined) payload.raw_material = data.raw_material;
+  if (data.weight !== undefined) payload.weight = Number(data.weight) || 0;
+  if (data.unit_price !== undefined) payload.unit_price = Number(data.unit_price) || 0;
+  if (data.supplier !== undefined) payload.supplier = data.supplier || '';
+  if (data.lot_no !== undefined) payload.lot_no = data.lot_no || '';
+  if (data.spec !== undefined) payload.spec = data.spec || {};
+  if (data.remark !== undefined) payload.remark = data.remark || '';
+  if (data.created_by !== undefined) payload.created_by = data.created_by || '';
+  return payload;
+}
+
+export async function sbGetRawMaterialReceipts(): Promise<RawMaterialReceipt[]> {
+  const { data, error } = await supabase
+    .from('raw_material_receipts')
+    .select('*')
+    .order('receipt_date', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapRawMaterialReceipt);
+}
+
+export async function sbCreateRawMaterialReceipt(data: RawMaterialReceiptInput): Promise<RawMaterialReceipt> {
+  const { data: sameDay } = await supabase
+    .from('raw_material_receipts')
+    .select('receipt_no')
+    .eq('receipt_date', data.receipt_date || new Date().toISOString().slice(0, 10));
+  const existingNos = (sameDay || []).map(r => (r as Record<string, unknown>).receipt_no as string);
+  const payload = {
+    ...buildReceiptPayload(data),
+    id: crypto.randomUUID(),
+    receipt_no: buildReceiptNo(data.receipt_date, existingNos),
+  };
+  const { data: result, error } = await supabase
+    .from('raw_material_receipts')
+    .insert(payload)
+    .select()
+    .single();
+  if (error) {
+    console.error('[sbCreateRawMaterialReceipt] insert failed:', error.code, error.message, error.details, error.hint);
+    throw error;
+  }
+  return mapRawMaterialReceipt(result);
+}
+
+export async function sbUpdateRawMaterialReceipt(
+  id: string,
+  updates: Partial<RawMaterialReceiptInput>
+): Promise<RawMaterialReceipt | null> {
+  const payload = { ...buildReceiptPayload(updates), updated_at: new Date().toISOString() };
+  const { data, error } = await supabase
+    .from('raw_material_receipts')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) {
+    console.error('[sbUpdateRawMaterialReceipt] update failed:', error.code, error.message, error.details, error.hint);
+    throw error;
+  }
+  if (!data) return null;
+  return mapRawMaterialReceipt(data);
+}
+
+export async function sbDeleteRawMaterialReceipt(id: string): Promise<boolean> {
+  const { error } = await supabase.from('raw_material_receipts').delete().eq('id', id);
+  return !error;
+}
+
+// ============================================================
 // Quality Inspections
 // ============================================================
 export async function sbGetQualityInspections(): Promise<QualityInspection[]> {

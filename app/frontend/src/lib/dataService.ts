@@ -448,6 +448,7 @@ const LOCAL_STORAGE_KEY_MAP: Record<string, string> = {
   melt_pourings: 'foundry_melt_pourings',
   melt_preset_recipes: 'foundry_melt_preset_recipes',
   melt_material_specs: 'foundry_melt_material_specs',
+  raw_material_receipts: 'foundry_raw_material_receipts',
   patterns: 'foundry_patterns',
   pattern_versions: 'foundry_pattern_versions',
   pattern_history: 'foundry_pattern_history',
@@ -1381,6 +1382,114 @@ export async function dsDeleteMeltMaterialSpec(id: string): Promise<boolean> {
     },
     'dsDeleteMeltMaterialSpec',
     { table: 'melt_material_specs', action: 'delete' }
+  );
+}
+
+// ============================================================
+// Raw Material Receipts (原料入庫)
+// 雲端優先讀取以支援跨裝置同步；離線或權限受限時退回本地暫存並排入待同步佇列。
+// ============================================================
+const RAW_RECEIPT_KEY = 'foundry_raw_material_receipts';
+
+function readLocalRawReceipts(): sbStore.RawMaterialReceipt[] {
+  const raw = localStorage.getItem(RAW_RECEIPT_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalRawReceipts(list: sbStore.RawMaterialReceipt[]): void {
+  localStorage.setItem(RAW_RECEIPT_KEY, JSON.stringify(list));
+}
+
+/** 離線時本地產生入庫單號，規則與雲端一致：RM-yyyymmdd-流水序號 */
+function buildLocalReceiptNo(dateStr: string, existing: sbStore.RawMaterialReceipt[]): string {
+  const compact = (dateStr || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
+  const prefix = `RM-${compact}-`;
+  const used = existing
+    .filter(r => r.receipt_no.startsWith(prefix))
+    .map(r => parseInt(r.receipt_no.slice(prefix.length), 10))
+    .filter(n => !Number.isNaN(n));
+  const next = used.length > 0 ? Math.max(...used) + 1 : 1;
+  return `${prefix}${next.toString().padStart(3, '0')}`;
+}
+
+export async function dsGetRawMaterialReceipts(): Promise<sbStore.RawMaterialReceipt[]> {
+  try {
+    const cloud = await sbStore.sbGetRawMaterialReceipts();
+    const local = readLocalRawReceipts();
+    // 雲端筆數少於本地時保留本地獨有紀錄，避免尚未同步的資料在畫面上消失
+    if (cloud.length < local.length) {
+      const cloudIds = new Set(cloud.map(r => r.id));
+      const merged = [...cloud, ...local.filter(r => !cloudIds.has(r.id))];
+      writeLocalRawReceipts(merged);
+      return merged;
+    }
+    writeLocalRawReceipts(cloud);
+    return cloud;
+  } catch (err) {
+    console.warn('[DataService] dsGetRawMaterialReceipts fallback to local cache:', err);
+    return readLocalRawReceipts();
+  }
+}
+
+export async function dsCreateRawMaterialReceipt(
+  data: sbStore.RawMaterialReceiptInput
+): Promise<sbStore.RawMaterialReceipt> {
+  return withRLSFallback(
+    () => sbStore.sbCreateRawMaterialReceipt(data),
+    () => {
+      const all = readLocalRawReceipts();
+      const entry: sbStore.RawMaterialReceipt = {
+        ...data,
+        id: crypto.randomUUID(),
+        receipt_no: buildLocalReceiptNo(data.receipt_date, all),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      all.push(entry);
+      writeLocalRawReceipts(all);
+      return entry;
+    },
+    'dsCreateRawMaterialReceipt',
+    { table: 'raw_material_receipts', action: 'create' }
+  );
+}
+
+export async function dsUpdateRawMaterialReceipt(
+  id: string,
+  updates: Partial<sbStore.RawMaterialReceiptInput>
+): Promise<sbStore.RawMaterialReceipt | null> {
+  return withRLSFallback(
+    () => sbStore.sbUpdateRawMaterialReceipt(id, updates),
+    () => {
+      const all = readLocalRawReceipts();
+      const idx = all.findIndex(r => r.id === id);
+      if (idx < 0) return null;
+      all[idx] = { ...all[idx], ...updates, updated_at: new Date().toISOString() };
+      writeLocalRawReceipts(all);
+      return all[idx];
+    },
+    'dsUpdateRawMaterialReceipt',
+    { table: 'raw_material_receipts', action: 'update' }
+  );
+}
+
+export async function dsDeleteRawMaterialReceipt(id: string): Promise<boolean> {
+  return withRLSFallback(
+    () => sbStore.sbDeleteRawMaterialReceipt(id),
+    () => {
+      const all = readLocalRawReceipts();
+      const filtered = all.filter(r => r.id !== id);
+      writeLocalRawReceipts(filtered);
+      return filtered.length < all.length;
+    },
+    'dsDeleteRawMaterialReceipt',
+    { table: 'raw_material_receipts', action: 'delete' }
   );
 }
 

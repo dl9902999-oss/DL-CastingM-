@@ -37,8 +37,9 @@ const getMeltTargetRange = dsGetMeltTargetRange as unknown as (...args: Paramete
 const saveMeltTargetRange = dsSaveMeltTargetRange as unknown as (...args: Parameters<typeof dsSaveMeltTargetRange>) => Awaited<ReturnType<typeof dsSaveMeltTargetRange>>;
 const getMoldingBatches = dsGetMoldingBatches as unknown as (...args: Parameters<typeof dsGetMoldingBatches>) => Awaited<ReturnType<typeof dsGetMoldingBatches>>;
 const getWorkOrders = dsGetWorkOrders as unknown as (...args: Parameters<typeof dsGetWorkOrders>) => Awaited<ReturnType<typeof dsGetWorkOrders>>;
-import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings } from 'lucide-react';
+import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings, Warehouse } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import InventoryManager from '@/components/melting/InventoryManager';
 
 const SAMPLE_STAGE_LABELS: Record<SampleStage, string> = {
   TARGET: '目標',
@@ -142,6 +143,7 @@ export default function MeltingManagement() {
   const [filterFurnace, setFilterFurnace] = useState('');
   const [showPresetManager, setShowPresetManager] = useState(false);
   const [showSpecManager, setShowSpecManager] = useState(false);
+  const [showInventoryManager, setShowInventoryManager] = useState(false);
   const [materialSpecs, setMaterialSpecs] = useState<MaterialSpec[]>([]);
   const { toast } = useToast();
 
@@ -268,6 +270,9 @@ export default function MeltingManagement() {
             <Button onClick={() => setShowSpecManager(true)} variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 text-xs h-8">
               <FlaskConical className="w-3.5 h-3.5 mr-1" />材質規範
             </Button>
+            <Button onClick={() => setShowInventoryManager(true)} variant="outline" className="border-emerald-600/60 text-emerald-300 hover:bg-emerald-900/30 text-xs h-8">
+              <Warehouse className="w-3.5 h-3.5 mr-1" />庫存管理
+            </Button>
             <Button onClick={handleCopyLast} variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 text-xs h-8">
               <Copy className="w-3.5 h-3.5 mr-1" />複製上一爐
             </Button>
@@ -356,6 +361,14 @@ export default function MeltingManagement() {
           open={showSpecManager}
           onOpenChange={setShowSpecManager}
           onChanged={async () => setMaterialSpecs(await getMaterialSpecs())}
+        />
+
+        {/* Raw Material Inventory Manager Dialog */}
+        <InventoryManager
+          open={showInventoryManager}
+          onOpenChange={setShowInventoryManager}
+          materialOptions={[...new Set([...MATERIAL_OPTIONS, ...uniqueMaterials])]}
+          syncTrigger={syncTrigger}
         />
       </div>
     </AppLayout>
