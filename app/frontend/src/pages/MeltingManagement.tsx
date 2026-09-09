@@ -19,7 +19,7 @@ import {
   dsGetMeltPresetRecipes, dsCreateMeltPresetRecipe, dsUpdateMeltPresetRecipe, dsDeleteMeltPresetRecipe,
   dsGetMeltMaterialSpecs, dsCreateMeltMaterialSpec, dsUpdateMeltMaterialSpec, dsDeleteMeltMaterialSpec,
 } from '@/lib/dataService';
-import type { MeltMaterialSpec } from '@/lib/supabaseStore';
+import type { MeltMaterialSpec, MeltPresetRecipe } from '@/lib/supabaseStore';
 
 // Alias ds* functions to legacy names used throughout this file (sync-compatible wrappers)
 const getMeltRecords = dsGetMeltRecords as unknown as (...args: Parameters<typeof dsGetMeltRecords>) => Awaited<ReturnType<typeof dsGetMeltRecords>>;
@@ -52,41 +52,31 @@ const MATERIAL_OPTIONS = ['回爐料', '廢鐵', '矽鐵', '高碳錳鐵', '增�
 
 const FURNACE_OPTIONS = ['1-1', '1-2', '1-3', '1-4', '2-1', '2-2', '2-3', '2-4', '3-1', '3-2', '3-3', '3-4', '3-5'];
 
-// === Preset Recipe Types & Storage ===
-interface PresetRecipe {
-  id: string;
-  name: string;
-  materials: Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>;
-  created_at: string;
+// === Preset Recipe Types & Cloud Storage ===
+// 預設配比改由雲端資料層存取以支援跨裝置同步；
+// 離線或權限受限時 dataService 會自動退回本地暫存並排入待同步佇列，連線恢復後自動補傳。
+type PresetRecipe = MeltPresetRecipe;
+type PresetMaterialRow = { raw_material: string; charge_weight: number; secondary_weight: number };
+
+async function getPresetRecipes(): Promise<PresetRecipe[]> {
+  try {
+    return await dsGetMeltPresetRecipes();
+  } catch (err: unknown) {
+    console.error('[PresetRecipe] load failed:', err);
+    return [];
+  }
 }
 
-const PRESET_RECIPES_KEY = 'melt_preset_recipes';
-
-function getPresetRecipes(): PresetRecipe[] {
-  const data = localStorage.getItem(PRESET_RECIPES_KEY);
-  return data ? JSON.parse(data) : [];
+async function createPresetRecipe(name: string, materials: PresetMaterialRow[]): Promise<PresetRecipe> {
+  return dsCreateMeltPresetRecipe({ name, materials });
 }
 
-function savePresetRecipes(recipes: PresetRecipe[]) {
-  localStorage.setItem(PRESET_RECIPES_KEY, JSON.stringify(recipes));
+async function updatePresetRecipeMaterials(id: string, materials: PresetMaterialRow[]): Promise<PresetRecipe | null> {
+  return dsUpdateMeltPresetRecipe(id, { materials });
 }
 
-function createPresetRecipe(name: string, materials: Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>): PresetRecipe {
-  const recipes = getPresetRecipes();
-  const newRecipe: PresetRecipe = {
-    id: crypto.randomUUID(),
-    name,
-    materials,
-    created_at: new Date().toISOString(),
-  };
-  recipes.push(newRecipe);
-  savePresetRecipes(recipes);
-  return newRecipe;
-}
-
-function deletePresetRecipe(id: string) {
-  const recipes = getPresetRecipes().filter(r => r.id !== id);
-  savePresetRecipes(recipes);
+async function deletePresetRecipe(id: string): Promise<boolean> {
+  return dsDeleteMeltPresetRecipe(id);
 }
 
 // === Material Spec (材質規範) Types & Storage ===
@@ -611,11 +601,31 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
   const [addRow, setAddRow] = useState({ raw_material: '', charge_weight: 0, secondary_weight: 0, custom: '' });
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
   const [editingMaterials, setEditingMaterials] = useState<Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>>([]);
+  const [saving, setSaving] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
-    if (open) setRecipes(getPresetRecipes());
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      const cloudRecipes = await getPresetRecipes();
+      if (!cancelled) setRecipes(cloudRecipes);
+    })();
+    return () => { cancelled = true; };
   }, [open]);
+
+  // 統一的錯誤提示：區分權限、連線與其他失敗
+  const notifyError = (err: unknown, fallback: string) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[PresetRecipe] operation failed:', err);
+    if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+      toast({ title: '權限不足，已暫存本地', description: '連線恢復後將自動同步至雲端', variant: 'destructive' });
+    } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
+      toast({ title: '連線異常，已暫存本地', description: '連線恢復後將自動同步至雲端', variant: 'destructive' });
+    } else {
+      toast({ title: fallback, variant: 'destructive' });
+    }
+  };
 
   const handleAddMaterialRow = () => {
     const name = addRow.raw_material === '__custom__' ? addRow.custom : addRow.raw_material;
@@ -624,22 +634,37 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
     setAddRow({ raw_material: '', charge_weight: 0, secondary_weight: 0, custom: '' });
   };
 
-  const handleSaveRecipe = () => {
+  const handleSaveRecipe = async () => {
     if (!newName.trim()) { toast({ title: '請輸入配比名稱', variant: 'destructive' }); return; }
     if (newMaterials.length === 0) { toast({ title: '請至少新增一項原料', variant: 'destructive' }); return; }
-    createPresetRecipe(newName.trim(), newMaterials);
-    setRecipes(getPresetRecipes());
-    setNewName('');
-    setNewMaterials([]);
-    setIsAdding(false);
-    toast({ title: '預設配比已建立' });
+    if (recipes.some(r => r.name.trim() === newName.trim())) {
+      toast({ title: '此配比名稱已存在', variant: 'destructive' });
+      return;
+    }
+    setSaving(true);
+    try {
+      await createPresetRecipe(newName.trim(), newMaterials);
+      setRecipes(await getPresetRecipes());
+      setNewName('');
+      setNewMaterials([]);
+      setIsAdding(false);
+      toast({ title: '預設配比已建立', description: '已同步至雲端，其他裝置可看到此配比' });
+    } catch (err: unknown) {
+      notifyError(err, '建立失敗，請稍後再試');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleDeleteRecipe = (id: string) => {
+  const handleDeleteRecipe = async (id: string) => {
     if (!window.confirm('確定要刪除此預設配比？')) return;
-    deletePresetRecipe(id);
-    setRecipes(getPresetRecipes());
-    toast({ title: '預設配比已刪除' });
+    try {
+      await deletePresetRecipe(id);
+      setRecipes(await getPresetRecipes());
+      toast({ title: '預設配比已刪除' });
+    } catch (err: unknown) {
+      notifyError(err, '刪除失敗，請稍後再試');
+    }
   };
 
   const handleStartEdit = (recipe: PresetRecipe) => {
@@ -652,18 +677,20 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
     setEditingMaterials([]);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editingRecipeId) return;
-    const allRecipes = getPresetRecipes();
-    const idx = allRecipes.findIndex(r => r.id === editingRecipeId);
-    if (idx >= 0) {
-      allRecipes[idx].materials = editingMaterials;
-      savePresetRecipes(allRecipes);
-      setRecipes(allRecipes);
-      toast({ title: '配比已更新' });
+    setSaving(true);
+    try {
+      await updatePresetRecipeMaterials(editingRecipeId, editingMaterials);
+      setRecipes(await getPresetRecipes());
+      setEditingRecipeId(null);
+      setEditingMaterials([]);
+      toast({ title: '配比已更新', description: '已同步至雲端' });
+    } catch (err: unknown) {
+      notifyError(err, '更新失敗，請稍後再試');
+    } finally {
+      setSaving(false);
     }
-    setEditingRecipeId(null);
-    setEditingMaterials([]);
   };
 
   const handleEditMaterialChange = (index: number, field: 'charge_weight' | 'secondary_weight', value: number) => {
@@ -697,7 +724,7 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
                     {editingRecipeId === recipe.id ? (
                       <>
                         <Button size="sm" variant="ghost" onClick={handleCancelEdit} className="text-zinc-400 hover:text-zinc-200 h-6 px-2 text-xs">取消</Button>
-                        <Button size="sm" onClick={handleSaveEdit} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-6 px-2 text-xs">儲存</Button>
+                        <Button size="sm" onClick={handleSaveEdit} disabled={saving} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-6 px-2 text-xs">儲存</Button>
                       </>
                     ) : (
                       <>
@@ -792,7 +819,7 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
 
                 <div className="flex gap-2 justify-end">
                   <Button size="sm" variant="ghost" onClick={() => { setIsAdding(false); setNewName(''); setNewMaterials([]); }} className="text-zinc-400 h-7 text-xs">取消</Button>
-                  <Button size="sm" onClick={handleSaveRecipe} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-7 text-xs">儲存配比</Button>
+                  <Button size="sm" onClick={handleSaveRecipe} disabled={saving} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-7 text-xs">儲存配比</Button>
                 </div>
               </CardContent>
             </Card>
@@ -1178,7 +1205,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
   useEffect(() => {
     if (open) {
       (async () => {
-      setPresetRecipes(getPresetRecipes());
+      setPresetRecipes(await getPresetRecipes());
       const [batches, orders] = await Promise.all([getMoldingBatches(), getWorkOrders()]);
       setAllBatches(batches);
       setAllWorkOrders(orders);

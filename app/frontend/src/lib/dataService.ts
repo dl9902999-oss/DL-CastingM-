@@ -1088,16 +1088,93 @@ export async function dsDeleteMeltPouring(id: string): Promise<boolean> {
 // ============================================================
 // Melt Preset Recipes
 // ============================================================
-export async function dsGetMeltPresetRecipes(): Promise<sbStore.MeltPresetRecipe[]> {
-  return withReadFallback(
-    () => sbStore.sbGetMeltPresetRecipes(),
-    () => {
-      const key = 'foundry_melt_preset_recipes';
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : [];
-    },
-    'dsGetMeltPresetRecipes'
+const PRESET_RECIPE_KEY = 'foundry_melt_preset_recipes';
+const LEGACY_PRESET_RECIPE_KEY = 'melt_preset_recipes';
+const PRESET_RECIPE_MIGRATED_FLAG = 'foundry_melt_preset_recipes_migrated';
+
+/** 讀取本地預設配比快取，並自動遷移舊版 localStorage key。 */
+function readLocalPresetRecipes(): sbStore.MeltPresetRecipe[] {
+  const raw = localStorage.getItem(PRESET_RECIPE_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  const legacy = localStorage.getItem(LEGACY_PRESET_RECIPE_KEY);
+  if (legacy) {
+    try {
+      const parsed = JSON.parse(legacy);
+      if (Array.isArray(parsed)) {
+        const migrated: sbStore.MeltPresetRecipe[] = parsed.map((r: Record<string, unknown>) => ({
+          id: (r.id as string) || crypto.randomUUID(),
+          name: (r.name as string) || '',
+          materials: (r.materials as sbStore.MeltPresetRecipe['materials']) || [],
+          created_at: (r.created_at as string) || new Date().toISOString(),
+          updated_at: (r.updated_at as string) || new Date().toISOString(),
+        }));
+        localStorage.setItem(PRESET_RECIPE_KEY, JSON.stringify(migrated));
+        return migrated;
+      }
+    } catch { /* ignore */ }
+  }
+  return [];
+}
+
+/**
+ * 將舊版僅存在本機的預設配比一次性上傳至雲端，
+ * 讓先前在單一裝置建立的配比也能跨裝置看到。
+ * 上傳失敗時不設定完成旗標，下次讀取會再嘗試。
+ */
+async function migrateLocalPresetRecipesToCloud(
+  cloudRecipes: sbStore.MeltPresetRecipe[]
+): Promise<sbStore.MeltPresetRecipe[]> {
+  if (localStorage.getItem(PRESET_RECIPE_MIGRATED_FLAG) === '1') return cloudRecipes;
+
+  const localRecipes = readLocalPresetRecipes();
+  const missing = localRecipes.filter(
+    local => !cloudRecipes.some(cloud => cloud.name.trim() === local.name.trim())
   );
+
+  if (missing.length === 0) {
+    localStorage.setItem(PRESET_RECIPE_MIGRATED_FLAG, '1');
+    return cloudRecipes;
+  }
+
+  const created: sbStore.MeltPresetRecipe[] = [];
+  for (const recipe of missing) {
+    try {
+      created.push(await sbStore.sbCreateMeltPresetRecipe({
+        name: recipe.name,
+        materials: recipe.materials || [],
+      }));
+    } catch (err) {
+      console.warn('[DataService] migrate preset recipe to cloud failed:', err);
+      return [...cloudRecipes, ...created];
+    }
+  }
+
+  localStorage.setItem(PRESET_RECIPE_MIGRATED_FLAG, '1');
+  console.info(`[DataService] migrated ${created.length} local preset recipes to cloud`);
+  return [...cloudRecipes, ...created];
+}
+
+/**
+ * 取得所有預設投料配比。優先讀取 Supabase 以確保跨裝置一致，
+ * 讀取成功後回寫本地快取；連線失敗時退回本地暫存。
+ */
+export async function dsGetMeltPresetRecipes(): Promise<sbStore.MeltPresetRecipe[]> {
+  try {
+    const cloudRecipes = await sbStore.sbGetMeltPresetRecipes();
+    const merged = await migrateLocalPresetRecipesToCloud(cloudRecipes);
+    localStorage.setItem(PRESET_RECIPE_KEY, JSON.stringify(merged));
+    return merged;
+  } catch (err) {
+    console.warn('[DataService] dsGetMeltPresetRecipes fallback to local cache:', err);
+    return readLocalPresetRecipes();
+  }
 }
 
 export async function dsCreateMeltPresetRecipe(data: { name: string; materials: sbStore.MeltPresetRecipe['materials'] }): Promise<sbStore.MeltPresetRecipe> {

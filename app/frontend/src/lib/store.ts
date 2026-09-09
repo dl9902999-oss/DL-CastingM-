@@ -756,10 +756,22 @@ export function createMeltRecord(data: Omit<MeltRecord, 'id' | 'melt_no' | 'melt
   const totalChargeWeight = 0;
   const specificEnergy = totalChargeWeight > 0 ? Math.round((data.power_kwh / totalChargeWeight) * 1000) / 1000 : 0;
 
+  // 熔解編號規則：ML-yyyymmdd-爐號；同日同爐重複時追加 -2、-3 ... 流水序號
+  const datePart = (data.melt_date || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
+  const furnacePart = (data.furnace_no || '').trim() || 'NA';
+  const baseMeltNo = `ML-${datePart}-${furnacePart}`;
+  const existingNos = records.map(r => r.melt_no);
+  let meltNo = baseMeltNo;
+  if (existingNos.includes(baseMeltNo)) {
+    let seq = 2;
+    while (existingNos.includes(`${baseMeltNo}-${seq}`)) seq += 1;
+    meltNo = `${baseMeltNo}-${seq}`;
+  }
+
   const newRecord: MeltRecord = {
     ...data,
     id: generateId(),
-    melt_no: generateOrderNo('ML'),
+    melt_no: meltNo,
     melt_minutes: meltMinutes,
     total_charge_weight: totalChargeWeight,
     specific_energy: specificEnergy,

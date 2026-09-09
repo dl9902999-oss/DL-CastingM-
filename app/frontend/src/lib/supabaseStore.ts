@@ -498,6 +498,29 @@ export async function sbGetMeltRecords(): Promise<MeltRecord[]> {
   return (data || []).map(mapMeltRecord);
 }
 
+/**
+ * 產生熔解編號：ML-yyyymmdd-爐號
+ * @param meltDate 熔解日期（YYYY-MM-DD）
+ * @param furnaceNo 爐號（例：1-1）
+ */
+export async function generateMeltNo(meltDate: string, furnaceNo: string): Promise<string> {
+  const datePart = (meltDate || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
+  const furnacePart = (furnaceNo || '').trim() || 'NA';
+  const base = `ML-${datePart}-${furnacePart}`;
+
+  try {
+    const { data } = await supabase.from('melt_records').select('melt_no').like('melt_no', `${base}%`);
+    const existing = (data || []).map(r => (r.melt_no as string) || '');
+    if (existing.length === 0 || !existing.includes(base)) return base;
+    // 同日同爐重複時追加 -2、-3 ... 流水序號
+    let seq = 2;
+    while (existing.includes(`${base}-${seq}`)) seq += 1;
+    return `${base}-${seq}`;
+  } catch {
+    return base;
+  }
+}
+
 export async function sbCreateMeltRecord(recordData: Omit<MeltRecord, 'id' | 'melt_no' | 'melt_minutes' | 'total_charge_weight' | 'specific_energy' | 'created_at' | 'updated_at'>): Promise<MeltRecord> {
   let meltMinutes = 0;
   if (recordData.power_start_time && recordData.tap_time) {
@@ -507,7 +530,9 @@ export async function sbCreateMeltRecord(recordData: Omit<MeltRecord, 'id' | 'me
     if (diff < 0) diff += 24 * 60;
     meltMinutes = diff;
   }
-  const meltNo = `ML-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-5)}`;
+  // 熔解編號規則：ML-yyyymmdd-爐號（依熔解日期與爐號組成）
+  // 同日同爐若已有紀錄，於尾端追加流水序號避免編號重複
+  const meltNo = await generateMeltNo(recordData.melt_date, recordData.furnace_no);
 
   const { data, error } = await supabase.from('melt_records').insert({
     ...recordData,
