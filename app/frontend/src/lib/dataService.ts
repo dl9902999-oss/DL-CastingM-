@@ -907,7 +907,7 @@ export async function dsGetMeltRecords(): Promise<MeltRecord[]> {
   );
 }
 
-export async function dsCreateMeltRecord(data: Omit<MeltRecord, 'id' | 'melt_no' | 'melt_minutes' | 'total_charge_weight' | 'specific_energy' | 'created_at' | 'updated_at'>): Promise<MeltRecord> {
+export async function dsCreateMeltRecord(data: Omit<MeltRecord, 'id' | 'melt_no' | 'melt_minutes' | 'total_charge_weight' | 'specific_energy' | 'created_at' | 'updated_at'> & { melt_no?: string }): Promise<MeltRecord> {
   return withRLSFallback(
     () => sbStore.sbCreateMeltRecord(data),
     () => localStore.createMeltRecord(data),
@@ -916,7 +916,7 @@ export async function dsCreateMeltRecord(data: Omit<MeltRecord, 'id' | 'melt_no'
   );
 }
 
-export async function dsUpdateMeltRecord(id: string, data: Partial<Omit<MeltRecord, 'id' | 'melt_no' | 'created_at'>>): Promise<MeltRecord | null> {
+export async function dsUpdateMeltRecord(id: string, data: Partial<Omit<MeltRecord, 'id' | 'created_at'>>): Promise<MeltRecord | null> {
   return withRLSFallback(
     () => sbStore.sbUpdateMeltRecord(id, data),
     () => localStore.updateMeltRecord(id, data),

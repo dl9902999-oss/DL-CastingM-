@@ -1324,6 +1324,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
 
   // Basic info form
   const [form, setForm] = useState({
+    melt_no: '',
     melt_date: new Date().toISOString().slice(0, 10),
     material_grade: '',
     furnace_no: '',
@@ -1430,6 +1431,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
           setSelectedPouringBatches([]);
         }
         setForm({
+          melt_no: editRecord.melt_no,
           melt_date: editRecord.melt_date,
           material_grade: editRecord.material_grade,
           furnace_no: editRecord.furnace_no,
@@ -1482,6 +1484,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
 
   const resetFormState = () => {
     setForm({
+      melt_no: '',
       melt_date: new Date().toISOString().slice(0, 10),
       material_grade: '',
       furnace_no: '',
@@ -1565,6 +1568,24 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
       toast({ title: '請填寫材質與爐號', variant: 'destructive' });
       return;
     }
+    const trimmedMeltNo = form.melt_no.trim();
+    if (isEdit && !trimmedMeltNo) {
+      toast({ title: '熔解編號不可空白', variant: 'destructive' });
+      return;
+    }
+    if (trimmedMeltNo && trimmedMeltNo.length > 40) {
+      toast({ title: '熔解編號長度不可超過 40 字', variant: 'destructive' });
+      return;
+    }
+    // 檢查熔解編號是否與其他紀錄重複
+    if (trimmedMeltNo) {
+      const allRecords = await getMeltRecords();
+      const duplicated = allRecords.some(r => r.melt_no === trimmedMeltNo && r.id !== editRecord?.id);
+      if (duplicated) {
+        toast({ title: `熔解編號「${trimmedMeltNo}」已存在，請改用其他編號`, variant: 'destructive' });
+        return;
+      }
+    }
     if (form.power_start_time && form.tap_time && !validateTime(form.power_start_time, form.tap_time)) {
       toast({ title: '出湯時間不可早於開始送電時間', variant: 'destructive' });
       return;
@@ -1575,6 +1596,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
 
       if (isEdit && editRecord) {
         await updateMeltRecord(editRecord.id, {
+          melt_no: trimmedMeltNo,
           melt_date: form.melt_date,
           material_grade: form.material_grade,
           furnace_no: form.furnace_no,
@@ -1592,6 +1614,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
         for (const c of oldChem) { await deleteMeltChemistry(c.id); }
       } else {
         const newRec = await createMeltRecord({
+          melt_no: trimmedMeltNo || undefined,
           melt_date: form.melt_date,
           material_grade: form.material_grade,
           furnace_no: form.furnace_no,
@@ -1698,6 +1721,20 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
             </CardHeader>
             <CardContent className="p-3 pt-0">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <Label className="text-zinc-400 text-xs">熔解編號{isEdit ? ' *（可修改）' : '（可留空自動產生）'}</Label>
+                  <Input
+                    value={form.melt_no}
+                    onChange={e => setForm({ ...form, melt_no: e.target.value })}
+                    className="bg-zinc-700 border-zinc-600 text-amber-400 font-mono h-8"
+                    placeholder="例：ML-20260915-1-1"
+                  />
+                  <p className="text-[11px] text-zinc-500 mt-1">
+                    {isEdit
+                      ? '可直接改寫此爐的熔解編號，儲存後清單與追溯查詢會同步更新（不可與其他爐重複）。'
+                      : '留空時自動依「ML-日期-爐號」規則產生；亦可自行輸入自訂編號。'}
+                  </p>
+                </div>
                 <div>
                   <Label className="text-zinc-400 text-xs">日期 *</Label>
                   <Input type="date" value={form.melt_date} onChange={e => setForm({ ...form, melt_date: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />

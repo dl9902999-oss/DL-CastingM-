@@ -739,7 +739,7 @@ export function getMeltChemistry(meltId?: string): MeltChemistry[] {
   return meltId ? all.filter(c => c.melt_id === meltId) : all;
 }
 
-export function createMeltRecord(data: Omit<MeltRecord, 'id' | 'melt_no' | 'melt_minutes' | 'total_charge_weight' | 'specific_energy' | 'created_at' | 'updated_at'>): MeltRecord {
+export function createMeltRecord(data: Omit<MeltRecord, 'id' | 'melt_no' | 'melt_minutes' | 'total_charge_weight' | 'specific_energy' | 'created_at' | 'updated_at'> & { melt_no?: string }): MeltRecord {
   const records = getMeltRecords();
   // Calculate melt_minutes from power_start_time and tap_time (HH:mm format)
   let meltMinutes = 0;
@@ -759,7 +759,9 @@ export function createMeltRecord(data: Omit<MeltRecord, 'id' | 'melt_no' | 'melt
   // 熔解編號規則：ML-yyyymmdd-爐號；同日同爐重複時追加 -2、-3 ... 流水序號
   const datePart = (data.melt_date || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
   const furnacePart = (data.furnace_no || '').trim() || 'NA';
-  const baseMeltNo = `ML-${datePart}-${furnacePart}`;
+  // 使用者若自行輸入熔解編號則以其為主，未輸入才套用自動規則
+  const customMeltNo = (data.melt_no || '').trim();
+  const baseMeltNo = customMeltNo || `ML-${datePart}-${furnacePart}`;
   const existingNos = records.map(r => r.melt_no);
   let meltNo = baseMeltNo;
   if (existingNos.includes(baseMeltNo)) {
@@ -783,7 +785,7 @@ export function createMeltRecord(data: Omit<MeltRecord, 'id' | 'melt_no' | 'melt
   return newRecord;
 }
 
-export function updateMeltRecord(id: string, data: Partial<Omit<MeltRecord, 'id' | 'melt_no' | 'created_at'>>): MeltRecord | null {
+export function updateMeltRecord(id: string, data: Partial<Omit<MeltRecord, 'id' | 'created_at'>>): MeltRecord | null {
   const records = getMeltRecords();
   const index = records.findIndex(r => r.id === id);
   if (index === -1) return null;

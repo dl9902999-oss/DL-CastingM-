@@ -521,7 +521,7 @@ export async function generateMeltNo(meltDate: string, furnaceNo: string): Promi
   }
 }
 
-export async function sbCreateMeltRecord(recordData: Omit<MeltRecord, 'id' | 'melt_no' | 'melt_minutes' | 'total_charge_weight' | 'specific_energy' | 'created_at' | 'updated_at'>): Promise<MeltRecord> {
+export async function sbCreateMeltRecord(recordData: Omit<MeltRecord, 'id' | 'melt_no' | 'melt_minutes' | 'total_charge_weight' | 'specific_energy' | 'created_at' | 'updated_at'> & { melt_no?: string }): Promise<MeltRecord> {
   let meltMinutes = 0;
   if (recordData.power_start_time && recordData.tap_time) {
     const [sh, sm] = recordData.power_start_time.split(':').map(Number);
@@ -532,7 +532,9 @@ export async function sbCreateMeltRecord(recordData: Omit<MeltRecord, 'id' | 'me
   }
   // 熔解編號規則：ML-yyyymmdd-爐號（依熔解日期與爐號組成）
   // 同日同爐若已有紀錄，於尾端追加流水序號避免編號重複
-  const meltNo = await generateMeltNo(recordData.melt_date, recordData.furnace_no);
+  // 使用者若自行輸入編號則直接沿用，未輸入才依規則自動產生
+  const customMeltNo = (recordData.melt_no || '').trim();
+  const meltNo = customMeltNo || await generateMeltNo(recordData.melt_date, recordData.furnace_no);
 
   const { data, error } = await supabase.from('melt_records').insert({
     ...recordData,
