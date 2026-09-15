@@ -698,6 +698,8 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
   const [addRow, setAddRow] = useState({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
   const [editingMaterials, setEditingMaterials] = useState<Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>>([]);
+  // 已展開的配比 id：預設全部收折，僅顯示名稱與彙總
+  const [expandedRecipeIds, setExpandedRecipeIds] = useState<string[]>([]);
   // 編輯既有配比時，用於新增原料項目的暫存列
   const [editAddRow, setEditAddRow] = useState({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
   const [saving, setSaving] = useState(false);
@@ -774,6 +776,15 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
     setEditingRecipeId(recipe.id);
     setEditingMaterials(recipe.materials.map(m => ({ ...m })));
     setEditAddRow({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
+    // 進入編輯時自動展開，避免使用者看不到可編輯的原料列
+    setExpandedRecipeIds(prev => (prev.includes(recipe.id) ? prev : [...prev, recipe.id]));
+  };
+
+  /** 切換單一配比的原料明細展開／收折 */
+  const toggleRecipeExpanded = (recipeId: string) => {
+    setExpandedRecipeIds(prev => (
+      prev.includes(recipeId) ? prev.filter(id => id !== recipeId) : [...prev, recipeId]
+    ));
   };
 
   const handleCancelEdit = () => {
@@ -846,34 +857,70 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
             <p className="text-sm text-zinc-400 text-center py-4">尚無預設配比，點擊下方按鈕新增</p>
           )}
 
-          {recipes.map(recipe => (
+          {/* 批次展開／收折控制 */}
+          {recipes.length > 0 && (
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-zinc-500">共 {recipes.length} 組配比，點擊名稱可展開原料明細</span>
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant="ghost" onClick={() => setExpandedRecipeIds(recipes.map(r => r.id))}
+                  className="text-zinc-400 hover:text-zinc-100 h-6 px-2 text-xs">全部展開</Button>
+                <Button size="sm" variant="ghost" onClick={() => setExpandedRecipeIds(editingRecipeId ? [editingRecipeId] : [])}
+                  className="text-zinc-400 hover:text-zinc-100 h-6 px-2 text-xs">全部收折</Button>
+              </div>
+            </div>
+          )}
+
+          {recipes.map(recipe => {
+            const isEditing = editingRecipeId === recipe.id;
+            const isExpanded = expandedRecipeIds.includes(recipe.id);
+            const displayMaterials = isEditing ? editingMaterials : recipe.materials;
+            const totalWeight = displayMaterials.reduce((s, m) => s + m.charge_weight + m.secondary_weight, 0);
+            return (
             <Card key={recipe.id} className="bg-zinc-700/30 border-zinc-700">
               <CardContent className="p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-amber-400">{recipe.name}</span>
-                  <div className="flex items-center gap-1">
-                    {editingRecipeId === recipe.id ? (
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  {/* 標題列可點擊收折／展開原料明細 */}
+                  <button
+                    type="button"
+                    onClick={() => toggleRecipeExpanded(recipe.id)}
+                    aria-expanded={isExpanded}
+                    className="flex items-center gap-2 min-w-0 flex-1 text-left hover:opacity-80 transition-opacity"
+                  >
+                    {isExpanded
+                      ? <ChevronUp className="w-4 h-4 text-zinc-500 shrink-0" />
+                      : <ChevronDown className="w-4 h-4 text-zinc-500 shrink-0" />}
+                    <span className="text-sm font-medium text-amber-400 truncate">{recipe.name}</span>
+                    <span className="text-[11px] text-zinc-500 shrink-0">
+                      {displayMaterials.length} 項 · {totalWeight} kg
+                    </span>
+                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {isEditing ? (
                       <>
                         <Button size="sm" variant="ghost" onClick={handleCancelEdit} className="text-zinc-400 hover:text-zinc-200 h-6 px-2 text-xs">取消</Button>
                         <Button size="sm" onClick={handleSaveEdit} disabled={saving} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 h-6 px-2 text-xs">儲存</Button>
                       </>
                     ) : (
                       <>
-                        <Button size="sm" variant="ghost" onClick={() => handleStartEdit(recipe)} className="text-zinc-400 hover:text-blue-400 h-6 w-6 p-0">
+                        <Button size="sm" variant="ghost" onClick={() => handleStartEdit(recipe)} title="編輯原料項目" className="text-zinc-400 hover:text-blue-400 h-6 w-6 p-0">
                           <Pencil className="w-3.5 h-3.5" />
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => handleDeleteRecipe(recipe.id)} className="text-zinc-400 hover:text-red-400 h-6 w-6 p-0">
+                        <Button size="sm" variant="ghost" onClick={() => handleDeleteRecipe(recipe.id)} title="刪除此配比" className="text-zinc-400 hover:text-red-400 h-6 w-6 p-0">
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </>
                     )}
                   </div>
                 </div>
+                {isExpanded && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1">原料</th><th className="text-right py-1">首次(kg)</th><th className="text-right py-1">二次(kg)</th><th className="text-right py-1">小計</th><th className="w-6"></th></tr></thead>
                     <tbody>
-                      {editingRecipeId === recipe.id ? (
+                      {isEditing ? (
+                        editingMaterials.length === 0 ? (
+                          <tr><td colSpan={5} className="py-2 text-center text-zinc-500">已無原料，請於下方加入至少一項</td></tr>
+                        ) : (
                         editingMaterials.map((m, i) => (
                           <tr key={i} className="text-zinc-300 border-b border-zinc-700/50">
                             <td className="py-1">{m.raw_material}</td>
@@ -892,6 +939,7 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
                             </td>
                           </tr>
                         ))
+                        )
                       ) : (
                         recipe.materials.map((m, i) => (
                           <tr key={i} className="text-zinc-300 border-b border-zinc-700/50"><td className="py-1">{m.raw_material}</td><td className="text-right py-1">{m.charge_weight}</td><td className="text-right py-1">{m.secondary_weight}</td><td className="text-right py-1 font-medium">{m.charge_weight + m.secondary_weight}</td><td /></tr>
@@ -900,8 +948,9 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
                     </tbody>
                   </table>
                 </div>
+                )}
                 {/* 編輯既有配比時可再新增原料項目 */}
-                {editingRecipeId === recipe.id && (
+                {isEditing && isExpanded && (
                   <div className="mt-2 pt-2 border-t border-dashed border-zinc-600 space-y-2">
                     <p className="text-[11px] text-zinc-400">新增原料項目至此配比</p>
                     <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
@@ -923,13 +972,16 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
                         <Plus className="w-3 h-3 mr-1" />加入
                       </Button>
                     </div>
-                    <p className="text-[10px] text-zinc-500">加入後請按右上角「儲存」才會寫入雲端。</p>
+                    <p className="text-[10px] text-zinc-500">加入或移除後請按右上角「儲存」才會寫入雲端。</p>
                   </div>
                 )}
-                <p className="text-xs text-zinc-500 mt-1">總重: {editingRecipeId === recipe.id ? editingMaterials.reduce((s, m) => s + m.charge_weight + m.secondary_weight, 0) : recipe.materials.reduce((s, m) => s + m.charge_weight + m.secondary_weight, 0)} kg</p>
+                {isExpanded && (
+                  <p className="text-xs text-zinc-500 mt-1">總重: {totalWeight} kg</p>
+                )}
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
 
           {/* Add New Recipe */}
           {isAdding ? (
