@@ -19,18 +19,87 @@ import type { MeltRecord, MeltMaterial } from '@/lib/types';
 const SPEC_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
 
 /**
- * 回爐料（廠內自產循環料）關鍵字。
- * 回爐料屬於廠內循環使用，非外購進料，因此投料統計需與外購原料分開計算，
- * 也不納入外購原料的占比分母。
+ * 投料分類：
+ * - PURCHASED 外購原料：向供應商採購的進料
+ * - RETURN    回爐料：澆道、冒口等廠內自產循環固態料
+ * - RESIDUAL  殘湯：上一爐留在爐內／取湯後剩餘的液態鐵水，性質與回爐料不同，需獨立計算
  */
-const RETURN_MATERIAL_KEYWORDS = ['回爐', '回料', '澆道', '冒口', '自產'];
+type MaterialCategory = 'PURCHASED' | 'RETURN' | 'RESIDUAL';
 
-/** 判斷原料名稱是否屬於回爐料 */
-function isReturnMaterial(name: string): boolean {
+/** 殘湯（液態剩湯）關鍵字，優先於回爐料判定 */
+const RESIDUAL_MATERIAL_KEYWORDS = ['殘湯', '殘鐵水', '殘鐵', '殘水', '剩湯', '餘湯', '殘鋼', '殘料'];
+
+/** 回爐料（廠內自產固態循環料）關鍵字 */
+const RETURN_MATERIAL_KEYWORDS = ['回爐', '回料', '澆道', '冒口', '澆冒', '自產'];
+
+/**
+ * 依原料名稱判定投料分類。
+ * 殘湯先判定，避免「回爐殘湯」之類名稱被誤歸入回爐料。
+ */
+function categorizeMaterial(name: string): MaterialCategory {
   const n = (name || '').trim();
-  if (!n) return false;
-  return RETURN_MATERIAL_KEYWORDS.some(k => n.includes(k));
+  if (!n) return 'PURCHASED';
+  if (RESIDUAL_MATERIAL_KEYWORDS.some(k => n.includes(k))) return 'RESIDUAL';
+  if (RETURN_MATERIAL_KEYWORDS.some(k => n.includes(k))) return 'RETURN';
+  return 'PURCHASED';
 }
+
+/** 各分類的顯示樣式與文案 */
+const CATEGORY_META: Record<MaterialCategory, {
+  label: string;
+  itemLabel: string;
+  note: string;
+  titleText: string;
+  valueText: string;
+  bar: string;
+  border: string;
+  headBg: string;
+  headText: string;
+  rowBorder: string;
+  totalBg: string;
+}> = {
+  PURCHASED: {
+    label: '外購原料',
+    itemLabel: '原料',
+    note: '向供應商採購的進料，占比以外購原料合計為分母。',
+    titleText: 'text-zinc-300',
+    valueText: 'text-amber-400',
+    bar: 'bg-amber-500',
+    border: 'border-zinc-700',
+    headBg: 'bg-zinc-800',
+    headText: 'text-zinc-400',
+    rowBorder: 'border-zinc-700/50',
+    totalBg: 'bg-zinc-800',
+  },
+  RETURN: {
+    label: '回爐料',
+    itemLabel: '回爐料項目',
+    note: '澆道、冒口等廠內自產固態循環料，已排除殘湯，獨立計算占比。',
+    titleText: 'text-cyan-300',
+    valueText: 'text-cyan-300',
+    bar: 'bg-cyan-500',
+    border: 'border-cyan-900/50',
+    headBg: 'bg-cyan-950/40',
+    headText: 'text-cyan-200/70',
+    rowBorder: 'border-cyan-900/30',
+    totalBg: 'bg-cyan-950/40',
+  },
+  RESIDUAL: {
+    label: '殘湯',
+    itemLabel: '殘湯項目',
+    note: '上一爐殘留的液態鐵水，與固態回爐料性質不同，因此獨立於回爐料另外計算。',
+    titleText: 'text-violet-300',
+    valueText: 'text-violet-300',
+    bar: 'bg-violet-500',
+    border: 'border-violet-900/50',
+    headBg: 'bg-violet-950/40',
+    headText: 'text-violet-200/70',
+    rowBorder: 'border-violet-900/30',
+    totalBg: 'bg-violet-950/40',
+  },
+};
+
+const CATEGORY_ORDER: MaterialCategory[] = ['PURCHASED', 'RETURN', 'RESIDUAL'];
 
 interface ConsumptionRow {
   raw_material: string;
@@ -38,9 +107,17 @@ interface ConsumptionRow {
   secondary_weight: number;
   total: number;
   melt_count: number;
+  /** 占比分母為所屬分類的合計 */
   ratio: number;
-  /** true 表示回爐料，統計時與外購原料分開呈現 */
-  is_return: boolean;
+  category: MaterialCategory;
+}
+
+interface BalanceRow {
+  raw_material: string;
+  received: number;
+  used: number;
+  balance: number;
+  category: MaterialCategory;
 }
 
 interface ReceiptFormState {
@@ -80,6 +157,103 @@ function defaultStartDate(): string {
 function round(n: number, digits = 2): number {
   const p = Math.pow(10, digits);
   return Math.round(n * p) / p;
+}
+
+/** 單一分類的投料統計表格 */
+function ConsumptionTable({ rows, category, total }: {
+  rows: ConsumptionRow[];
+  category: MaterialCategory;
+  total: number;
+}) {
+  const meta = CATEGORY_META[category];
+  if (rows.length === 0) {
+    return (
+      <Card className={`bg-zinc-800 ${meta.border}`}>
+        <CardContent className="p-4 text-center text-zinc-400 text-xs">此區間內無{meta.label}投料</CardContent>
+      </Card>
+    );
+  }
+  const chargeSum = round(rows.reduce((s, r) => s + r.charge_weight, 0));
+  const secondarySum = round(rows.reduce((s, r) => s + r.secondary_weight, 0));
+  return (
+    <div className={`overflow-x-auto border ${meta.border} rounded`}>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className={`${meta.headText} ${meta.headBg} border-b ${meta.border}`}>
+            <th className="text-left py-2 px-3">{meta.itemLabel}</th>
+            <th className="text-right py-2 px-3">首次投料(kg)</th>
+            <th className="text-right py-2 px-3">二次添加(kg)</th>
+            <th className="text-right py-2 px-3">合計(kg)</th>
+            <th className="text-right py-2 px-3">使用爐次</th>
+            <th className="text-right py-2 px-3">占比</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.raw_material} className={`text-zinc-300 border-b ${meta.rowBorder}`}>
+              <td className="py-2 px-3 font-medium">{r.raw_material}</td>
+              <td className="text-right py-2 px-3">{r.charge_weight}</td>
+              <td className="text-right py-2 px-3">{r.secondary_weight}</td>
+              <td className={`text-right py-2 px-3 font-semibold ${meta.valueText}`}>{r.total}</td>
+              <td className="text-right py-2 px-3">{r.melt_count}</td>
+              <td className="text-right py-2 px-3">
+                <div className="flex items-center justify-end gap-2">
+                  <div className="w-16 h-1.5 bg-zinc-700 rounded overflow-hidden">
+                    <div className={`h-full ${meta.bar}`} style={{ width: `${Math.min(r.ratio, 100)}%` }} />
+                  </div>
+                  <span className="w-10 text-right">{r.ratio}%</span>
+                </div>
+              </td>
+            </tr>
+          ))}
+          <tr className={`text-zinc-100 font-semibold ${meta.totalBg}`}>
+            <td className="py-2 px-3">{meta.label}合計</td>
+            <td className="text-right py-2 px-3">{chargeSum}</td>
+            <td className="text-right py-2 px-3">{secondarySum}</td>
+            <td className={`text-right py-2 px-3 ${meta.valueText}`}>{total}</td>
+            <td className="text-right py-2 px-3">-</td>
+            <td className="text-right py-2 px-3">100%</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** 單一分類的入庫／投料結算表格 */
+function BalanceTable({ rows, category }: { rows: BalanceRow[]; category: MaterialCategory }) {
+  const meta = CATEGORY_META[category];
+  if (rows.length === 0) {
+    return (
+      <Card className={`bg-zinc-800 ${meta.border}`}>
+        <CardContent className="p-4 text-center text-zinc-400 text-xs">此日期區間內無{meta.label}資料</CardContent>
+      </Card>
+    );
+  }
+  return (
+    <div className={`overflow-x-auto border ${meta.border} rounded`}>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className={`${meta.headText} ${meta.headBg} border-b ${meta.border}`}>
+            <th className="text-left py-2 px-3">{meta.itemLabel}</th>
+            <th className="text-right py-2 px-3">入庫(kg)</th>
+            <th className="text-right py-2 px-3">投料(kg)</th>
+            <th className="text-right py-2 px-3">差額(kg)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.raw_material} className={`text-zinc-300 border-b ${meta.rowBorder}`}>
+              <td className="py-2 px-3 font-medium">{r.raw_material}</td>
+              <td className="text-right py-2 px-3 text-emerald-400">{r.received}</td>
+              <td className={`text-right py-2 px-3 ${meta.valueText}`}>{r.used}</td>
+              <td className={`text-right py-2 px-3 font-semibold ${r.balance < 0 ? 'text-red-400' : 'text-zinc-100'}`}>{r.balance}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export default function InventoryManager({
@@ -144,8 +318,8 @@ export default function InventoryManager({
 
   /**
    * 日期區間內各原料投料統計。
-   * 回爐料另外計算：占比分別以「外購原料合計」與「回爐料合計」為各自分母，
-   * 避免回爐料稀釋外購原料的配比分析。
+   * 外購原料、回爐料、殘湯三者分開計算，占比各自以所屬分類合計為分母，
+   * 避免回爐料與殘湯稀釋外購原料配比，也避免殘湯混入回爐料統計。
    */
   const consumptionRows = useMemo<ConsumptionRow[]>(() => {
     const acc: Record<string, { charge: number; secondary: number; melts: Set<string> }> = {};
@@ -165,28 +339,39 @@ export default function InventoryManager({
       total: round(v.charge + v.secondary),
       melt_count: v.melts.size,
       ratio: 0,
-      is_return: isReturnMaterial(raw_material),
+      category: categorizeMaterial(raw_material),
     }));
-    const purchasedSum = rows.filter(r => !r.is_return).reduce((s, r) => s + r.total, 0);
-    const returnSum = rows.filter(r => r.is_return).reduce((s, r) => s + r.total, 0);
+    const sums: Record<MaterialCategory, number> = { PURCHASED: 0, RETURN: 0, RESIDUAL: 0 };
+    rows.forEach(r => { sums[r.category] += r.total; });
     rows.forEach(r => {
-      const base = r.is_return ? returnSum : purchasedSum;
+      const base = sums[r.category];
       r.ratio = base > 0 ? round((r.total / base) * 100, 1) : 0;
     });
     return rows.sort((a, b) => b.total - a.total);
   }, [meltMaterials, meltDateMap, inRange]);
 
-  /** 外購原料投料明細（不含回爐料） */
-  const purchasedRows = useMemo(() => consumptionRows.filter(r => !r.is_return), [consumptionRows]);
-  /** 回爐料投料明細（廠內循環料，獨立統計） */
-  const returnRows = useMemo(() => consumptionRows.filter(r => r.is_return), [consumptionRows]);
+  /** 依分類拆分的投料明細 */
+  const rowsByCategory = useMemo<Record<MaterialCategory, ConsumptionRow[]>>(() => ({
+    PURCHASED: consumptionRows.filter(r => r.category === 'PURCHASED'),
+    RETURN: consumptionRows.filter(r => r.category === 'RETURN'),
+    RESIDUAL: consumptionRows.filter(r => r.category === 'RESIDUAL'),
+  }), [consumptionRows]);
 
-  const purchasedTotal = round(purchasedRows.reduce((s, r) => s + r.total, 0));
-  const returnTotal = round(returnRows.reduce((s, r) => s + r.total, 0));
-  /** 全部投料（外購 + 回爐），用於回爐料使用率計算 */
-  const totalConsumption = round(purchasedTotal + returnTotal);
-  /** 回爐料占全部投料的比率，是現場關注的「回爐料使用率」 */
-  const returnUsageRate = totalConsumption > 0 ? round((returnTotal / totalConsumption) * 100, 1) : 0;
+  const purchasedTotal = round(rowsByCategory.PURCHASED.reduce((s, r) => s + r.total, 0));
+  const returnTotal = round(rowsByCategory.RETURN.reduce((s, r) => s + r.total, 0));
+  const residualTotal = round(rowsByCategory.RESIDUAL.reduce((s, r) => s + r.total, 0));
+  const categoryTotals: Record<MaterialCategory, number> = {
+    PURCHASED: purchasedTotal,
+    RETURN: returnTotal,
+    RESIDUAL: residualTotal,
+  };
+  /** 全部投料（外購 + 回爐料 + 殘湯），用於各分類使用率計算 */
+  const totalConsumption = round(purchasedTotal + returnTotal + residualTotal);
+  const rateOfTotal = (v: number) => (totalConsumption > 0 ? round((v / totalConsumption) * 100, 1) : 0);
+  /** 回爐料使用率（不含殘湯） */
+  const returnUsageRate = rateOfTotal(returnTotal);
+  /** 殘湯使用率（獨立於回爐料） */
+  const residualUsageRate = rateOfTotal(residualTotal);
 
   /** 日期區間內的入庫紀錄 */
   const rangeReceipts = useMemo(
@@ -202,8 +387,8 @@ export default function InventoryManager({
     rangeReceipts.reduce((s, r) => s + (Number(r.weight) || 0) * (Number(r.unit_price) || 0), 0)
   );
 
-  /** 區間內各原料的入庫量 vs 投料量結算（回爐料以獨立分類標示） */
-  const balanceRows = useMemo(() => {
+  /** 區間內各原料的入庫量 vs 投料量結算（依三分類標示） */
+  const balanceRows = useMemo<BalanceRow[]>(() => {
     const receiptAcc: Record<string, number> = {};
     receipts.forEach(r => {
       if (!inRange(r.receipt_date)) return;
@@ -219,15 +404,16 @@ export default function InventoryManager({
         received,
         used: round(used),
         balance: round(received - used),
-        is_return: isReturnMaterial(name),
+        category: categorizeMaterial(name),
       };
     }).sort((a, b) => b.received - a.received);
   }, [receipts, consumptionRows, inRange]);
 
-  /** 外購原料結算列 */
-  const purchasedBalanceRows = useMemo(() => balanceRows.filter(r => !r.is_return), [balanceRows]);
-  /** 回爐料結算列（廠內循環料，另外計算） */
-  const returnBalanceRows = useMemo(() => balanceRows.filter(r => r.is_return), [balanceRows]);
+  const balanceByCategory = useMemo<Record<MaterialCategory, BalanceRow[]>>(() => ({
+    PURCHASED: balanceRows.filter(r => r.category === 'PURCHASED'),
+    RETURN: balanceRows.filter(r => r.category === 'RETURN'),
+    RESIDUAL: balanceRows.filter(r => r.category === 'RESIDUAL'),
+  }), [balanceRows]);
 
   const materialSelectOptions = useMemo(() => {
     const set = new Set<string>(materialOptions);
@@ -352,14 +538,25 @@ export default function InventoryManager({
     let body: (string | number)[][];
     if (isConsumption) {
       headers = ['分類', '原料', '首次投料(kg)', '二次添加(kg)', '合計(kg)', '使用爐次', '占比(%)'];
-      body = [
-        ...purchasedRows.map(r => ['外購原料', r.raw_material, r.charge_weight, r.secondary_weight, r.total, r.melt_count, r.ratio]),
-        ['外購原料', '外購合計', round(purchasedRows.reduce((s, r) => s + r.charge_weight, 0)), round(purchasedRows.reduce((s, r) => s + r.secondary_weight, 0)), purchasedTotal, '', 100],
-        ...returnRows.map(r => ['回爐料', r.raw_material, r.charge_weight, r.secondary_weight, r.total, r.melt_count, r.ratio]),
-        ['回爐料', '回爐料合計', round(returnRows.reduce((s, r) => s + r.charge_weight, 0)), round(returnRows.reduce((s, r) => s + r.secondary_weight, 0)), returnTotal, '', 100],
-        ['彙總', '全部投料', '', '', totalConsumption, '', 100],
-        ['彙總', '回爐料使用率(%)', '', '', returnUsageRate, '', ''],
-      ];
+      body = [];
+      CATEGORY_ORDER.forEach(cat => {
+        const meta = CATEGORY_META[cat];
+        const rows = rowsByCategory[cat];
+        if (rows.length === 0) return;
+        rows.forEach(r => {
+          body.push([meta.label, r.raw_material, r.charge_weight, r.secondary_weight, r.total, r.melt_count, r.ratio]);
+        });
+        body.push([
+          meta.label, `${meta.label}合計`,
+          round(rows.reduce((s, r) => s + r.charge_weight, 0)),
+          round(rows.reduce((s, r) => s + r.secondary_weight, 0)),
+          categoryTotals[cat], '', 100,
+        ]);
+      });
+      body.push(['彙總', '全部投料', '', '', totalConsumption, '', 100]);
+      body.push(['彙總', '外購原料占全部投料(%)', '', '', purchasedTotal, '', rateOfTotal(purchasedTotal)]);
+      body.push(['彙總', '回爐料使用率(%)', '', '', returnTotal, '', returnUsageRate]);
+      body.push(['彙總', '殘湯使用率(%)', '', '', residualTotal, '', residualUsageRate]);
     } else {
       headers = ['入庫單號', '入庫日期', '原料', '重量(kg)', '單價', '金額', '供應商', '批號', '成分規格', '登錄人', '備註'];
       body = rangeReceipts.map(r => [
@@ -424,11 +621,12 @@ export default function InventoryManager({
               </CardContent>
             </Card>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
               <Card className="bg-zinc-800 border-zinc-700">
                 <CardContent className="p-3">
                   <p className="text-xs text-zinc-400">外購投料</p>
                   <p className="text-lg font-bold text-amber-400">{purchasedTotal} kg</p>
+                  <p className="text-[10px] text-zinc-500">占比 {rateOfTotal(purchasedTotal)}%</p>
                 </CardContent>
               </Card>
               <Card className="bg-zinc-800 border-cyan-900/50">
@@ -436,6 +634,13 @@ export default function InventoryManager({
                   <p className="text-xs text-zinc-400">回爐料投料</p>
                   <p className="text-lg font-bold text-cyan-300">{returnTotal} kg</p>
                   <p className="text-[10px] text-zinc-500">使用率 {returnUsageRate}%</p>
+                </CardContent>
+              </Card>
+              <Card className="bg-zinc-800 border-violet-900/50">
+                <CardContent className="p-3">
+                  <p className="text-xs text-zinc-400">殘湯投料</p>
+                  <p className="text-lg font-bold text-violet-300">{residualTotal} kg</p>
+                  <p className="text-[10px] text-zinc-500">使用率 {residualUsageRate}%</p>
                 </CardContent>
               </Card>
               <Card className="bg-zinc-800 border-zinc-700">
@@ -496,124 +701,25 @@ export default function InventoryManager({
                   </Card>
                 ) : (
                   <>
-                    {/* 外購原料投料統計（不含回爐料，占比以外購合計為分母） */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-xs font-medium text-zinc-300">
-                          外購原料投料統計（{startDate} ~ {endDate}）
-                        </p>
-                        <span className="text-[11px] text-zinc-500">占比分母：外購原料合計</span>
-                      </div>
-                      {purchasedRows.length === 0 ? (
-                        <Card className="bg-zinc-800 border-zinc-700">
-                          <CardContent className="p-4 text-center text-zinc-400 text-xs">此區間內無外購原料投料</CardContent>
-                        </Card>
-                      ) : (
-                        <div className="overflow-x-auto border border-zinc-700 rounded">
-                          <table className="w-full text-xs">
-                            <thead>
-                              <tr className="text-zinc-400 bg-zinc-800 border-b border-zinc-700">
-                                <th className="text-left py-2 px-3">原料</th>
-                                <th className="text-right py-2 px-3">首次投料(kg)</th>
-                                <th className="text-right py-2 px-3">二次添加(kg)</th>
-                                <th className="text-right py-2 px-3">合計(kg)</th>
-                                <th className="text-right py-2 px-3">使用爐次</th>
-                                <th className="text-right py-2 px-3">占比</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {purchasedRows.map(r => (
-                                <tr key={r.raw_material} className="text-zinc-300 border-b border-zinc-700/50">
-                                  <td className="py-2 px-3 font-medium">{r.raw_material}</td>
-                                  <td className="text-right py-2 px-3">{r.charge_weight}</td>
-                                  <td className="text-right py-2 px-3">{r.secondary_weight}</td>
-                                  <td className="text-right py-2 px-3 font-semibold text-amber-400">{r.total}</td>
-                                  <td className="text-right py-2 px-3">{r.melt_count}</td>
-                                  <td className="text-right py-2 px-3">
-                                    <div className="flex items-center justify-end gap-2">
-                                      <div className="w-16 h-1.5 bg-zinc-700 rounded overflow-hidden">
-                                        <div className="h-full bg-amber-500" style={{ width: `${Math.min(r.ratio, 100)}%` }} />
-                                      </div>
-                                      <span className="w-10 text-right">{r.ratio}%</span>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
-                              <tr className="text-zinc-100 font-semibold bg-zinc-800">
-                                <td className="py-2 px-3">外購合計</td>
-                                <td className="text-right py-2 px-3">{round(purchasedRows.reduce((s, r) => s + r.charge_weight, 0))}</td>
-                                <td className="text-right py-2 px-3">{round(purchasedRows.reduce((s, r) => s + r.secondary_weight, 0))}</td>
-                                <td className="text-right py-2 px-3 text-amber-400">{purchasedTotal}</td>
-                                <td className="text-right py-2 px-3">-</td>
-                                <td className="text-right py-2 px-3">100%</td>
-                              </tr>
-                            </tbody>
-                          </table>
+                    {/* 三分類分開統計：外購原料／回爐料／殘湯，各自獨立占比分母 */}
+                    {CATEGORY_ORDER.map(cat => {
+                      const meta = CATEGORY_META[cat];
+                      return (
+                        <div key={cat}>
+                          <div className="flex items-center justify-between mb-1">
+                            <p className={`text-xs font-medium ${meta.titleText}`}>
+                              {meta.label}投料統計
+                              {cat === 'PURCHASED' ? `（${startDate} ~ ${endDate}）` : '（獨立計算）'}
+                            </p>
+                            <span className="text-[11px] text-zinc-500">占比分母：{meta.label}合計</span>
+                          </div>
+                          <ConsumptionTable rows={rowsByCategory[cat]} category={cat} total={categoryTotals[cat]} />
+                          <p className="text-[11px] text-zinc-500 mt-1">{meta.note}</p>
                         </div>
-                      )}
-                    </div>
+                      );
+                    })}
 
-                    {/* 回爐料另外計算：廠內循環料獨立統計，不併入外購原料 */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-xs font-medium text-cyan-300">
-                          回爐料投料統計（廠內循環料，另外計算）
-                        </p>
-                        <span className="text-[11px] text-zinc-500">占比分母：回爐料合計</span>
-                      </div>
-                      {returnRows.length === 0 ? (
-                        <Card className="bg-zinc-800 border-cyan-900/40">
-                          <CardContent className="p-4 text-center text-zinc-400 text-xs">此區間內無回爐料投料</CardContent>
-                        </Card>
-                      ) : (
-                        <div className="overflow-x-auto border border-cyan-900/50 rounded">
-                          <table className="w-full text-xs">
-                            <thead>
-                              <tr className="text-cyan-200/70 bg-cyan-950/40 border-b border-cyan-900/50">
-                                <th className="text-left py-2 px-3">回爐料項目</th>
-                                <th className="text-right py-2 px-3">首次投料(kg)</th>
-                                <th className="text-right py-2 px-3">二次添加(kg)</th>
-                                <th className="text-right py-2 px-3">合計(kg)</th>
-                                <th className="text-right py-2 px-3">使用爐次</th>
-                                <th className="text-right py-2 px-3">占比</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {returnRows.map(r => (
-                                <tr key={r.raw_material} className="text-zinc-300 border-b border-cyan-900/30">
-                                  <td className="py-2 px-3 font-medium">{r.raw_material}</td>
-                                  <td className="text-right py-2 px-3">{r.charge_weight}</td>
-                                  <td className="text-right py-2 px-3">{r.secondary_weight}</td>
-                                  <td className="text-right py-2 px-3 font-semibold text-cyan-300">{r.total}</td>
-                                  <td className="text-right py-2 px-3">{r.melt_count}</td>
-                                  <td className="text-right py-2 px-3">
-                                    <div className="flex items-center justify-end gap-2">
-                                      <div className="w-16 h-1.5 bg-zinc-700 rounded overflow-hidden">
-                                        <div className="h-full bg-cyan-500" style={{ width: `${Math.min(r.ratio, 100)}%` }} />
-                                      </div>
-                                      <span className="w-10 text-right">{r.ratio}%</span>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
-                              <tr className="text-zinc-100 font-semibold bg-cyan-950/40">
-                                <td className="py-2 px-3">回爐料合計</td>
-                                <td className="text-right py-2 px-3">{round(returnRows.reduce((s, r) => s + r.charge_weight, 0))}</td>
-                                <td className="text-right py-2 px-3">{round(returnRows.reduce((s, r) => s + r.secondary_weight, 0))}</td>
-                                <td className="text-right py-2 px-3 text-cyan-300">{returnTotal}</td>
-                                <td className="text-right py-2 px-3">-</td>
-                                <td className="text-right py-2 px-3">100%</td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                      <p className="text-[11px] text-zinc-500 mt-1">
-                        回爐料為廠內澆道、冒口等自產循環料，已與外購原料分開統計，不計入外購原料占比分母。
-                      </p>
-                    </div>
-
-                    {/* 外購 vs 回爐彙總對照 */}
+                    {/* 三分類彙總對照 */}
                     <div className="overflow-x-auto border border-zinc-700 rounded">
                       <table className="w-full text-xs">
                         <thead>
@@ -625,18 +731,17 @@ export default function InventoryManager({
                           </tr>
                         </thead>
                         <tbody>
-                          <tr className="text-zinc-300 border-b border-zinc-700/50">
-                            <td className="py-2 px-3 font-medium">外購原料</td>
-                            <td className="text-right py-2 px-3 text-amber-400 font-semibold">{purchasedTotal}</td>
-                            <td className="text-right py-2 px-3">{purchasedRows.length}</td>
-                            <td className="text-right py-2 px-3">{round(100 - returnUsageRate, 1)}%</td>
-                          </tr>
-                          <tr className="text-zinc-300 border-b border-zinc-700/50">
-                            <td className="py-2 px-3 font-medium">回爐料</td>
-                            <td className="text-right py-2 px-3 text-cyan-300 font-semibold">{returnTotal}</td>
-                            <td className="text-right py-2 px-3">{returnRows.length}</td>
-                            <td className="text-right py-2 px-3">{returnUsageRate}%</td>
-                          </tr>
+                          {CATEGORY_ORDER.map(cat => {
+                            const meta = CATEGORY_META[cat];
+                            return (
+                              <tr key={cat} className="text-zinc-300 border-b border-zinc-700/50">
+                                <td className="py-2 px-3 font-medium">{meta.label}</td>
+                                <td className={`text-right py-2 px-3 font-semibold ${meta.valueText}`}>{categoryTotals[cat]}</td>
+                                <td className="text-right py-2 px-3">{rowsByCategory[cat].length}</td>
+                                <td className="text-right py-2 px-3">{rateOfTotal(categoryTotals[cat])}%</td>
+                              </tr>
+                            );
+                          })}
                           <tr className="text-zinc-100 font-semibold bg-zinc-800">
                             <td className="py-2 px-3">全部投料</td>
                             <td className="text-right py-2 px-3">{totalConsumption}</td>
@@ -646,74 +751,27 @@ export default function InventoryManager({
                         </tbody>
                       </table>
                     </div>
+                    <p className="text-[11px] text-zinc-500">
+                      殘湯為液態剩湯，已獨立於回爐料另外計算；回爐料僅含澆道、冒口等固態自產循環料。
+                    </p>
                   </>
                 )}
 
                 <div className="space-y-3">
-                  <div>
-                    <p className="text-xs font-medium text-zinc-300 mb-1">外購原料入庫／投料結算（區間內）</p>
-                    {purchasedBalanceRows.length === 0 ? (
-                      <Card className="bg-zinc-800 border-zinc-700">
-                        <CardContent className="p-4 text-center text-zinc-400 text-xs">此日期區間內無外購原料資料</CardContent>
-                      </Card>
-                    ) : (
-                      <div className="overflow-x-auto border border-zinc-700 rounded">
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="text-zinc-400 bg-zinc-800 border-b border-zinc-700">
-                              <th className="text-left py-2 px-3">原料</th>
-                              <th className="text-right py-2 px-3">入庫(kg)</th>
-                              <th className="text-right py-2 px-3">投料(kg)</th>
-                              <th className="text-right py-2 px-3">差額(kg)</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {purchasedBalanceRows.map(r => (
-                              <tr key={r.raw_material} className="text-zinc-300 border-b border-zinc-700/50">
-                                <td className="py-2 px-3 font-medium">{r.raw_material}</td>
-                                <td className="text-right py-2 px-3 text-emerald-400">{r.received}</td>
-                                <td className="text-right py-2 px-3 text-amber-400">{r.used}</td>
-                                <td className={`text-right py-2 px-3 font-semibold ${r.balance < 0 ? 'text-red-400' : 'text-zinc-100'}`}>{r.balance}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                  {CATEGORY_ORDER.map(cat => {
+                    const meta = CATEGORY_META[cat];
+                    return (
+                      <div key={cat}>
+                        <p className={`text-xs font-medium ${meta.titleText} mb-1`}>
+                          {meta.label}入庫／投料結算（區間內{cat === 'PURCHASED' ? '' : '，獨立計算'}）
+                        </p>
+                        <BalanceTable rows={balanceByCategory[cat]} category={cat} />
                       </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <p className="text-xs font-medium text-cyan-300 mb-1">回爐料結算（廠內循環料，另外計算）</p>
-                    {returnBalanceRows.length === 0 ? (
-                      <Card className="bg-zinc-800 border-cyan-900/40">
-                        <CardContent className="p-4 text-center text-zinc-400 text-xs">此日期區間內無回爐料資料</CardContent>
-                      </Card>
-                    ) : (
-                      <div className="overflow-x-auto border border-cyan-900/50 rounded">
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="text-cyan-200/70 bg-cyan-950/40 border-b border-cyan-900/50">
-                              <th className="text-left py-2 px-3">回爐料項目</th>
-                              <th className="text-right py-2 px-3">入庫(kg)</th>
-                              <th className="text-right py-2 px-3">投料(kg)</th>
-                              <th className="text-right py-2 px-3">差額(kg)</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {returnBalanceRows.map(r => (
-                              <tr key={r.raw_material} className="text-zinc-300 border-b border-cyan-900/30">
-                                <td className="py-2 px-3 font-medium">{r.raw_material}</td>
-                                <td className="text-right py-2 px-3 text-emerald-400">{r.received}</td>
-                                <td className="text-right py-2 px-3 text-cyan-300">{r.used}</td>
-                                <td className={`text-right py-2 px-3 font-semibold ${r.balance < 0 ? 'text-red-400' : 'text-zinc-100'}`}>{r.balance}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-zinc-500">差額為負值表示區間內投料量大於入庫量（使用了先前庫存）；回爐料多為廠內自產，通常無入庫紀錄故差額為負屬正常。</p>
+                    );
+                  })}
+                  <p className="text-[11px] text-zinc-500">
+                    差額為負值表示區間內投料量大於入庫量（使用了先前庫存）；回爐料與殘湯多為廠內自產，通常無入庫紀錄故差額為負屬正常。
+                  </p>
                 </div>
               </div>
             ) : (
@@ -723,7 +781,7 @@ export default function InventoryManager({
                     <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-100 w-44 h-8 text-xs">
                       <SelectValue placeholder="原料篩選" />
                     </SelectTrigger>
-                    <SelectContent className="bg-zinc-800 border-zinc-700">
+                    <SelectContent className="bg-zinc-800 border-zinc-700 max-h-64">
                       <SelectItem value="all" className="text-zinc-100">全部原料</SelectItem>
                       {materialSelectOptions.map(m => (
                         <SelectItem key={m} value={m} className="text-zinc-100">{m}</SelectItem>
@@ -750,6 +808,9 @@ export default function InventoryManager({
                                 <span className="font-mono text-xs font-semibold text-emerald-400">{r.receipt_no}</span>
                                 <span className="text-xs text-zinc-500">{r.receipt_date}</span>
                                 <span className="text-sm font-medium text-zinc-100">{r.raw_material}</span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-300">
+                                  {CATEGORY_META[categorizeMaterial(r.raw_material)].label}
+                                </span>
                               </div>
                               <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs text-zinc-400">
                                 <span>重量: <span className="text-zinc-200 font-medium">{r.weight} kg</span></span>
@@ -813,12 +874,17 @@ export default function InventoryManager({
                   <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-100 h-9">
                     <SelectValue placeholder="選擇原料" />
                   </SelectTrigger>
-                  <SelectContent className="bg-zinc-800 border-zinc-700">
+                  <SelectContent className="bg-zinc-800 border-zinc-700 max-h-64">
                     {materialSelectOptions.map(m => (
                       <SelectItem key={m} value={m} className="text-zinc-100">{m}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {form.raw_material && (
+                  <p className="text-[10px] text-zinc-500 mt-1">
+                    分類：{CATEGORY_META[categorizeMaterial(form.raw_material)].label}
+                  </p>
+                )}
               </div>
               <div>
                 <Label className="text-zinc-400 text-xs">入庫重量 (kg) *</Label>

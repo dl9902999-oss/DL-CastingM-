@@ -8,6 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { MeltRecord, MeltMaterial, MeltChemistry, SampleStage, MoldingBatch, WorkOrder } from '@/lib/types';
 import {
   dsGetMeltRecords, dsCreateMeltRecord, dsUpdateMeltRecord, dsDeleteMeltRecord,
@@ -52,6 +54,88 @@ const CHEMISTRY_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu', '
 const MATERIAL_OPTIONS = ['回爐料', '廢鐵', '矽鐵', '高碳錳鐵', '增碳劑', '純鎳', '430', '鉬鐵', '廢鋼', 'FeSi', 'FeMn', 'FeCr', 'FeMo', '生鐵', '不鏽鋼廢料'];
 
 const FURNACE_OPTIONS = ['1-1', '1-2', '1-3', '1-4', '2-1', '2-2', '2-3', '2-4', '3-1', '3-2', '3-3', '3-4', '3-5'];
+
+/**
+ * 可搜尋的原料選擇器。
+ * 原本使用原生 Select 下拉，選項多時會超出對話框可視範圍不易選取；
+ * 改用 Popover + Command，固定最大高度並可輸入關鍵字過濾，亦支援自行輸入新原料名稱。
+ */
+function MaterialCombobox({ value, onChange, options, placeholder = '選擇或搜尋原料', className = '' }: {
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  placeholder?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [keyword, setKeyword] = useState('');
+  const trimmed = keyword.trim();
+  const canCreate = trimmed.length > 0 && !options.some(o => o === trimmed);
+
+  const select = (v: string) => {
+    onChange(v);
+    setKeyword('');
+    setOpen(false);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={`w-full justify-between bg-zinc-700 border-zinc-600 !bg-zinc-700 hover:!bg-zinc-600 text-zinc-100 font-normal ${className}`}
+        >
+          <span className={value ? 'truncate' : 'truncate text-zinc-400'}>{value || placeholder}</span>
+          <ChevronDown className="w-3.5 h-3.5 opacity-60 shrink-0 ml-1" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={4}
+        collisionPadding={12}
+        className="p-0 bg-zinc-800 border-zinc-600 w-[--radix-popover-trigger-width] min-w-[220px]"
+      >
+        <Command className="bg-zinc-800">
+          <CommandInput
+            value={keyword}
+            onValueChange={setKeyword}
+            placeholder="輸入關鍵字搜尋或新增"
+            className="text-zinc-100 h-9"
+          />
+          <CommandList className="max-h-[240px] overflow-y-auto">
+            <CommandEmpty className="py-3 text-xs text-zinc-400 text-center">
+              無相符原料，可直接使用下方新增
+            </CommandEmpty>
+            <CommandGroup>
+              {options.map(m => (
+                <CommandItem
+                  key={m}
+                  value={m}
+                  onSelect={() => select(m)}
+                  className="text-zinc-100 text-xs aria-selected:bg-zinc-700"
+                >
+                  {m}
+                </CommandItem>
+              ))}
+              {canCreate && (
+                <CommandItem
+                  value={`__create__${trimmed}`}
+                  onSelect={() => select(trimmed)}
+                  className="text-amber-400 text-xs aria-selected:bg-zinc-700"
+                >
+                  <Plus className="w-3 h-3 mr-1" />新增「{trimmed}」
+                </CommandItem>
+              )}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 // === Preset Recipe Types & Cloud Storage ===
 // 預設配比改由雲端資料層存取以支援跨裝置同步；
@@ -611,9 +695,11 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newMaterials, setNewMaterials] = useState<Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>>([]);
-  const [addRow, setAddRow] = useState({ raw_material: '', charge_weight: 0, secondary_weight: 0, custom: '' });
+  const [addRow, setAddRow] = useState({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
   const [editingMaterials, setEditingMaterials] = useState<Array<{ raw_material: string; charge_weight: number; secondary_weight: number }>>([]);
+  // 編輯既有配比時，用於新增原料項目的暫存列
+  const [editAddRow, setEditAddRow] = useState({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
 
@@ -641,10 +727,14 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
   };
 
   const handleAddMaterialRow = () => {
-    const name = addRow.raw_material === '__custom__' ? addRow.custom : addRow.raw_material;
+    const name = addRow.raw_material.trim();
     if (!name) { toast({ title: '請選擇或輸入原料', variant: 'destructive' }); return; }
+    if (newMaterials.some(m => m.raw_material === name)) {
+      toast({ title: '此配比已有相同原料', description: '請直接修改該項數量', variant: 'destructive' });
+      return;
+    }
     setNewMaterials([...newMaterials, { raw_material: name, charge_weight: addRow.charge_weight, secondary_weight: addRow.secondary_weight }]);
-    setAddRow({ raw_material: '', charge_weight: 0, secondary_weight: 0, custom: '' });
+    setAddRow({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
   };
 
   const handleSaveRecipe = async () => {
@@ -683,21 +773,49 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
   const handleStartEdit = (recipe: PresetRecipe) => {
     setEditingRecipeId(recipe.id);
     setEditingMaterials(recipe.materials.map(m => ({ ...m })));
+    setEditAddRow({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
   };
 
   const handleCancelEdit = () => {
     setEditingRecipeId(null);
     setEditingMaterials([]);
+    setEditAddRow({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
+  };
+
+  /** 編輯既有配比時新增一項原料 */
+  const handleAddEditMaterialRow = () => {
+    const name = editAddRow.raw_material.trim();
+    if (!name) { toast({ title: '請選擇或輸入原料', variant: 'destructive' }); return; }
+    if (editingMaterials.some(m => m.raw_material === name)) {
+      toast({ title: '此配比已有相同原料', description: '請直接修改該項數量', variant: 'destructive' });
+      return;
+    }
+    setEditingMaterials([...editingMaterials, {
+      raw_material: name,
+      charge_weight: editAddRow.charge_weight,
+      secondary_weight: editAddRow.secondary_weight,
+    }]);
+    setEditAddRow({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
+  };
+
+  /** 編輯既有配比時刪除一項原料 */
+  const handleRemoveEditMaterialRow = (index: number) => {
+    setEditingMaterials(editingMaterials.filter((_, i) => i !== index));
   };
 
   const handleSaveEdit = async () => {
     if (!editingRecipeId) return;
+    if (editingMaterials.length === 0) {
+      toast({ title: '請至少保留一項原料', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
     try {
       await updatePresetRecipeMaterials(editingRecipeId, editingMaterials);
       setRecipes(await getPresetRecipes());
       setEditingRecipeId(null);
       setEditingMaterials([]);
+      setEditAddRow({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
       toast({ title: '配比已更新', description: '已同步至雲端' });
     } catch (err: unknown) {
       notifyError(err, '更新失敗，請稍後再試');
@@ -753,7 +871,7 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
-                    <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1">原料</th><th className="text-right py-1">首次(kg)</th><th className="text-right py-1">二次(kg)</th><th className="text-right py-1">小計</th></tr></thead>
+                    <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1">原料</th><th className="text-right py-1">首次(kg)</th><th className="text-right py-1">二次(kg)</th><th className="text-right py-1">小計</th><th className="w-6"></th></tr></thead>
                     <tbody>
                       {editingRecipeId === recipe.id ? (
                         editingMaterials.map((m, i) => (
@@ -766,16 +884,48 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
                               <Input type="number" min="0" value={m.secondary_weight || ''} onChange={e => handleEditMaterialChange(i, 'secondary_weight', Math.max(0, Number(e.target.value)))} className="bg-zinc-600 border-zinc-500 text-zinc-100 h-6 text-xs w-20 ml-auto text-right" />
                             </td>
                             <td className="text-right py-1 font-medium">{m.charge_weight + m.secondary_weight}</td>
+                            <td className="py-1 pl-1">
+                              <Button size="sm" variant="ghost" onClick={() => handleRemoveEditMaterialRow(i)} title="移除此原料"
+                                className="text-zinc-400 hover:text-red-400 h-5 w-5 p-0">
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </td>
                           </tr>
                         ))
                       ) : (
                         recipe.materials.map((m, i) => (
-                          <tr key={i} className="text-zinc-300 border-b border-zinc-700/50"><td className="py-1">{m.raw_material}</td><td className="text-right py-1">{m.charge_weight}</td><td className="text-right py-1">{m.secondary_weight}</td><td className="text-right py-1 font-medium">{m.charge_weight + m.secondary_weight}</td></tr>
+                          <tr key={i} className="text-zinc-300 border-b border-zinc-700/50"><td className="py-1">{m.raw_material}</td><td className="text-right py-1">{m.charge_weight}</td><td className="text-right py-1">{m.secondary_weight}</td><td className="text-right py-1 font-medium">{m.charge_weight + m.secondary_weight}</td><td /></tr>
                         ))
                       )}
                     </tbody>
                   </table>
                 </div>
+                {/* 編輯既有配比時可再新增原料項目 */}
+                {editingRecipeId === recipe.id && (
+                  <div className="mt-2 pt-2 border-t border-dashed border-zinc-600 space-y-2">
+                    <p className="text-[11px] text-zinc-400">新增原料項目至此配比</p>
+                    <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                      <div className="flex-1 min-w-0">
+                        <MaterialCombobox
+                          value={editAddRow.raw_material}
+                          onChange={v => setEditAddRow({ ...editAddRow, raw_material: v })}
+                          options={MATERIAL_OPTIONS}
+                          className="h-7 text-xs"
+                        />
+                      </div>
+                      <Input type="number" min="0" value={editAddRow.charge_weight || ''}
+                        onChange={e => setEditAddRow({ ...editAddRow, charge_weight: Math.max(0, Number(e.target.value)) })}
+                        placeholder="首次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
+                      <Input type="number" min="0" value={editAddRow.secondary_weight || ''}
+                        onChange={e => setEditAddRow({ ...editAddRow, secondary_weight: Math.max(0, Number(e.target.value)) })}
+                        placeholder="二次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
+                      <Button size="sm" onClick={handleAddEditMaterialRow} className="bg-blue-500 hover:bg-blue-600 text-white h-7 text-xs shrink-0">
+                        <Plus className="w-3 h-3 mr-1" />加入
+                      </Button>
+                    </div>
+                    <p className="text-[10px] text-zinc-500">加入後請按右上角「儲存」才會寫入雲端。</p>
+                  </div>
+                )}
                 <p className="text-xs text-zinc-500 mt-1">總重: {editingRecipeId === recipe.id ? editingMaterials.reduce((s, m) => s + m.charge_weight + m.secondary_weight, 0) : recipe.materials.reduce((s, m) => s + m.charge_weight + m.secondary_weight, 0)} kg</p>
               </CardContent>
             </Card>
@@ -810,22 +960,18 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
                 )}
 
                 {/* Add material to recipe */}
-                <div className="flex flex-col sm:flex-row gap-2 items-end">
-                  <div className="flex-1">
-                    <Select value={addRow.raw_material} onValueChange={v => setAddRow({ ...addRow, raw_material: v })}>
-                      <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs"><SelectValue placeholder="選擇原料" /></SelectTrigger>
-                      <SelectContent className="bg-zinc-700 border-zinc-600">
-                        {MATERIAL_OPTIONS.map(m => (<SelectItem key={m} value={m} className="text-zinc-100">{m}</SelectItem>))}
-                        <SelectItem value="__custom__" className="text-zinc-100">自行輸入</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {addRow.raw_material === '__custom__' && (
-                      <Input value={addRow.custom} onChange={e => setAddRow({ ...addRow, custom: e.target.value })} placeholder="原料名稱" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs mt-1" />
-                    )}
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                  <div className="flex-1 min-w-0">
+                    <MaterialCombobox
+                      value={addRow.raw_material}
+                      onChange={v => setAddRow({ ...addRow, raw_material: v })}
+                      options={MATERIAL_OPTIONS}
+                      className="h-7 text-xs"
+                    />
                   </div>
-                  <Input type="number" min="0" value={addRow.charge_weight || ''} onChange={e => setAddRow({ ...addRow, charge_weight: Math.max(0, Number(e.target.value)) })} placeholder="首次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-24" />
-                  <Input type="number" min="0" value={addRow.secondary_weight || ''} onChange={e => setAddRow({ ...addRow, secondary_weight: Math.max(0, Number(e.target.value)) })} placeholder="二次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-24" />
-                  <Button size="sm" onClick={handleAddMaterialRow} className="bg-blue-500 hover:bg-blue-600 text-white h-7 text-xs">
+                  <Input type="number" min="0" value={addRow.charge_weight || ''} onChange={e => setAddRow({ ...addRow, charge_weight: Math.max(0, Number(e.target.value)) })} placeholder="首次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
+                  <Input type="number" min="0" value={addRow.secondary_weight || ''} onChange={e => setAddRow({ ...addRow, secondary_weight: Math.max(0, Number(e.target.value)) })} placeholder="二次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
+                  <Button size="sm" onClick={handleAddMaterialRow} className="bg-blue-500 hover:bg-blue-600 text-white h-7 text-xs shrink-0">
                     <Plus className="w-3 h-3 mr-1" />加入
                   </Button>
                 </div>
@@ -1140,7 +1286,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
 
   // Materials state
   const [materials, setMaterials] = useState<Array<{ id?: string; raw_material: string; charge_weight: number; secondary_weight: number }>>([]);
-  const [newMaterialRow, setNewMaterialRow] = useState({ raw_material: '', charge_weight: 0, secondary_weight: 0, custom: '' });
+  const [newMaterialRow, setNewMaterialRow] = useState({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
 
   // Chemistry state - TARGET uses min/max range, others use single value
   // TARGET stores as: { C_min, C_max, Si_min, Si_max, ... }
@@ -1338,10 +1484,10 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
 
   // Add material row
   const addMaterialRow = () => {
-    const name = newMaterialRow.raw_material === '__custom__' ? newMaterialRow.custom : newMaterialRow.raw_material;
+    const name = newMaterialRow.raw_material.trim();
     if (!name) { toast({ title: '請選擇或輸入原料名稱', variant: 'destructive' }); return; }
     setMaterials([...materials, { raw_material: name, charge_weight: newMaterialRow.charge_weight, secondary_weight: newMaterialRow.secondary_weight }]);
-    setNewMaterialRow({ raw_material: '', charge_weight: 0, secondary_weight: 0, custom: '' });
+    setNewMaterialRow({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
   };
 
   const loadPresetRecipe = (recipeId: string) => {
@@ -1652,22 +1798,18 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
                   </div>
 
                   {/* Add row */}
-                  <div className="flex flex-col sm:flex-row gap-2 items-end">
-                    <div className="flex-1">
-                      <Select value={newMaterialRow.raw_material} onValueChange={v => setNewMaterialRow({ ...newMaterialRow, raw_material: v })}>
-                        <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs"><SelectValue placeholder="選擇原料" /></SelectTrigger>
-                        <SelectContent className="bg-zinc-700 border-zinc-600">
-                          {MATERIAL_OPTIONS.map(m => (<SelectItem key={m} value={m} className="text-zinc-100">{m}</SelectItem>))}
-                          <SelectItem value="__custom__" className="text-zinc-100">自行輸入</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      {newMaterialRow.raw_material === '__custom__' && (
-                        <Input value={newMaterialRow.custom} onChange={e => setNewMaterialRow({ ...newMaterialRow, custom: e.target.value })} placeholder="輸入原料名稱" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs mt-1" />
-                      )}
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                    <div className="flex-1 min-w-0">
+                      <MaterialCombobox
+                        value={newMaterialRow.raw_material}
+                        onChange={v => setNewMaterialRow({ ...newMaterialRow, raw_material: v })}
+                        options={MATERIAL_OPTIONS}
+                        className="h-7 text-xs"
+                      />
                     </div>
-                    <Input type="number" min="0" value={newMaterialRow.charge_weight || ''} onChange={e => setNewMaterialRow({ ...newMaterialRow, charge_weight: Math.max(0, Number(e.target.value)) })} placeholder="首次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-24" />
-                    <Input type="number" min="0" value={newMaterialRow.secondary_weight || ''} onChange={e => setNewMaterialRow({ ...newMaterialRow, secondary_weight: Math.max(0, Number(e.target.value)) })} placeholder="二次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-24" />
-                    <Button size="sm" onClick={addMaterialRow} className="bg-blue-500 hover:bg-blue-600 text-white h-7 text-xs whitespace-nowrap">
+                    <Input type="number" min="0" value={newMaterialRow.charge_weight || ''} onChange={e => setNewMaterialRow({ ...newMaterialRow, charge_weight: Math.max(0, Number(e.target.value)) })} placeholder="首次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
+                    <Input type="number" min="0" value={newMaterialRow.secondary_weight || ''} onChange={e => setNewMaterialRow({ ...newMaterialRow, secondary_weight: Math.max(0, Number(e.target.value)) })} placeholder="二次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
+                    <Button size="sm" onClick={addMaterialRow} className="bg-blue-500 hover:bg-blue-600 text-white h-7 text-xs whitespace-nowrap shrink-0">
                       <Plus className="w-3 h-3 mr-1" />新增
                     </Button>
                   </div>
