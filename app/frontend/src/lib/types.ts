@@ -86,6 +86,8 @@ export interface MeltingRecord {
   melting_weight: number;
   pouring_weight: number;
   pouring_weights: number[];
+  /** 本爐殘湯重量(kg)：澆注結束後留在爐內／取湯剩餘的鐵水 */
+  residual_weight: number;
   yield_rate: number;
   status: 'Pending' | 'In Progress' | 'Completed';
   created_at: string;

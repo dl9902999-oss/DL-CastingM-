@@ -21,8 +21,10 @@ export default function Melting() {
 
   const [form, setForm] = useState({ batch_id: '', furnace_no: '' });
   const [pouringWeights, setPouringWeights] = useState<number[]>([0]);
+  const [residualWeight, setResidualWeight] = useState('');
   const [editForm, setEditForm] = useState({ furnace_no: '' });
   const [editPouringWeights, setEditPouringWeights] = useState<number[]>([0]);
+  const [editResidualWeight, setEditResidualWeight] = useState('');
   const [batchSearch, setBatchSearch] = useState('');
   const [selectedBatch, setSelectedBatch] = useState<MoldingBatch | null>(null);
 
@@ -94,11 +96,13 @@ export default function Melting() {
       furnace_no: form.furnace_no,
       melting_weight: estimatedWeight,
       pouring_weights: pouringWeights,
+      residual_weight: Number(residualWeight) || 0,
     });
     setRecords(await dsGetMeltingRecords());
     setIsCreateOpen(false);
     setForm({ batch_id: '', furnace_no: '' });
     setPouringWeights([0]);
+    setResidualWeight('');
     setSelectedBatch(null);
     setBatchSearch('');
     toast({ title: '澆注紀錄已建立' });
@@ -112,6 +116,7 @@ export default function Melting() {
       ? [...record.pouring_weights]
       : [record.pouring_weight];
     setEditPouringWeights(weights);
+    setEditResidualWeight(record.residual_weight ? String(record.residual_weight) : '');
     setIsEditOpen(true);
   };
 
@@ -131,6 +136,7 @@ export default function Melting() {
       furnace_no: editForm.furnace_no,
       pouring_weights: editPouringWeights,
       melting_weight: estimatedWeight,
+      residual_weight: Number(editResidualWeight) || 0,
     });
     setRecords(await dsGetMeltingRecords());
     setIsEditOpen(false);
@@ -158,7 +164,7 @@ export default function Melting() {
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">批次澆注</h1>
-          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) { setSelectedBatch(null); setBatchSearch(''); setPouringWeights([0]); } }}>
+          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) { setSelectedBatch(null); setBatchSearch(''); setPouringWeights([0]); setResidualWeight(''); } }}>
             <DialogTrigger asChild>
               <Button className="bg-amber-500 hover:bg-amber-600 text-zinc-900">
                 <Plus className="w-4 h-4 mr-2" />新增澆注
@@ -245,6 +251,22 @@ export default function Melting() {
                     <p className="text-xs text-zinc-400 mt-2">合計: <span className="text-zinc-200 font-medium">{totalPouring} kg</span></p>
                   )}
                 </div>
+                <div>
+                  <Label className="text-zinc-300">本爐殘湯重量 (kg)</Label>
+                  <Input
+                    type="number"
+                    value={residualWeight}
+                    onChange={e => setResidualWeight(e.target.value)}
+                    className="bg-zinc-700 border-zinc-600 text-zinc-100 mt-1"
+                    placeholder="澆注結束後爐內剩餘鐵水，可不填"
+                  />
+                  {Number(residualWeight) > 0 && totalPouring > 0 && (
+                    <p className="text-xs text-zinc-400 mt-1">
+                      殘湯率: <span className="text-violet-300 font-bold">{((Number(residualWeight) / totalPouring) * 100).toFixed(1)}%</span>
+                      （殘湯 {Number(residualWeight)} kg ÷ 總出湯 {totalPouring} kg × 100%）
+                    </p>
+                  )}
+                </div>
                 <div className="p-3 bg-zinc-700/50 rounded-md space-y-1">
                   <span className="text-sm text-zinc-400">預估得料率（各件）:</span>
                   <div className="space-y-1">
@@ -315,6 +337,22 @@ export default function Melting() {
                   </div>
                   {editPouringWeights.length > 0 && (
                     <p className="text-xs text-zinc-400 mt-2">合計: <span className="text-zinc-200 font-medium">{editTotalPouring} kg</span></p>
+                  )}
+                </div>
+                <div>
+                  <Label className="text-zinc-300">本爐殘湯重量 (kg)</Label>
+                  <Input
+                    type="number"
+                    value={editResidualWeight}
+                    onChange={e => setEditResidualWeight(e.target.value)}
+                    className="bg-zinc-700 border-zinc-600 text-zinc-100 mt-1"
+                    placeholder="澆注結束後爐內剩餘鐵水，可不填"
+                  />
+                  {Number(editResidualWeight) > 0 && editTotalPouring > 0 && (
+                    <p className="text-xs text-zinc-400 mt-1">
+                      殘湯率: <span className="text-violet-300 font-bold">{((Number(editResidualWeight) / editTotalPouring) * 100).toFixed(1)}%</span>
+                      （殘湯 {Number(editResidualWeight)} kg ÷ 總出湯 {editTotalPouring} kg × 100%）
+                    </p>
                   )}
                 </div>
                 <div className="p-3 bg-zinc-700/50 rounded-md space-y-1">
@@ -389,6 +427,8 @@ export default function Melting() {
                           <span>合計澆注: <span className="font-medium">{record.pouring_weight}kg</span></span>
                           <span>合計預估重量: <span className="font-medium">{(() => { const b4 = batches.find(bb => bb.id === record.batch_id); if (!b4) return '-'; const wo4 = workOrders.find(ww => ww.id === b4.work_order_id); const estW = wo4?.estimated_weight || 0; const qty = b4.quantity_planned || 1; return `${estW * qty}kg`; })()}</span></span>
                           <span>平均得料率: <span className={`font-bold ${record.yield_rate >= 80 ? 'text-green-400' : record.yield_rate >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{(() => { const ws = record.pouring_weights && record.pouring_weights.length > 0 ? record.pouring_weights : [record.pouring_weight]; const b5 = batches.find(bb => bb.id === record.batch_id); if (!b5) return '0.0'; const wo5 = workOrders.find(ww => ww.id === b5.work_order_id); const estW = wo5?.estimated_weight || 0; if (estW <= 0) return '0.0'; const rates = ws.filter(w => w > 0).map(w => (estW / w) * 100); return rates.length > 0 ? (rates.reduce((s, r) => s + r, 0) / rates.length).toFixed(1) : '0.0'; })()}%</span></span>
+                          <span>殘湯: <span className="font-medium text-violet-300">{record.residual_weight || 0}kg</span></span>
+                          <span>殘湯率: <span className="font-bold text-violet-300">{(() => { const rp = record.pouring_weight || 0; const rw = record.residual_weight || 0; return rp > 0 && rw > 0 ? ((rw / rp) * 100).toFixed(1) : '0.0'; })()}%</span></span>
                         </div>
                       </div>
                     </div>

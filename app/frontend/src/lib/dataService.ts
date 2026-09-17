@@ -869,7 +869,7 @@ export async function dsGetMeltingRecords(): Promise<MeltingRecord[]> {
   );
 }
 
-export async function dsCreateMeltingRecord(data: { batch_id: string; batch_no: string; furnace_no: string; melting_weight: number; pouring_weights: number[] }): Promise<MeltingRecord> {
+export async function dsCreateMeltingRecord(data: { batch_id: string; batch_no: string; furnace_no: string; melting_weight: number; pouring_weights: number[]; residual_weight?: number }): Promise<MeltingRecord> {
   return withRLSFallback(
     () => sbStore.sbCreateMeltingRecord(data),
     () => localStore.createMeltingRecord(data),
@@ -878,7 +878,7 @@ export async function dsCreateMeltingRecord(data: { batch_id: string; batch_no: 
   );
 }
 
-export async function dsUpdateMeltingRecord(id: string, data: { furnace_no?: string; pouring_weights?: number[]; melting_weight?: number }): Promise<MeltingRecord | null> {
+export async function dsUpdateMeltingRecord(id: string, data: { furnace_no?: string; pouring_weights?: number[]; melting_weight?: number; residual_weight?: number }): Promise<MeltingRecord | null> {
   return withRLSFallback(
     () => sbStore.sbUpdateMeltingRecord(id, data),
     () => localStore.updateMeltingRecord(id, data),

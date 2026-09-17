@@ -5,15 +5,15 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Pencil, Trash2, Download, PackagePlus, BarChart3, Loader2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Download, PackagePlus, BarChart3, Loader2, Flame } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   dsGetRawMaterialReceipts, dsCreateRawMaterialReceipt,
   dsUpdateRawMaterialReceipt, dsDeleteRawMaterialReceipt,
-  dsGetMeltRecords, dsGetMeltMaterials,
+  dsGetMeltRecords, dsGetMeltMaterials, dsGetMeltingRecords,
 } from '@/lib/dataService';
 import type { RawMaterialReceipt, RawMaterialReceiptInput } from '@/lib/supabaseStore';
-import type { MeltRecord, MeltMaterial } from '@/lib/types';
+import type { MeltRecord, MeltMaterial, MeltingRecord } from '@/lib/types';
 
 /** 原料入庫可登錄的成分規格元素 */
 const SPEC_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
@@ -270,25 +270,29 @@ export default function InventoryManager({
   const [receipts, setReceipts] = useState<RawMaterialReceipt[]>([]);
   const [meltRecords, setMeltRecords] = useState<MeltRecord[]>([]);
   const [meltMaterials, setMeltMaterials] = useState<MeltMaterial[]>([]);
+  /** 澆注紀錄（含各爐殘湯重量），用於爐次殘湯統計 */
+  const [pourRecords, setPourRecords] = useState<MeltingRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showReceiptForm, setShowReceiptForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ReceiptFormState>(() => emptyForm(materialOptions));
-  const [tab, setTab] = useState<'consumption' | 'receipts'>('consumption');
+  const [tab, setTab] = useState<'consumption' | 'receipts' | 'residual'>('consumption');
   const [materialFilter, setMaterialFilter] = useState('');
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [rs, records, mats] = await Promise.all([
+      const [rs, records, mats, pours] = await Promise.all([
         dsGetRawMaterialReceipts(),
         dsGetMeltRecords(),
         dsGetMeltMaterials(),
+        dsGetMeltingRecords(),
       ]);
       setReceipts(rs);
       setMeltRecords(records);
       setMeltMaterials(mats);
+      setPourRecords(pours);
     } catch (err) {
       console.error('[InventoryManager] load failed:', err);
       toast({ title: '載入庫存資料失敗', description: '請確認網路連線後重試', variant: 'destructive' });
@@ -414,6 +418,50 @@ export default function InventoryManager({
     RETURN: balanceRows.filter(r => r.category === 'RETURN'),
     RESIDUAL: balanceRows.filter(r => r.category === 'RESIDUAL'),
   }), [balanceRows]);
+
+  /** 爐次殘湯統計列：每一爐澆注紀錄一列 */
+  interface ResidualRow {
+    id: string;
+    heat_no: string;
+    furnace_no: string;
+    batch_no: string;
+    date: string;
+    pouring_total: number;
+    residual_weight: number;
+    /** 殘湯率 = 殘湯重量 / 總出湯重量 * 100% */
+    rate: number;
+  }
+
+  /**
+   * 日期區間內各爐殘湯統計（依澆注紀錄建立日期過濾）。
+   * 每一爐的殘湯獨立統計，殘湯率 = 殘湯重量 / 總出湯重量 * 100%。
+   */
+  const residualRows = useMemo<ResidualRow[]>(() => {
+    return pourRecords
+      .map(r => {
+        const date = (r.created_at || '').slice(0, 10);
+        const pouring = Number(r.pouring_weight) || 0;
+        const residual = Number(r.residual_weight) || 0;
+        return {
+          id: r.id,
+          heat_no: r.heat_no || '-',
+          furnace_no: r.furnace_no || '-',
+          batch_no: r.batch_no || '-',
+          date,
+          pouring_total: round(pouring),
+          residual_weight: round(residual),
+          rate: pouring > 0 && residual > 0 ? round((residual / pouring) * 100, 1) : 0,
+        };
+      })
+      .filter(r => inRange(r.date))
+      .sort((a, b) => b.date.localeCompare(a.date) || b.heat_no.localeCompare(a.heat_no));
+  }, [pourRecords, inRange]);
+
+  const residualTotalWeight = round(residualRows.reduce((s, r) => s + r.residual_weight, 0));
+  const residualTotalPouring = round(residualRows.reduce((s, r) => s + r.pouring_total, 0));
+  /** 區間平均殘湯率 = 殘湯總重量 / 總出湯重量 * 100% */
+  const residualOverallRate = residualTotalPouring > 0 ? round((residualTotalWeight / residualTotalPouring) * 100, 1) : 0;
+  const residualLoggedCount = residualRows.filter(r => r.residual_weight > 0).length;
 
   const materialSelectOptions = useMemo(() => {
     const set = new Set<string>(materialOptions);
@@ -677,6 +725,12 @@ export default function InventoryManager({
                     : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 h-8 text-xs'}>
                   <PackagePlus className="w-3.5 h-3.5 mr-1" />入庫紀錄
                 </Button>
+                <Button onClick={() => setTab('residual')}
+                  className={tab === 'residual'
+                    ? 'bg-violet-500 hover:bg-violet-600 text-white h-8 text-xs'
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 h-8 text-xs'}>
+                  <Flame className="w-3.5 h-3.5 mr-1" />爐次殘湯
+                </Button>
               </div>
               <div className="flex gap-2">
                 <Button onClick={handleExport} variant="outline"
@@ -773,6 +827,82 @@ export default function InventoryManager({
                     差額為負值表示區間內投料量大於入庫量（使用了先前庫存）；回爐料與殘湯多為廠內自產，通常無入庫紀錄故差額為負屬正常。
                   </p>
                 </div>
+              </div>
+            ) : tab === 'residual' ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <Card className="bg-zinc-800 border-violet-900/50">
+                    <CardContent className="p-3">
+                      <p className="text-xs text-zinc-400">澆注爐次</p>
+                      <p className="text-lg font-bold text-zinc-100">{residualRows.length}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-zinc-800 border-violet-900/50">
+                    <CardContent className="p-3">
+                      <p className="text-xs text-zinc-400">已登錄殘湯爐次</p>
+                      <p className="text-lg font-bold text-violet-300">{residualLoggedCount}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-zinc-800 border-violet-900/50">
+                    <CardContent className="p-3">
+                      <p className="text-xs text-zinc-400">殘湯總重量</p>
+                      <p className="text-lg font-bold text-violet-300">{residualTotalWeight} kg</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-zinc-800 border-violet-900/50">
+                    <CardContent className="p-3">
+                      <p className="text-xs text-zinc-400">平均殘湯率</p>
+                      <p className="text-lg font-bold text-violet-300">{residualOverallRate}%</p>
+                    </CardContent>
+                  </Card>
+                </div>
+                <p className="text-[11px] text-zinc-500">
+                  殘湯率 = 殘湯重量 ÷ 總出湯重量 × 100%（總出湯為 0 時顯示 0.0%）；平均殘湯率以區間內殘湯總重量 ÷ 總出湯總重量計算。殘湯重量請於「批次澆注」新增／編輯澆注紀錄時登錄。
+                </p>
+                {residualRows.length === 0 ? (
+                  <Card className="bg-zinc-800 border-zinc-700">
+                    <CardContent className="p-6 text-center text-zinc-400 text-sm">
+                      此日期區間內無澆注紀錄
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="overflow-x-auto border border-violet-900/50 rounded">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-violet-200/70 bg-violet-950/40 border-b border-violet-900/50">
+                          <th className="text-left py-2 px-3">日期</th>
+                          <th className="text-left py-2 px-3">爐號</th>
+                          <th className="text-left py-2 px-3">批次</th>
+                          <th className="text-right py-2 px-3">總出湯(kg)</th>
+                          <th className="text-right py-2 px-3">殘湯重量(kg)</th>
+                          <th className="text-right py-2 px-3">殘湯率</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {residualRows.map(r => (
+                          <tr key={r.id} className="text-zinc-300 border-b border-violet-900/30">
+                            <td className="py-2 px-3">{r.date || '-'}</td>
+                            <td className="py-2 px-3 font-medium text-zinc-100">{r.furnace_no}</td>
+                            <td className="py-2 px-3">{r.batch_no}</td>
+                            <td className="text-right py-2 px-3">{r.pouring_total}</td>
+                            <td className="text-right py-2 px-3 font-semibold text-violet-300">{r.residual_weight}</td>
+                            <td className="text-right py-2 px-3">
+                              <span className={`font-bold ${r.rate >= 10 ? 'text-red-400' : r.rate >= 5 ? 'text-amber-400' : 'text-green-400'}`}>
+                                {r.rate.toFixed(1)}%
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="text-zinc-100 font-semibold bg-violet-950/40">
+                          <td className="py-2 px-3" colSpan={3}>合計（{residualRows.length} 爐）</td>
+                          <td className="text-right py-2 px-3">{residualTotalPouring}</td>
+                          <td className="text-right py-2 px-3 text-violet-300">{residualTotalWeight}</td>
+                          <td className="text-right py-2 px-3 text-violet-300">{residualOverallRate}%</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-2">

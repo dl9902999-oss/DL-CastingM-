@@ -434,7 +434,7 @@ export async function sbGetMeltingRecords(): Promise<MeltingRecord[]> {
   return (data || []).map(mapMeltingRecord);
 }
 
-export async function sbCreateMeltingRecord(recordData: { batch_id: string; batch_no: string; furnace_no: string; melting_weight: number; pouring_weights: number[] }): Promise<MeltingRecord> {
+export async function sbCreateMeltingRecord(recordData: { batch_id: string; batch_no: string; furnace_no: string; melting_weight: number; pouring_weights: number[]; residual_weight?: number }): Promise<MeltingRecord> {
   const totalPouring = recordData.pouring_weights.reduce((sum, w) => sum + w, 0);
   const yieldRate = totalPouring > 0 && recordData.melting_weight > 0 ? Math.round((recordData.melting_weight / totalPouring) * 100 * 100) / 100 : 0;
   const heatNo = `HT-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-5)}`;
@@ -447,6 +447,7 @@ export async function sbCreateMeltingRecord(recordData: { batch_id: string; batc
     melting_weight: recordData.melting_weight,
     pouring_weight: totalPouring,
     pouring_weights: recordData.pouring_weights,
+    residual_weight: recordData.residual_weight ?? 0,
     yield_rate: yieldRate,
     status: 'Completed',
   }).select().single();
@@ -454,10 +455,11 @@ export async function sbCreateMeltingRecord(recordData: { batch_id: string; batc
   return mapMeltingRecord(data);
 }
 
-export async function sbUpdateMeltingRecord(id: string, updates: { furnace_no?: string; pouring_weights?: number[]; melting_weight?: number }): Promise<MeltingRecord | null> {
+export async function sbUpdateMeltingRecord(id: string, updates: { furnace_no?: string; pouring_weights?: number[]; melting_weight?: number; residual_weight?: number }): Promise<MeltingRecord | null> {
   const updatePayload: Record<string, unknown> = {};
   if (updates.furnace_no !== undefined) updatePayload.furnace_no = updates.furnace_no;
   if (updates.melting_weight !== undefined) updatePayload.melting_weight = updates.melting_weight;
+  if (updates.residual_weight !== undefined) updatePayload.residual_weight = updates.residual_weight;
   if (updates.pouring_weights !== undefined) {
     updatePayload.pouring_weights = updates.pouring_weights;
     updatePayload.pouring_weight = updates.pouring_weights.reduce((sum, w) => sum + w, 0);
@@ -482,6 +484,7 @@ function mapMeltingRecord(row: Record<string, unknown>): MeltingRecord {
     melting_weight: (row.melting_weight as number) || 0,
     pouring_weight: (row.pouring_weight as number) || 0,
     pouring_weights: (row.pouring_weights as number[]) || [],
+    residual_weight: Number(row.residual_weight) || 0,
     yield_rate: (row.yield_rate as number) || 0,
     status: (row.status as MeltingRecord['status']) || 'Pending',
     created_at: (row.created_at as string) || '',

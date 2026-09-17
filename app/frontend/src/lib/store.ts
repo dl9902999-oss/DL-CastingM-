@@ -432,7 +432,7 @@ export function getMeltingRecords(): MeltingRecord[] {
   return getItems<MeltingRecord>(STORAGE_KEYS.MELTING_RECORDS);
 }
 
-export function createMeltingRecord(data: { batch_id: string; batch_no: string; furnace_no: string; melting_weight: number; pouring_weights: number[] }): MeltingRecord {
+export function createMeltingRecord(data: { batch_id: string; batch_no: string; furnace_no: string; melting_weight: number; pouring_weights: number[]; residual_weight?: number }): MeltingRecord {
   const records = getMeltingRecords();
   const totalPouring = data.pouring_weights.reduce((sum, w) => sum + w, 0);
   // 預估得料率 = 工單預估重量 / 總澆注重量 * 100%
@@ -446,6 +446,7 @@ export function createMeltingRecord(data: { batch_id: string; batch_no: string; 
     melting_weight: data.melting_weight,
     pouring_weight: totalPouring,
     pouring_weights: data.pouring_weights,
+    residual_weight: data.residual_weight ?? 0,
     yield_rate: Math.round(yieldRate * 100) / 100,
     status: 'Completed',
     created_at: new Date().toISOString(),
@@ -477,7 +478,7 @@ function syncBatchStatusFromMelting(batchId: string) {
   }
 }
 
-export function updateMeltingRecord(id: string, data: { furnace_no?: string; pouring_weights?: number[]; melting_weight?: number }): MeltingRecord | null {
+export function updateMeltingRecord(id: string, data: { furnace_no?: string; pouring_weights?: number[]; melting_weight?: number; residual_weight?: number }): MeltingRecord | null {
   const records = getMeltingRecords();
   const index = records.findIndex(r => r.id === id);
   if (index === -1) return null;
@@ -488,6 +489,7 @@ export function updateMeltingRecord(id: string, data: { furnace_no?: string; pou
     record.pouring_weight = data.pouring_weights.reduce((sum, w) => sum + w, 0);
   }
   if (data.melting_weight !== undefined) record.melting_weight = data.melting_weight;
+  if (data.residual_weight !== undefined) record.residual_weight = data.residual_weight;
   // Recalculate yield rate
   if (record.pouring_weight > 0 && record.melting_weight > 0) {
     record.yield_rate = Math.round((record.melting_weight / record.pouring_weight) * 100 * 100) / 100;
