@@ -190,6 +190,7 @@ CREATE TABLE IF NOT EXISTS melt_records (
   tap_temp NUMERIC DEFAULT 0,
   total_charge_weight NUMERIC DEFAULT 0,
   specific_energy NUMERIC DEFAULT 0,
+  residual_weight NUMERIC DEFAULT 0,
   created_by TEXT DEFAULT '',
   remark TEXT DEFAULT '',
   created_at TIMESTAMPTZ DEFAULT NOW(),

@@ -728,7 +728,11 @@ export function traceByShipment(shipmentNo: string) {
 // === 熔解管理模組 (Melting Management) ===
 
 export function getMeltRecords(): MeltRecord[] {
-  return getItems<MeltRecord>(STORAGE_KEYS.MELT_RECORDS);
+  // 舊資料可能沒有 residual_weight 欄位，讀取時補上預設值 0
+  return getItems<MeltRecord>(STORAGE_KEYS.MELT_RECORDS).map(r => ({
+    ...r,
+    residual_weight: (r as Partial<MeltRecord>).residual_weight ?? 0,
+  }));
 }
 
 export function getMeltMaterials(meltId?: string): MeltMaterial[] {

@@ -599,6 +599,7 @@ function mapMeltRecord(row: Record<string, unknown>): MeltRecord {
     tap_temp: (row.tap_temp as number) || 0,
     total_charge_weight: (row.total_charge_weight as number) || 0,
     specific_energy: (row.specific_energy as number) || 0,
+    residual_weight: (row.residual_weight as number) || 0,
     created_by: (row.created_by as string) || '',
     remark: (row.remark as string) || '',
     created_at: (row.created_at as string) || '',

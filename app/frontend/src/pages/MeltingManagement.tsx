@@ -39,7 +39,7 @@ const getMeltTargetRange = dsGetMeltTargetRange as unknown as (...args: Paramete
 const saveMeltTargetRange = dsSaveMeltTargetRange as unknown as (...args: Parameters<typeof dsSaveMeltTargetRange>) => Awaited<ReturnType<typeof dsSaveMeltTargetRange>>;
 const getMoldingBatches = dsGetMoldingBatches as unknown as (...args: Parameters<typeof dsGetMoldingBatches>) => Awaited<ReturnType<typeof dsGetMoldingBatches>>;
 const getWorkOrders = dsGetWorkOrders as unknown as (...args: Parameters<typeof dsGetWorkOrders>) => Awaited<ReturnType<typeof dsGetWorkOrders>>;
-import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings, Warehouse } from 'lucide-react';
+import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings, Warehouse, Droplets } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import InventoryManager from '@/components/melting/InventoryManager';
 
@@ -282,6 +282,7 @@ export default function MeltingManagement() {
         tap_temp: last.tap_temp,
         created_by: last.created_by,
         remark: `複製自 ${last.melt_no}`,
+        residual_weight: 0,
       });
       const lastMaterials = await getMeltMaterials(last.id);
       for (const m of lastMaterials) {
@@ -311,11 +312,11 @@ export default function MeltingManagement() {
       toast({ title: '無資料可匯出', variant: 'destructive' });
       return;
     }
-    const headers = ['熔解編號', '日期', '材質', '爐號', '開始送電', '出湯時間', '熔解時間(分)', '耗電(kWh)', '總投料(kg)', '能耗(kWh/kg)', '出爐溫度(℃)', '建立人', '備註'];
+    const headers = ['熔解編號', '日期', '材質', '爐號', '開始送電', '出湯時間', '熔解時間(分)', '耗電(kWh)', '總投料(kg)', '殘湯(kg)', '能耗(kWh/kg)', '出爐溫度(℃)', '建立人', '備註'];
     const rows = filteredRecords.map(r => [
       r.melt_no, r.melt_date, r.material_grade, r.furnace_no,
       r.power_start_time, r.tap_time, r.melt_minutes,
-      r.power_kwh, r.total_charge_weight, r.specific_energy,
+      r.power_kwh, r.total_charge_weight, r.residual_weight || 0, r.specific_energy,
       r.tap_temp, r.created_by, r.remark,
     ]);
     const csv = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -520,6 +521,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                 return formatMeltMinutes(record.melt_minutes);
               })()}</span></span>
               <span>總投料: <span className="text-zinc-200">{record.total_charge_weight} kg</span></span>
+              <span>殘湯: <span className="text-violet-300 font-medium">{record.residual_weight || 0} kg</span></span>
               <span>能耗: <span className={`font-bold ${record.specific_energy > 1 ? 'text-red-400' : 'text-green-400'}`}>{record.specific_energy} kWh/kg</span></span>
               <span className="flex items-center gap-1"><Thermometer className="w-3 h-3" />出爐溫度: <span className="text-zinc-200">{record.tap_temp}℃</span></span>
               <span>建立人: <span className="text-zinc-200">{record.created_by || '-'}</span></span>
@@ -1393,6 +1395,9 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
   const [materialsOpen, setMaterialsOpen] = useState(true);
   const [chemistryOpen, setChemistryOpen] = useState(true);
   const [pouringOpen, setPouringOpen] = useState(true);
+  const [residualOpen, setResidualOpen] = useState(true);
+  // 澆注殘湯重量（以字串保存輸入過程，存檔時轉為數值寫入 melt_records.residual_weight）
+  const [residualWeight, setResidualWeight] = useState('');
 
   // Preset recipes
   const [presetRecipes, setPresetRecipes] = useState<PresetRecipe[]>([]);
@@ -1442,6 +1447,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
           created_by: editRecord.created_by,
           remark: editRecord.remark,
         });
+        setResidualWeight(editRecord.residual_weight ? String(editRecord.residual_weight) : '');
         const mats = await getMeltMaterials(editRecord.id);
         setMaterials(mats.map(m => ({ id: m.id, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight })));
         const chem = await getMeltChemistry(editRecord.id);
@@ -1507,6 +1513,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
     });
     setSelectedPouringBatches([]);
     setPouringBatchSearch('');
+    setResidualWeight('');
     setTimeError('');
   };
 
@@ -1531,6 +1538,8 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
   const meltMinutes = calcMeltMinutes();
   const totalChargeWeight = materials.reduce((s, m) => s + m.charge_weight + m.secondary_weight, 0);
   const specificEnergy = totalChargeWeight > 0 ? Math.round((form.power_kwh / totalChargeWeight) * 1000) / 1000 : 0;
+  // 總出湯重量：彙總「澆注紀錄」各選取批次的實際澆注重量，供殘湯率即時試算
+  const totalPouringWeight = selectedPouringBatches.reduce((s, sp) => s + sp.pouring_weights.reduce((a, w) => a + w, 0), 0);
 
   const calcFe = (row: Record<string, number>): number => {
     const sum = (row.C || 0) + (row.Si || 0) + (row.Mn || 0) + (row.P || 0) + (row.S || 0) + (row.Ni || 0) + (row.Cr || 0) + (row.Mo || 0) + (row.Cu || 0);
@@ -1606,6 +1615,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
           tap_temp: form.tap_temp,
           created_by: form.created_by,
           remark: form.remark,
+          residual_weight: Number(residualWeight) || 0,
         });
         recordId = editRecord.id;
         const oldMats = await getMeltMaterials(recordId);
@@ -1624,6 +1634,7 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
           tap_temp: form.tap_temp,
           created_by: form.created_by,
           remark: form.remark,
+          residual_weight: Number(residualWeight) || 0,
         });
         recordId = newRec.id;
       }
@@ -1901,6 +1912,45 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
                     <Button size="sm" onClick={addMaterialRow} className="bg-blue-500 hover:bg-blue-600 text-white h-7 text-xs whitespace-nowrap shrink-0">
                       <Plus className="w-3 h-3 mr-1" />新增
                     </Button>
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+
+          {/* 區塊二之一：澆注殘湯重量 (Collapsible) — 位於投料明細下方獨立呈現 */}
+          <Collapsible open={residualOpen} onOpenChange={setResidualOpen}>
+            <Card className="bg-zinc-700/20 border-zinc-700">
+              <CollapsibleTrigger asChild>
+                <CardHeader className="p-3 pb-2 cursor-pointer hover:bg-zinc-700/30 rounded-t-lg">
+                  <CardTitle className="text-sm text-zinc-300 flex items-center justify-between">
+                    <span className="flex items-center gap-2"><Droplets className="w-4 h-4 text-violet-400" />澆注殘湯重量</span>
+                    {residualOpen ? <ChevronUp className="w-4 h-4 text-zinc-500" /> : <ChevronDown className="w-4 h-4 text-zinc-500" />}
+                  </CardTitle>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="p-3 pt-0 space-y-2">
+                  <div>
+                    <Label className="text-zinc-400 text-xs">本爐殘湯重量 (kg)</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={residualWeight}
+                      onChange={e => setResidualWeight(e.target.value)}
+                      className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs mt-1"
+                      placeholder="澆注結束後爐內剩餘鐵水，可不填"
+                    />
+                    {Number(residualWeight) > 0 && totalPouringWeight > 0 && (
+                      <p className="text-xs text-zinc-400 mt-1">
+                        殘湯率: <span className="text-violet-300 font-bold">{((Number(residualWeight) / totalPouringWeight) * 100).toFixed(1)}%</span>
+                        （殘湯 {Number(residualWeight)} kg ÷ 總出湯 {totalPouringWeight} kg × 100%）
+                      </p>
+                    )}
+                    {Number(residualWeight) > 0 && totalPouringWeight <= 0 && (
+                      <p className="text-xs text-zinc-500 mt-1">提示：於下方「澆注紀錄」選取批次並填寫實際澆注重量後，即可試算殘湯率。</p>
+                    )}
+                    <p className="text-[11px] text-zinc-500 mt-1">殘湯重量隨熔解紀錄儲存並同步至雲端；殘湯率 = 殘湯重量 ÷ 總出湯重量 × 100%。</p>
                   </div>
                 </CardContent>
               </CollapsibleContent>

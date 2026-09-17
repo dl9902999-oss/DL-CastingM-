@@ -110,6 +110,8 @@ export interface MeltRecord {
   tap_temp: number;
   total_charge_weight: number;
   specific_energy: number;
+  /** 澆注殘湯重量 (kg)：澆注結束後爐內剩餘鐵水，未填為 0 */
+  residual_weight: number;
   created_by: string;
   remark: string;
   created_at: string;
