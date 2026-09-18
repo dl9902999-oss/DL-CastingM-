@@ -506,11 +506,15 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
               <span className="font-mono text-sm font-semibold text-amber-400">{record.melt_no}</span>
               <span className="text-xs text-zinc-500">{record.melt_date}</span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-xs text-zinc-400">
-              <span>材質: <span className="text-zinc-200">{record.material_grade}</span></span>
-              <span>爐號: <span className="text-zinc-200">{record.furnace_no}</span></span>
-              <span className="flex items-center gap-1"><Zap className="w-3 h-3" />耗電: <span className="text-zinc-200">{record.power_kwh} kWh</span></span>
-              <span className="flex items-center gap-1"><Clock className="w-3 h-3" />時間: <span className="text-zinc-200">{(() => {
+            {/* 兩列濃縮版面：第一列為材質／爐號／重量類，第二列為能耗／時間／溫度／建立人 */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-3 gap-y-1 text-xs text-zinc-400">
+              <span className="whitespace-nowrap">材質: <span className="text-zinc-200">{record.material_grade}</span></span>
+              <span className="whitespace-nowrap">爐號: <span className="text-zinc-200">{record.furnace_no}</span></span>
+              <span className="whitespace-nowrap">總投料: <span className="text-zinc-200">{record.total_charge_weight} kg</span></span>
+              <span className="whitespace-nowrap">殘湯: <span className="text-violet-300 font-medium">{record.residual_weight || 0} kg</span></span>
+              <span className="flex items-center gap-1 whitespace-nowrap"><Zap className="w-3 h-3" />耗電: <span className="text-zinc-200">{record.power_kwh} kWh</span></span>
+              <span className="whitespace-nowrap">能耗: <span className={`font-bold ${record.specific_energy > 1 ? 'text-red-400' : 'text-green-400'}`}>{record.specific_energy} kWh/kg</span></span>
+              <span className="flex items-center gap-1 whitespace-nowrap"><Clock className="w-3 h-3" />時間: <span className="text-zinc-200">{(() => {
                 if (record.power_start_time && record.tap_time) {
                   const [sh, sm] = record.power_start_time.split(':').map(Number);
                   const [eh, em] = record.tap_time.split(':').map(Number);
@@ -520,11 +524,8 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
                 }
                 return formatMeltMinutes(record.melt_minutes);
               })()}</span></span>
-              <span>總投料: <span className="text-zinc-200">{record.total_charge_weight} kg</span></span>
-              <span>殘湯: <span className="text-violet-300 font-medium">{record.residual_weight || 0} kg</span></span>
-              <span>能耗: <span className={`font-bold ${record.specific_energy > 1 ? 'text-red-400' : 'text-green-400'}`}>{record.specific_energy} kWh/kg</span></span>
-              <span className="flex items-center gap-1"><Thermometer className="w-3 h-3" />出爐溫度: <span className="text-zinc-200">{record.tap_temp}℃</span></span>
-              <span>建立人: <span className="text-zinc-200">{record.created_by || '-'}</span></span>
+              <span className="flex items-center gap-1 whitespace-nowrap"><Thermometer className="w-3 h-3" />出爐溫度: <span className="text-zinc-200">{record.tap_temp}℃</span></span>
+              <span className="whitespace-nowrap">建立人: <span className="text-zinc-200">{record.created_by || '-'}</span></span>
             </div>
           </div>
           <div className="flex items-center gap-1 print:hidden">
