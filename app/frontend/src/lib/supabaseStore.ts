@@ -1581,6 +1581,7 @@ export async function sbUpsertBatch(table: string, items: Record<string, unknown
     pattern_maintenance: 'pattern_maintenances',
     pattern_loans: 'pattern_loans',
     users: 'users_profile',
+    melt_material_options: 'melt_material_options',
   };
 
   const supabaseTable = tableNameMap[table];
@@ -1610,5 +1611,52 @@ export async function sbUpsertBatch(table: string, items: Record<string, unknown
   } catch (e) {
     console.warn(`[sbUpsertBatch] ${supabaseTable} exception:`, e);
   }
+}
+
+// ============================================================
+// Melt Material Options (投料原料主檔)
+// 使用者在「投料明細」下拉選單自行輸入新原料時寫入此表，
+// 之後在其他裝置或下次登入即可直接選取，無須重新輸入；
+// 下拉選單項目亦可刪除，僅移除主檔項目，不影響既有投料紀錄。
+// ============================================================
+export interface MeltMaterialOption {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapMeltMaterialOption(row: Record<string, unknown>): MeltMaterialOption {
+  return {
+    id: row.id as string,
+    name: (row.name as string) || '',
+    created_at: (row.created_at as string) || '',
+    updated_at: (row.updated_at as string) || '',
+  };
+}
+
+export async function sbGetMeltMaterialOptions(): Promise<MeltMaterialOption[]> {
+  const { data, error } = await supabase
+    .from('melt_material_options')
+    .select('*')
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapMeltMaterialOption);
+}
+
+export async function sbCreateMeltMaterialOption(name: string): Promise<MeltMaterialOption> {
+  const { data, error } = await supabase
+    .from('melt_material_options')
+    .insert({ name })
+    .select()
+    .single();
+  if (error) throw error;
+  return mapMeltMaterialOption(data);
+}
+
+export async function sbDeleteMeltMaterialOption(id: string): Promise<boolean> {
+  const { error } = await supabase.from('melt_material_options').delete().eq('id', id);
+  if (error) throw error;
+  return true;
 }
 

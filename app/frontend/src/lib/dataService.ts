@@ -448,6 +448,7 @@ const LOCAL_STORAGE_KEY_MAP: Record<string, string> = {
   melt_pourings: 'foundry_melt_pourings',
   melt_preset_recipes: 'foundry_melt_preset_recipes',
   melt_material_specs: 'foundry_melt_material_specs',
+  melt_material_options: 'foundry_melt_material_options',
   raw_material_receipts: 'foundry_raw_material_receipts',
   patterns: 'foundry_patterns',
   pattern_versions: 'foundry_pattern_versions',
@@ -1382,6 +1383,171 @@ export async function dsDeleteMeltMaterialSpec(id: string): Promise<boolean> {
     },
     'dsDeleteMeltMaterialSpec',
     { table: 'melt_material_specs', action: 'delete' }
+  );
+}
+
+// ============================================================
+// Melt Material Options (投料原料主檔)
+// 使用者於「投料明細」下拉選單自行輸入新原料時，系統自動寫入此清單，
+// 之後在其他裝置或下次登入即可直接選取，無須重新輸入；
+// 選單項目亦可刪除（僅移除主檔項目，不影響既有投料紀錄）。
+// 舊版本僅存在本機 localStorage，首次讀取時會自動上傳雲端。
+// ============================================================
+const MATERIAL_OPTION_KEY = 'foundry_melt_material_options';
+const LEGACY_MATERIAL_OPTION_KEY = 'melt_material_options';
+const MATERIAL_OPTION_MIGRATED_FLAG = 'foundry_melt_material_options_migrated';
+
+/** 系統內建原料項目，雲端表為空時自動寫入作為起始清單 */
+export const DEFAULT_MATERIAL_OPTIONS = [
+  '回爐料', '廢鐵', '矽鐵', '高碳錳鐵', '增碳劑', '純鎳', '430',
+  '鉬鐵', '廢鋼', 'FeSi', 'FeMn', 'FeCr', 'FeMo', '生鐵', '不鏽鋼廢料',
+];
+
+function readLocalMaterialOptions(): sbStore.MeltMaterialOption[] {
+  const raw = localStorage.getItem(MATERIAL_OPTION_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  // 遷移舊 key 資料
+  const legacy = localStorage.getItem(LEGACY_MATERIAL_OPTION_KEY);
+  if (legacy) {
+    try {
+      const parsed = JSON.parse(legacy);
+      if (Array.isArray(parsed)) {
+        const migrated: sbStore.MeltMaterialOption[] = parsed
+          .map((item: unknown) => (typeof item === 'string' ? item : (item as { name?: string })?.name || ''))
+          .filter(Boolean)
+          .map(name => ({
+            id: crypto.randomUUID(),
+            name,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }));
+        writeLocalMaterialOptions(migrated);
+        return migrated;
+      }
+    } catch { /* ignore */ }
+  }
+  return [];
+}
+
+function writeLocalMaterialOptions(options: sbStore.MeltMaterialOption[]): void {
+  localStorage.setItem(MATERIAL_OPTION_KEY, JSON.stringify(options));
+}
+
+/** 由既有熔解投料明細與本機清單蒐集原料名稱，供首次上雲使用 */
+async function collectExistingMaterialNames(): Promise<string[]> {
+  const names = new Set<string>();
+  readLocalMaterialOptions().forEach(o => { if (o.name.trim()) names.add(o.name.trim()); });
+  try {
+    const materials = await dsGetMeltMaterials();
+    materials.forEach(m => { if (m.raw_material?.trim()) names.add(m.raw_material.trim()); });
+  } catch (err) {
+    console.warn('[DataService] collectExistingMaterialNames failed:', err);
+  }
+  return [...names];
+}
+
+/**
+ * 將本機既有原料名稱與系統預設原料一次性補進雲端清單，
+ * 確保其他裝置第一次開啟時就有完整可選項目。
+ * 上傳失敗時不設定完成旗標，下次讀取會再嘗試。
+ */
+async function migrateLocalMaterialOptionsToCloud(
+  cloudOptions: sbStore.MeltMaterialOption[]
+): Promise<sbStore.MeltMaterialOption[]> {
+  if (localStorage.getItem(MATERIAL_OPTION_MIGRATED_FLAG) === '1') return cloudOptions;
+
+  const existingNames = new Set(cloudOptions.map(o => o.name.trim()));
+  const candidates = new Set<string>(DEFAULT_MATERIAL_OPTIONS);
+  (await collectExistingMaterialNames()).forEach(n => candidates.add(n));
+
+  const missing = [...candidates].filter(n => n && !existingNames.has(n));
+  if (missing.length === 0) {
+    localStorage.setItem(MATERIAL_OPTION_MIGRATED_FLAG, '1');
+    return cloudOptions;
+  }
+
+  const created: sbStore.MeltMaterialOption[] = [];
+  for (const name of missing) {
+    try {
+      created.push(await sbStore.sbCreateMeltMaterialOption(name));
+    } catch (err) {
+      console.warn('[DataService] migrate material option to cloud failed:', err);
+      return [...cloudOptions, ...created];
+    }
+  }
+
+  localStorage.setItem(MATERIAL_OPTION_MIGRATED_FLAG, '1');
+  console.info(`[DataService] migrated ${created.length} material options to cloud`);
+  return [...cloudOptions, ...created];
+}
+
+/**
+ * 取得投料原料清單。優先讀取 Supabase 以確保跨裝置一致，
+ * 讀取成功後回寫本地快取；連線失敗時退回本地暫存。
+ */
+export async function dsGetMeltMaterialOptions(): Promise<sbStore.MeltMaterialOption[]> {
+  try {
+    const cloudOptions = await sbStore.sbGetMeltMaterialOptions();
+    const merged = await migrateLocalMaterialOptionsToCloud(cloudOptions);
+    writeLocalMaterialOptions(merged);
+    return merged;
+  } catch (err) {
+    console.warn('[DataService] dsGetMeltMaterialOptions fallback to local cache:', err);
+    return readLocalMaterialOptions();
+  }
+}
+
+/**
+ * 新增原料項目（使用者於下拉選單自行輸入的名稱會走此路徑自動記錄）。
+ * 名稱重複時直接回傳既有項目，避免重複寫入。
+ */
+export async function dsCreateMeltMaterialOption(name: string): Promise<sbStore.MeltMaterialOption> {
+  const trimmed = name.trim();
+  return withRLSFallback(
+    async () => {
+      const all = await sbStore.sbGetMeltMaterialOptions();
+      const existing = all.find(o => o.name.trim() === trimmed);
+      if (existing) return existing;
+      return sbStore.sbCreateMeltMaterialOption(trimmed);
+    },
+    () => {
+      const all = readLocalMaterialOptions();
+      const existing = all.find(o => o.name.trim() === trimmed);
+      if (existing) return existing;
+      const entry: sbStore.MeltMaterialOption = {
+        id: crypto.randomUUID(),
+        name: trimmed,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      all.push(entry);
+      writeLocalMaterialOptions(all);
+      return entry;
+    },
+    'dsCreateMeltMaterialOption',
+    { table: 'melt_material_options', action: 'create' }
+  );
+}
+
+/** 刪除原料項目（僅移除主檔，不影響既有投料紀錄） */
+export async function dsDeleteMeltMaterialOption(id: string): Promise<boolean> {
+  return withRLSFallback(
+    () => sbStore.sbDeleteMeltMaterialOption(id),
+    () => {
+      const all = readLocalMaterialOptions();
+      const filtered = all.filter(o => o.id !== id);
+      writeLocalMaterialOptions(filtered);
+      return filtered.length < all.length;
+    },
+    'dsDeleteMeltMaterialOption',
+    { table: 'melt_material_options', action: 'delete' }
   );
 }
 

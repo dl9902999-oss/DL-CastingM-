@@ -20,8 +20,9 @@ import {
   dsGetMeltPourings, dsCreateMeltPouring, dsUpdateMeltPouring, dsDeleteMeltPouring,
   dsGetMeltPresetRecipes, dsCreateMeltPresetRecipe, dsUpdateMeltPresetRecipe, dsDeleteMeltPresetRecipe,
   dsGetMeltMaterialSpecs, dsCreateMeltMaterialSpec, dsUpdateMeltMaterialSpec, dsDeleteMeltMaterialSpec,
+  dsGetMeltMaterialOptions, dsCreateMeltMaterialOption, dsDeleteMeltMaterialOption,
 } from '@/lib/dataService';
-import type { MeltMaterialSpec, MeltPresetRecipe } from '@/lib/supabaseStore';
+import type { MeltMaterialSpec, MeltPresetRecipe, MeltMaterialOption } from '@/lib/supabaseStore';
 
 // Alias ds* functions to legacy names used throughout this file (sync-compatible wrappers)
 const getMeltRecords = dsGetMeltRecords as unknown as (...args: Parameters<typeof dsGetMeltRecords>) => Awaited<ReturnType<typeof dsGetMeltRecords>>;
@@ -51,21 +52,27 @@ const SAMPLE_STAGE_LABELS: Record<SampleStage, string> = {
 
 const CHEMISTRY_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu', 'Fe'] as const;
 
-const MATERIAL_OPTIONS = ['回爐料', '廢鐵', '矽鐵', '高碳錳鐵', '增碳劑', '純鎳', '430', '鉬鐵', '廢鋼', 'FeSi', 'FeMn', 'FeCr', 'FeMo', '生鐵', '不鏽鋼廢料'];
+// 原料下拉清單已改為持久化主檔（雲端表 melt_material_options）：
+// 使用者自行輸入的新原料會自動記錄，下次免重新輸入；不再使用硬編碼清單。
+// 初始預設項目由 dataService 於首次讀取時自動補進雲端表。
 
 const FURNACE_OPTIONS = ['1-1', '1-2', '1-3', '1-4', '2-1', '2-2', '2-3', '2-4', '3-1', '3-2', '3-3', '3-4', '3-5'];
 
 /**
- * 可搜尋的原料選擇器。
- * 原本使用原生 Select 下拉，選項多時會超出對話框可視範圍不易選取；
- * 改用 Popover + Command，固定最大高度並可輸入關鍵字過濾，亦支援自行輸入新原料名稱。
+ * 可搜尋的原料選擇器（Popover + Command）。
+ * - 支援關鍵字搜尋與自行輸入新原料：輸入後按「新增」即自動寫入原料主檔，下次免重新輸入。
+ * - 每個選項右側提供刪除鈕，可移除不再使用的原料（僅移除主檔項目，不影響既有投料紀錄）。
  */
-function MaterialCombobox({ value, onChange, options, placeholder = '選擇或搜尋原料', className = '' }: {
+function MaterialCombobox({
+  value, onChange, options, placeholder = '選擇或搜尋原料', className = '', onCreate, onDelete,
+}: {
   value: string;
   onChange: (v: string) => void;
   options: string[];
   placeholder?: string;
   className?: string;
+  onCreate?: (name: string) => void;
+  onDelete?: (name: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [keyword, setKeyword] = useState('');
@@ -74,6 +81,8 @@ function MaterialCombobox({ value, onChange, options, placeholder = '選擇或�
 
   const select = (v: string) => {
     onChange(v);
+    // 自行輸入的新原料自動記錄至原料主檔，下次開啟即可直接選取
+    if (!options.some(o => o === v)) onCreate?.(v);
     setKeyword('');
     setOpen(false);
   };
@@ -115,9 +124,26 @@ function MaterialCombobox({ value, onChange, options, placeholder = '選擇或�
                   key={m}
                   value={m}
                   onSelect={() => select(m)}
-                  className="text-zinc-100 text-xs aria-selected:bg-zinc-700"
+                  className="text-zinc-100 text-xs aria-selected:bg-zinc-700 gap-2"
                 >
-                  {m}
+                  <span className="truncate">{m}</span>
+                  {onDelete && (
+                    <button
+                      type="button"
+                      title={`刪除原料「${m}」`}
+                      aria-label={`刪除原料「${m}」`}
+                      onPointerDown={e => e.stopPropagation()}
+                      onClick={e => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onDelete(m);
+                        setOpen(true);
+                      }}
+                      className="ml-auto shrink-0 rounded p-0.5 text-zinc-500 hover:text-red-400 hover:bg-zinc-700 transition-colors"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
                 </CommandItem>
               ))}
               {canCreate && (
@@ -209,6 +235,18 @@ async function deleteMaterialSpec(id: string): Promise<boolean> {
   return dsDeleteMeltMaterialSpec(id);
 }
 
+// === Material Options (投料原料主檔) ===
+// 原料下拉清單改由雲端主檔提供：使用者自行輸入的新原料會自動記錄，
+// 下次（含其他裝置）開啟下拉即可直接選取；項目亦可刪除（僅移除主檔，不影響既有投料紀錄）。
+async function getMaterialOptions(): Promise<MeltMaterialOption[]> {
+  try {
+    return await dsGetMeltMaterialOptions();
+  } catch (err: unknown) {
+    console.error('[MaterialOption] load failed:', err);
+    return [];
+  }
+}
+
 function formatSpecRange(ranges: Record<string, number>, el: string): string {
   const min = ranges[`${el}_min`] || 0;
   const max = ranges[`${el}_max`] || 0;
@@ -229,6 +267,7 @@ export default function MeltingManagement() {
   const [showSpecManager, setShowSpecManager] = useState(false);
   const [showInventoryManager, setShowInventoryManager] = useState(false);
   const [materialSpecs, setMaterialSpecs] = useState<MaterialSpec[]>([]);
+  const [materialOptions, setMaterialOptions] = useState<MeltMaterialOption[]>([]);
   const { toast } = useToast();
 
   const syncTrigger = useSyncTrigger();
@@ -236,14 +275,52 @@ export default function MeltingManagement() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // 材質規範與熔解紀錄一併由雲端載入，syncTrigger 變動時自動重新拉取
-      const [data, specs] = await Promise.all([getMeltRecords(), getMaterialSpecs()]);
-      if (!cancelled) { setRecords(data); setMaterialSpecs(specs); }
+      // 熔解紀錄、材質規範與原料主檔一併由雲端載入，syncTrigger 變動時自動重新拉取
+      const [data, specs, options] = await Promise.all([
+        getMeltRecords(), getMaterialSpecs(), getMaterialOptions(),
+      ]);
+      if (!cancelled) { setRecords(data); setMaterialSpecs(specs); setMaterialOptions(options); }
     })();
     return () => { cancelled = true; };
   }, [syncTrigger]);
 
   const refreshRecords = async () => setRecords(await getMeltRecords());
+
+  // 原料下拉清單（主檔名稱）
+  const materialOptionNames = [...new Set(materialOptions.map(o => o.name))].filter(Boolean);
+
+  /** 使用者自行輸入新原料時自動寫入主檔，下次開啟下拉即可直接選取 */
+  const handleCreateMaterialOption = async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || materialOptionNames.includes(trimmed)) return;
+    try {
+      const created = await dsCreateMeltMaterialOption(trimmed);
+      setMaterialOptions(prev => (prev.some(o => o.name === created.name) ? prev : [...prev, created]));
+      toast({ title: `已新增原料「${created.name}」`, description: '下次可直接從清單選取' });
+    } catch (err: unknown) {
+      console.error('[MaterialOption] create failed:', err);
+      toast({
+        title: '原料已填入，但記錄失敗',
+        description: '連線恢復後將自動同步至雲端',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  /** 刪除原料主檔項目（僅移除選單項目，不影響既有投料紀錄） */
+  const handleDeleteMaterialOption = async (name: string) => {
+    const target = materialOptions.find(o => o.name === name);
+    if (!target) return;
+    if (!window.confirm(`確定要從原料清單刪除「${name}」嗎？\n既有投料紀錄不會受影響。`)) return;
+    try {
+      await dsDeleteMeltMaterialOption(target.id);
+      setMaterialOptions(prev => prev.filter(o => o.id !== target.id));
+      toast({ title: `已刪除原料「${name}」` });
+    } catch (err: unknown) {
+      console.error('[MaterialOption] delete failed:', err);
+      toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
+    }
+  };
 
   const handleDelete = async (record: MeltRecord) => {
     if (!window.confirm(`確定要刪除熔解紀錄 ${record.melt_no} 嗎？`)) return;
@@ -432,6 +509,9 @@ export default function MeltingManagement() {
           onSavedAndNew={() => { refreshRecords(); setEditingRecord(null); }}
           existingMaterials={uniqueMaterials}
           materialSpecs={materialSpecs}
+          materialOptionNames={materialOptionNames}
+          onCreateMaterialOption={handleCreateMaterialOption}
+          onDeleteMaterialOption={handleDeleteMaterialOption}
           onRequestAddSpec={() => setShowSpecManager(true)}
         />
 
@@ -439,6 +519,9 @@ export default function MeltingManagement() {
         <PresetRecipeManager
           open={showPresetManager}
           onOpenChange={setShowPresetManager}
+          materialOptionNames={materialOptionNames}
+          onCreateMaterialOption={handleCreateMaterialOption}
+          onDeleteMaterialOption={handleDeleteMaterialOption}
         />
 
         {/* Material Spec Manager Dialog */}
@@ -452,7 +535,7 @@ export default function MeltingManagement() {
         <InventoryManager
           open={showInventoryManager}
           onOpenChange={setShowInventoryManager}
-          materialOptions={[...new Set([...MATERIAL_OPTIONS, ...uniqueMaterials])]}
+          materialOptions={[...new Set([...materialOptionNames, ...uniqueMaterials])]}
           syncTrigger={syncTrigger}
         />
       </div>
@@ -693,7 +776,13 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
 }
 
 // === Preset Recipe Manager ===
-function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+function PresetRecipeManager({ open, onOpenChange, materialOptionNames, onCreateMaterialOption, onDeleteMaterialOption }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  materialOptionNames: string[];
+  onCreateMaterialOption: (name: string) => void;
+  onDeleteMaterialOption: (name: string) => void;
+}) {
   const [recipes, setRecipes] = useState<PresetRecipe[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
@@ -961,7 +1050,9 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
                         <MaterialCombobox
                           value={editAddRow.raw_material}
                           onChange={v => setEditAddRow({ ...editAddRow, raw_material: v })}
-                          options={MATERIAL_OPTIONS}
+                          options={materialOptionNames}
+                          onCreate={onCreateMaterialOption}
+                          onDelete={onDeleteMaterialOption}
                           className="h-7 text-xs"
                         />
                       </div>
@@ -1020,7 +1111,9 @@ function PresetRecipeManager({ open, onOpenChange }: { open: boolean; onOpenChan
                     <MaterialCombobox
                       value={addRow.raw_material}
                       onChange={v => setAddRow({ ...addRow, raw_material: v })}
-                      options={MATERIAL_OPTIONS}
+                      options={materialOptionNames}
+                      onCreate={onCreateMaterialOption}
+                      onDelete={onDeleteMaterialOption}
                       className="h-7 text-xs"
                     />
                   </div>
@@ -1312,7 +1405,10 @@ function MaterialSpecManager({ open, onOpenChange, onChanged }: {
 }
 
 // === Single Page Form Dialog (No Tabs) ===
-function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew, existingMaterials, materialSpecs, onRequestAddSpec }: {
+function MeltFormDialog({
+  open, onOpenChange, editRecord, onSaved, onSavedAndNew, existingMaterials, materialSpecs,
+  materialOptionNames, onCreateMaterialOption, onDeleteMaterialOption, onRequestAddSpec,
+}: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editRecord: MeltRecord | null;
@@ -1320,6 +1416,9 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
   onSavedAndNew: () => void;
   existingMaterials: string[];
   materialSpecs: MaterialSpec[];
+  materialOptionNames: string[];
+  onCreateMaterialOption: (name: string) => void;
+  onDeleteMaterialOption: (name: string) => void;
   onRequestAddSpec: () => void;
 }) {
   const isEdit = !!editRecord;
@@ -1904,7 +2003,9 @@ function MeltFormDialog({ open, onOpenChange, editRecord, onSaved, onSavedAndNew
                       <MaterialCombobox
                         value={newMaterialRow.raw_material}
                         onChange={v => setNewMaterialRow({ ...newMaterialRow, raw_material: v })}
-                        options={MATERIAL_OPTIONS}
+                        options={materialOptionNames}
+                        onCreate={onCreateMaterialOption}
+                        onDelete={onDeleteMaterialOption}
                         className="h-7 text-xs"
                       />
                     </div>

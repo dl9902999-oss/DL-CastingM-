@@ -55,6 +55,10 @@ const TABLE_MAP: Record<string, string> = {
   [STORAGE_KEYS.PATTERN_MAINTENANCE]: 'pattern_maintenance',
   [STORAGE_KEYS.PATTERN_LOANS]: 'pattern_loans',
   [STORAGE_KEYS.USERS]: 'users',
+  // 投料原料主檔：使用者自行輸入的原料會記錄於此，跨裝置共用
+  'foundry_melt_material_options': 'melt_material_options',
+  'foundry_raw_material_receipts': 'raw_material_receipts',
+  'foundry_melt_material_specs': 'melt_material_specs',
 };
 
 const KEY_MAP: Record<string, string> = {
@@ -76,6 +80,9 @@ const KEY_MAP: Record<string, string> = {
   pattern_maintenance: STORAGE_KEYS.PATTERN_MAINTENANCE,
   pattern_loans: STORAGE_KEYS.PATTERN_LOANS,
   users: STORAGE_KEYS.USERS,
+  melt_material_options: 'foundry_melt_material_options',
+  raw_material_receipts: 'foundry_raw_material_receipts',
+  melt_material_specs: 'foundry_melt_material_specs',
 };
 
 function initBgSync(): void {
@@ -121,6 +128,7 @@ async function performFullSync(): Promise<void> {
       'warehouse_entries', 'shipment_orders', 'melt_records',
       'melt_materials', 'melt_chemistry', 'patterns', 'pattern_versions',
       'pattern_history', 'pattern_maintenance', 'pattern_loans', 'users',
+      'melt_material_options', 'melt_material_specs', 'raw_material_receipts',
     ];
     await Promise.allSettled(tables.map(t => bgSyncCollection(t)));
     console.log('[Store] Full sync completed ✓');
