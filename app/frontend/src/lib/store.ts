@@ -4,6 +4,7 @@ import { WorkOrder, MoldingBatch, MeltingRecord, QualityInspection, WarehouseEnt
 // All writes go to localStorage first (instant), then sync to Supabase in background
 
 import * as sbStore from './supabaseStore';
+import { filterRemovedIds, markDeletedIds, purgeRemovedFromStorage } from './pendingSyncGuard';
 
 const STORAGE_KEYS = {
   WORK_ORDERS: 'foundry_work_orders',
@@ -141,6 +142,10 @@ async function bgSyncCollection(table: string): Promise<void> {
   try {
     const storageKey = KEY_MAP[table];
     if (!storageKey) return;
+    // 已刪除（含待同步刪除）的列不得再被整表 upsert 寫回雲端：
+    // 本地快取若仍殘留舊列，背景同步會把它們重新 INSERT 回雲端，
+    // 使用者刪掉的投料明細就會在下一次同步時「復活」。
+    purgeRemovedFromStorage(table, storageKey);
     const raw = localStorage.getItem(storageKey);
     if (!raw) return;
     const items = JSON.parse(raw);
@@ -744,12 +749,14 @@ export function getMeltRecords(): MeltRecord[] {
 }
 
 export function getMeltMaterials(meltId?: string): MeltMaterial[] {
-  const all = getItems<MeltMaterial>(STORAGE_KEYS.MELT_MATERIALS);
+  // 讀取時即排除待同步刪除與已刪除（墓碑）的列，
+  // 避免這些明細被「本地孤兒資料合併保護」當成遺失資料而復活。
+  const all = filterRemovedIds('melt_materials', getItems<MeltMaterial>(STORAGE_KEYS.MELT_MATERIALS));
   return meltId ? all.filter(m => m.melt_id === meltId) : all;
 }
 
 export function getMeltChemistry(meltId?: string): MeltChemistry[] {
-  const all = getItems<MeltChemistry>(STORAGE_KEYS.MELT_CHEMISTRY);
+  const all = filterRemovedIds('melt_chemistry', getItems<MeltChemistry>(STORAGE_KEYS.MELT_CHEMISTRY));
   return meltId ? all.filter(c => c.melt_id === meltId) : all;
 }
 
@@ -886,6 +893,9 @@ export function deleteMeltMaterial(id: string): boolean {
   const filtered = materials.filter(m => m.id !== id);
   if (filtered.length === materials.length) return false;
   setItems(STORAGE_KEYS.MELT_MATERIALS, filtered);
+  // 留下刪除墓碑：即使本地快取稍後又被雲端舊資料寫回，
+  // 這筆明細也不會再次出現在畫面或被背景同步上傳。
+  markDeletedIds('melt_materials', [id]);
   if (material) recalcMeltRecord(material.melt_id);
   return true;
 }
@@ -923,6 +933,7 @@ export function deleteMeltChemistry(id: string): boolean {
   const filtered = chemistry.filter(c => c.id !== id);
   if (filtered.length === chemistry.length) return false;
   setItems(STORAGE_KEYS.MELT_CHEMISTRY, filtered);
+  markDeletedIds('melt_chemistry', [id]);
   return true;
 }
 

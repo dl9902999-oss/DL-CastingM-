@@ -2,6 +2,21 @@ import { supabase } from './supabase';
 import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, MeltChemistry, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder, UserProfile, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
 
 /**
+ * 雲端刪除未生效的錯誤標記。
+ *
+ * PostgREST 在 RLS 未開放 DELETE 時會「刪除 0 列且不報錯」，若把它當成成功，
+ * 雲端舊資料會保留並在下次讀取時復活（編輯刪除投料明細後又出現）。
+ * 帶上此標記的錯誤在資料層必須視為硬失敗，不可降級成本地刪除成功。
+ */
+export const CLOUD_DELETE_NOT_APPLIED = 'CLOUD_DELETE_NOT_APPLIED';
+
+/** 判斷錯誤是否為「雲端刪除未生效」 */
+export function isCloudDeleteNotAppliedError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes(CLOUD_DELETE_NOT_APPLIED);
+}
+
+/**
  * Expose the Supabase client for direct operations (e.g., pending sync deletes).
  */
 export function supabaseClient() {
@@ -645,9 +660,30 @@ export async function sbUpdateMeltMaterial(id: string, updates: Partial<Omit<Mel
 }
 
 export async function sbDeleteMeltMaterial(id: string): Promise<boolean> {
+  // 先取得 melt_id，刪除後才能重算父熔解紀錄的總投料重與能耗
   const { data: material } = await supabase.from('melt_materials').select('melt_id').eq('id', id).single();
-  const { error } = await supabase.from('melt_materials').delete().eq('id', id);
-  if (error) return false;
+  // 使用 select('id') 取得實際刪除的列，以便確認雲端真的刪掉了（而非被 RLS 靜默忽略）
+  const { data: deleted, error } = await supabase
+    .from('melt_materials')
+    .delete()
+    .eq('id', id)
+    .select('id');
+  if (error) {
+    // 不可吞掉錯誤：必須拋出讓資料層改走 fallback + pending queue，
+    // 否則雲端仍保有該列，下次讀取時會把已刪除的投料「復活」回畫面。
+    console.error('[supabaseStore] sbDeleteMeltMaterial failed:', error.code, error.message, error.details, error.hint);
+    throw error;
+  }
+  // RLS 若未開放 DELETE，PostgREST 會「靜默刪除 0 列且不報錯」，
+  // 因此必須以實際回傳列數判斷是否真的刪除成功，否則雲端資料會一直復活。
+  // 但只有「雲端確實存在該列、卻沒被刪掉」才算失敗：
+  // 若該列原本只存在本機（離線新增尚未上傳），刪除 0 列屬正常結果，
+  // 否則會讓這類紀錄永遠無法刪除、連帶卡住整筆編輯儲存。
+  if ((!Array.isArray(deleted) || deleted.length === 0) && material) {
+    throw new Error(
+      `${CLOUD_DELETE_NOT_APPLIED}: sbDeleteMeltMaterial 刪除未生效（可能被 row-level security policy 阻擋），id=${id}`
+    );
+  }
   if (material) await sbRecalcMeltRecord(material.melt_id as string);
   return true;
 }
@@ -715,8 +751,26 @@ export async function sbUpdateMeltChemistry(id: string, updates: Partial<Omit<Me
 }
 
 export async function sbDeleteMeltChemistry(id: string): Promise<boolean> {
-  const { error } = await supabase.from('melt_chemistries').delete().eq('id', id);
-  return !error;
+  // 先確認雲端是否真的有這筆成份列，才能區分「刪除未生效」與「本來就只存在本機」
+  const { data: existing } = await supabase.from('melt_chemistries').select('id').eq('id', id).maybeSingle();
+  const { data: deleted, error } = await supabase
+    .from('melt_chemistries')
+    .delete()
+    .eq('id', id)
+    .select('id');
+  if (error) {
+    // 同 sbDeleteMeltMaterial：刪除失敗必須拋出，交由資料層 fallback + pending queue 處理
+    console.error('[supabaseStore] sbDeleteMeltChemistry failed:', error.code, error.message, error.details, error.hint);
+    throw error;
+  }
+  // 同 sbDeleteMeltMaterial：雲端存在該列卻刪除 0 列代表刪除未生效，必須視為失敗；
+  // 若該列只存在本機，則刪除 0 列是預期結果。
+  if ((!Array.isArray(deleted) || deleted.length === 0) && existing) {
+    throw new Error(
+      `${CLOUD_DELETE_NOT_APPLIED}: sbDeleteMeltChemistry 刪除未生效（可能被 row-level security policy 阻擋），id=${id}`
+    );
+  }
+  return true;
 }
 
 function mapMeltChemistry(row: Record<string, unknown>): MeltChemistry {
@@ -1557,34 +1611,50 @@ function sanitizeRowForUpsert(row: Record<string, unknown>): Record<string, unkn
   return clean;
 }
 
+/**
+ * 內部表名 → 實際 Supabase 表名對照。
+ *
+ * 資料層與 pending queue 使用歷史命名（例如 `melt_chemistry`），
+ * 但雲端實際表名為 `melt_chemistries`。任何直接以內部表名操作雲端的程式
+ * （例如 pending queue 的刪除同步）都必須先經過這裡轉換，否則會打到
+ * 不存在的表而永遠同步失敗，資料也就永遠刪不掉。
+ */
+const SUPABASE_TABLE_NAME_MAP: Record<string, string> = {
+  customers: 'customers',
+  work_orders: 'work_orders',
+  molding_batches: 'molding_batches',
+  melting_records: 'melting_records',
+  quality_inspections: 'quality_inspections',
+  defect_records: 'defect_records',
+  capa_records: 'capa_records',
+  warehouse_entries: 'warehouse_entries',
+  shipment_orders: 'shipment_orders',
+  melt_records: 'melt_records',
+  melt_materials: 'melt_materials',
+  melt_chemistry: 'melt_chemistries',
+  melt_chemistries: 'melt_chemistries',
+  patterns: 'patterns',
+  pattern_versions: 'pattern_versions',
+  pattern_history: 'pattern_histories',
+  pattern_maintenance: 'pattern_maintenances',
+  pattern_loans: 'pattern_loans',
+  users: 'users_profile',
+  melt_material_options: 'melt_material_options',
+  melt_material_specs: 'melt_material_specs',
+  raw_material_receipts: 'raw_material_receipts',
+  melt_preset_recipes: 'melt_preset_recipes',
+};
+
+/** 將內部表名轉為實際 Supabase 表名；未知表名回傳 undefined */
+export function resolveSupabaseTableName(table: string): string | undefined {
+  return SUPABASE_TABLE_NAME_MAP[table];
+}
+
 export async function sbUpsertBatch(table: string, items: Record<string, unknown>[]): Promise<void> {
   if (!items || items.length === 0) return;
  
   
-  // Map internal table names to actual Supabase table names
-  const tableNameMap: Record<string, string> = {
-    customers: 'customers',
-    work_orders: 'work_orders',
-    molding_batches: 'molding_batches',
-    melting_records: 'melting_records',
-    quality_inspections: 'quality_inspections',
-    defect_records: 'defect_records',
-    capa_records: 'capa_records',
-    warehouse_entries: 'warehouse_entries',
-    shipment_orders: 'shipment_orders',
-    melt_records: 'melt_records',
-    melt_materials: 'melt_materials',
-    melt_chemistry: 'melt_chemistries',
-    patterns: 'patterns',
-    pattern_versions: 'pattern_versions',
-    pattern_history: 'pattern_histories',
-    pattern_maintenance: 'pattern_maintenances',
-    pattern_loans: 'pattern_loans',
-    users: 'users_profile',
-    melt_material_options: 'melt_material_options',
-  };
-
-  const supabaseTable = tableNameMap[table];
+  const supabaseTable = resolveSupabaseTableName(table);
   if (!supabaseTable) {
     console.warn(`[sbUpsertBatch] Unknown table: ${table}`);
     return;

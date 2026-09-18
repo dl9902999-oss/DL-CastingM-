@@ -9,6 +9,7 @@ import * as localStore from './store';
 import * as sbStore from './supabaseStore';
 import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, MeltChemistry, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder, UserProfile, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
 import { markRecentWrite } from './realtimeSync';
+import { filterRemovedIds, markDeletedIds, purgeRemovedFromStorage, readPendingSyncQueue } from './pendingSyncGuard';
 
 // Connection state
 let _isConnected: boolean | null = null;
@@ -280,14 +281,61 @@ export async function syncPendingToSupabase(
 
       // Handle deletes
       const deletes = entries.filter(e => e.action === 'delete' && e.data?.id);
+      // pending queue 使用內部表名（例如 melt_chemistry），實際雲端表名為
+      // melt_chemistries，必須先轉換，否則刪除會打到不存在的表而永遠失敗。
+      const cloudTable = sbStore.resolveSupabaseTableName(table) ?? table;
       for (const del of deletes) {
         try {
-          const { error } = await sbStore.supabaseClient().from(table).delete().eq('id', del.data!.id);
+          // 以 select('id') 取回實際刪除的列數：RLS 未開放 DELETE 時 PostgREST 會回傳
+          // 「0 列且無錯誤」，若誤判為成功，雲端舊資料會留著並在下次讀取時復活。
+          const { data: deletedRows, error } = await sbStore.supabaseClient()
+            .from(cloudTable)
+            .delete()
+            .eq('id', del.data!.id)
+            .select('id');
           if (error) {
             remainingQueue.push(del);
             failed++;
             errorMessage = error.message;
+          } else if (!Array.isArray(deletedRows) || deletedRows.length === 0) {
+            // 刪除 0 列代表雲端本來就沒有這筆（例如離線新增後又刪除），
+            // 這種情況刪除目的已達成，不應無止境重試卡住佇列。
+            console.warn(
+              `[DataService] pending delete found nothing on cloud (${cloudTable}, id=${del.data!.id}); treating as done`
+            );
+            const storageKey = LOCAL_STORAGE_KEY_MAP[table];
+            if (storageKey) {
+              try {
+                const raw = localStorage.getItem(storageKey);
+                if (raw) {
+                  const items = JSON.parse(raw) as Array<{ id?: string }>;
+                  const filtered = items.filter(i => i.id !== del.data!.id);
+                  if (filtered.length !== items.length) {
+                    localStorage.setItem(storageKey, JSON.stringify(filtered));
+                  }
+                }
+              } catch { /* 解析失敗時保留原資料 */ }
+            }
+            markDeletedIds(table, [del.data!.id]);
+            success++;
           } else {
+            // 雲端已確認刪除，同步清掉本地殘留，
+            // 避免「本地孤兒資料保護」把剛刪掉的資料又合併回畫面，
+            // 並留下刪除墓碑，確保任何殘留快取都不會再次復活。
+            markDeletedIds(table, [del.data!.id]);
+            const storageKey = LOCAL_STORAGE_KEY_MAP[table];
+            if (storageKey) {
+              try {
+                const raw = localStorage.getItem(storageKey);
+                if (raw) {
+                  const items = JSON.parse(raw) as Array<{ id?: string }>;
+                  const filtered = items.filter(i => i.id !== del.data!.id);
+                  if (filtered.length !== items.length) {
+                    localStorage.setItem(storageKey, JSON.stringify(filtered));
+                  }
+                }
+              } catch { /* 解析失敗時保留原資料 */ }
+            }
             success++;
           }
         } catch (e) {
@@ -429,6 +477,81 @@ const OPERATION_TIMEOUT = 15_000; // 15 seconds (allows for customer lookup + IN
 interface PendingSyncMeta {
   table: string;
   action: 'create' | 'update' | 'delete';
+  /**
+   * 刪除操作必須帶上目標紀錄 id。
+   * 因為 localFallback() 對刪除只回傳 boolean，若不另外記錄 id，
+   * pending queue 的刪除項目會缺少 data.id，連線恢復後永遠不會真正刪除雲端資料。
+   */
+  recordId?: string;
+}
+
+/**
+ * 建立要寫入 pending queue 的內容。
+ * - create / update：使用 localFallback 回傳的紀錄（自帶 id）
+ * - delete：使用 syncMeta.recordId 組出 `{ id }`
+ */
+function buildPendingPayload(
+  syncMeta: PendingSyncMeta,
+  result: unknown
+): Record<string, unknown> | undefined {
+  if (syncMeta.action === 'delete') {
+    if (!syncMeta.recordId) {
+      console.warn(
+        `[DataService] pending delete for "${syncMeta.table}" has no recordId and will be ignored`
+      );
+      return undefined;
+    }
+    return { id: syncMeta.recordId };
+  }
+  return result && typeof result === 'object' ? (result as Record<string, unknown>) : undefined;
+}
+
+/** 統一將失敗的寫入排入待同步佇列 */
+function queuePendingSync(syncMeta: PendingSyncMeta, result: unknown): void {
+  addPendingSync(syncMeta.table, syncMeta.action, buildPendingPayload(syncMeta, result));
+}
+
+/**
+ * 讀取函式名稱 → 資料表名稱對照表。
+ * withReadFallback 需要知道自己在讀哪張表，才能排除該表中仍在待同步刪除
+ * 佇列的資料，否則雲端還沒真的刪掉的舊資料會被合併回畫面「復活」。
+ */
+const OPERATION_TO_TABLE: Record<string, string> = {
+  dsGetAllUsers: 'users',
+  dsGetCustomers: 'customers',
+  dsGetWorkOrders: 'work_orders',
+  dsGetMoldingBatches: 'molding_batches',
+  dsGetMeltingRecords: 'melting_records',
+  dsGetMeltRecords: 'melt_records',
+  dsGetMeltMaterials: 'melt_materials',
+  dsGetMeltChemistry: 'melt_chemistry',
+  dsGetMeltPourings: 'melt_pourings',
+  dsGetQualityInspections: 'quality_inspections',
+  dsGetDefectRecords: 'defect_records',
+  dsGetCAPARecords: 'capa_records',
+  dsGetWarehouseEntries: 'warehouse_entries',
+  dsGetShipmentOrders: 'shipment_orders',
+  dsGetPatterns: 'patterns',
+  dsGetPatternVersions: 'pattern_versions',
+  dsGetPatternHistory: 'pattern_history',
+  dsGetPatternMaintenance: 'pattern_maintenance',
+  dsGetPatternLoans: 'pattern_loans',
+};
+
+/** 依讀取函式名稱取得對應資料表；未登記的操作回傳 undefined（不做刪除過濾） */
+function resolveTableForOperation(operationName: string): string | undefined {
+  return OPERATION_TO_TABLE[operationName];
+}
+
+/**
+ * 套用待同步刪除過濾：已排入刪除佇列但雲端尚未刪除的資料一律不得回傳。
+ * 這是修復「刪除投料明細後儲存未生效、資料復活」的核心保護。
+ */
+function applyPendingDeleteFilter<T>(operationName: string, result: T): T {
+  const table = resolveTableForOperation(operationName);
+  if (!table || !Array.isArray(result)) return result;
+  // 同時排除待同步刪除與刪除墓碑的資料，兩者任一漏掉都會讓已刪明細復活。
+  return filterRemovedIds(table, result as Array<{ id?: unknown }>) as unknown as T;
 }
 
 // Map table names to localStorage keys
@@ -529,10 +652,7 @@ async function withRLSFallback<T>(
   const connected = await isSupabaseConnected();
   if (!connected) {
     const result = localFallback();
-    if (syncMeta) {
-      const data = result && typeof result === 'object' ? (result as Record<string, unknown>) : undefined;
-      addPendingSync(syncMeta.table, syncMeta.action, data);
-    }
+    if (syncMeta) queuePendingSync(syncMeta, result);
     return result;
   }
 
@@ -546,8 +666,10 @@ async function withRLSFallback<T>(
       markRecentWrite(syncMeta.table);
       try {
         if (syncMeta.action === 'delete') {
-          // For delete, also execute localFallback to remove from localStorage
+          // For delete, also execute localFallback to remove from localStorage,
+          // and leave a tombstone so stale caches can never bring the row back.
           localFallback();
+          if (syncMeta.recordId) markDeletedIds(syncMeta.table, [syncMeta.recordId]);
         } else {
           syncResultToLocalStorage(syncMeta.table, syncMeta.action, result);
         }
@@ -558,7 +680,18 @@ async function withRLSFallback<T>(
     return result;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    
+
+    // 0. 雲端刪除未生效（RLS 未開放 DELETE 時 PostgREST 會靜默刪除 0 列）→ 硬失敗。
+    //    必須在 RLS 判斷之前攔截：此錯誤訊息含有「policy」字樣，若落到下面的 RLS 分支
+    //    會被降級成本地刪除成功，導致編輯儲存提示成功但雲端舊明細之後又復活。
+    //    這裡仍執行本地刪除並排入待同步重試，但把錯誤往上拋讓呼叫端中止後續流程。
+    if (sbStore.isCloudDeleteNotAppliedError(err)) {
+      console.error(`[DataService] ${operationName}: cloud delete not applied:`, msg);
+      const result = localFallback();
+      if (syncMeta) queuePendingSync(syncMeta, result);
+      throw err;
+    }
+
     // 1. RLS / Permission errors → switch to offline mode and queue for later sync
     const isRLSError = (
       msg.includes('row-level security') ||
@@ -572,10 +705,7 @@ async function withRLSFallback<T>(
       _offlineReason = 'rls_blocked';
       _lastCheckTime = Date.now();
       const result = localFallback();
-      if (syncMeta) {
-        const data = result && typeof result === 'object' ? (result as Record<string, unknown>) : undefined;
-        addPendingSync(syncMeta.table, syncMeta.action, data);
-      }
+      if (syncMeta) queuePendingSync(syncMeta, result);
       return result;
     }
 
@@ -602,10 +732,7 @@ async function withRLSFallback<T>(
       _offlineReason = 'error';
       _lastCheckTime = Date.now();
       const result = localFallback();
-      if (syncMeta) {
-        const data = result && typeof result === 'object' ? (result as Record<string, unknown>) : undefined;
-        addPendingSync(syncMeta.table, syncMeta.action, data);
-      }
+      if (syncMeta) queuePendingSync(syncMeta, result);
       return result;
     }
 
@@ -615,10 +742,7 @@ async function withRLSFallback<T>(
     _offlineReason = 'error';
     _lastCheckTime = Date.now();
     const result = localFallback();
-    if (syncMeta) {
-      const data = result && typeof result === 'object' ? (result as Record<string, unknown>) : undefined;
-      addPendingSync(syncMeta.table, syncMeta.action, data);
-    }
+    if (syncMeta) queuePendingSync(syncMeta, result);
     return result;
   }
 }
@@ -629,11 +753,19 @@ async function withReadFallback<T>(
   operationName: string
 ): Promise<T> {
   const connected = await isSupabaseConnected();
-  if (!connected) return localFallback();
+  const table = resolveTableForOperation(operationName);
+  // 先把待同步刪除與已刪除（墓碑）的資料從本地快取清掉，
+  // 避免後續的「本地孤兒資料保護」把已刪除的明細當成遺失資料又復活回來。
+  if (table) {
+    const storageKey = LOCAL_STORAGE_KEY_MAP[table];
+    if (storageKey) purgeRemovedFromStorage(table, storageKey);
+  }
+
+  if (!connected) return applyPendingDeleteFilter(operationName, localFallback());
 
   // If there are pending sync items for this table, prefer localStorage
   // to avoid Supabase returning stale data that doesn't include pending creates.
-  const pendingQueue = getPendingSyncQueue();
+  const pendingQueue = readPendingSyncQueue();
   if (pendingQueue.length > 0) {
     const localResult = localFallback();
     if (Array.isArray(localResult) && localResult.length > 0) {
@@ -641,7 +773,7 @@ async function withReadFallback<T>(
         `[DataService] ${operationName}: ${pendingQueue.length} pending sync items exist. ` +
         `Using localStorage to prevent data loss until sync completes.`
       );
-      return localResult;
+      return applyPendingDeleteFilter(operationName, localResult);
     }
   }
 
@@ -657,7 +789,7 @@ async function withReadFallback<T>(
           `[DataService] ${operationName}: Supabase returned empty but localStorage has ${localResult.length} items. ` +
           `Using localStorage to prevent data loss (possible RLS SELECT issue).`
         );
-        return localResult;
+        return applyPendingDeleteFilter(operationName, localResult);
       }
     }
     // Safety: if Supabase returned fewer items than localStorage, MERGE the results.
@@ -677,14 +809,15 @@ async function withReadFallback<T>(
             `[DataService] ${operationName}: Supabase returned ${result.length} items but localStorage has ${localResult.length}. ` +
             `Merging ${missingLocal.length} local-only items to prevent data loss.`
           );
-          return [...missingLocal, ...result] as T;
+          // 合併結果仍須排除待同步刪除的資料，否則雲端尚未刪除的舊明細會再次復活
+          return applyPendingDeleteFilter(operationName, [...missingLocal, ...result] as T);
         }
       }
     }
-    return result;
+    return applyPendingDeleteFilter(operationName, result);
   } catch (err) {
     console.warn(`[DataService] ${operationName} failed, falling back to localStorage:`, err);
-    return localFallback();
+    return applyPendingDeleteFilter(operationName, localFallback());
   }
 }
 
@@ -741,7 +874,7 @@ export async function dsDeleteUser(id: string): Promise<boolean> {
     () => sbStore.sbDeleteUser(id),
     () => localStore.deleteUser(id),
     'dsDeleteUser',
-    { table: 'users', action: 'delete' }
+    { table: 'users', action: 'delete', recordId: id }
   );
 }
 
@@ -779,7 +912,7 @@ export async function dsDeleteCustomer(id: string): Promise<void> {
     async () => { await sbStore.sbDeleteCustomer(id); },
     () => { localStore.deleteCustomer(id); },
     'dsDeleteCustomer',
-    { table: 'customers', action: 'delete' }
+    { table: 'customers', action: 'delete', recordId: id }
   );
 }
 
@@ -817,7 +950,7 @@ export async function dsDeleteWorkOrder(id: string): Promise<void> {
     async () => { await sbStore.sbDeleteWorkOrder(id); },
     () => { localStore.deleteWorkOrder(id); },
     'dsDeleteWorkOrder',
-    { table: 'work_orders', action: 'delete' }
+    { table: 'work_orders', action: 'delete', recordId: id }
   );
 }
 
@@ -855,7 +988,7 @@ export async function dsDeleteMoldingBatch(id: string): Promise<void> {
     async () => { await sbStore.sbDeleteMoldingBatch(id); },
     () => { localStore.deleteMoldingBatch(id); },
     'dsDeleteMoldingBatch',
-    { table: 'molding_batches', action: 'delete' }
+    { table: 'molding_batches', action: 'delete', recordId: id }
   );
 }
 
@@ -893,7 +1026,7 @@ export async function dsDeleteMeltingRecord(id: string): Promise<boolean> {
     () => sbStore.sbDeleteMeltingRecord(id),
     () => localStore.deleteMeltingRecord(id),
     'dsDeleteMeltingRecord',
-    { table: 'melting_records', action: 'delete' }
+    { table: 'melting_records', action: 'delete', recordId: id }
   );
 }
 
@@ -931,7 +1064,7 @@ export async function dsDeleteMeltRecord(id: string): Promise<boolean> {
     () => sbStore.sbDeleteMeltRecord(id),
     () => localStore.deleteMeltRecord(id),
     'dsDeleteMeltRecord',
-    { table: 'melt_records', action: 'delete' }
+    { table: 'melt_records', action: 'delete', recordId: id }
   );
 }
 
@@ -978,7 +1111,7 @@ export async function dsDeleteMeltMaterial(id: string): Promise<boolean> {
     () => sbStore.sbDeleteMeltMaterial(id),
     () => localStore.deleteMeltMaterial(id),
     'dsDeleteMeltMaterial',
-    { table: 'melt_materials', action: 'delete' }
+    { table: 'melt_materials', action: 'delete', recordId: id }
   );
 }
 
@@ -1016,7 +1149,7 @@ export async function dsDeleteMeltChemistry(id: string): Promise<boolean> {
     () => sbStore.sbDeleteMeltChemistry(id),
     () => localStore.deleteMeltChemistry(id),
     'dsDeleteMeltChemistry',
-    { table: 'melt_chemistry', action: 'delete' }
+    { table: 'melt_chemistry', action: 'delete', recordId: id }
   );
 }
 
@@ -1083,7 +1216,7 @@ export async function dsDeleteMeltPouring(id: string): Promise<boolean> {
       return filtered.length < all.length;
     },
     'dsDeleteMeltPouring',
-    { table: 'melt_pourings', action: 'delete' }
+    { table: 'melt_pourings', action: 'delete', recordId: id }
   );
 }
 
@@ -1226,7 +1359,7 @@ export async function dsDeleteMeltPresetRecipe(id: string): Promise<boolean> {
       return filtered.length < all.length;
     },
     'dsDeleteMeltPresetRecipe',
-    { table: 'melt_preset_recipes', action: 'delete' }
+    { table: 'melt_preset_recipes', action: 'delete', recordId: id }
   );
 }
 
@@ -1382,7 +1515,7 @@ export async function dsDeleteMeltMaterialSpec(id: string): Promise<boolean> {
       return filtered.length < all.length;
     },
     'dsDeleteMeltMaterialSpec',
-    { table: 'melt_material_specs', action: 'delete' }
+    { table: 'melt_material_specs', action: 'delete', recordId: id }
   );
 }
 
@@ -1547,7 +1680,7 @@ export async function dsDeleteMeltMaterialOption(id: string): Promise<boolean> {
       return filtered.length < all.length;
     },
     'dsDeleteMeltMaterialOption',
-    { table: 'melt_material_options', action: 'delete' }
+    { table: 'melt_material_options', action: 'delete', recordId: id }
   );
 }
 
@@ -1655,7 +1788,7 @@ export async function dsDeleteRawMaterialReceipt(id: string): Promise<boolean> {
       return filtered.length < all.length;
     },
     'dsDeleteRawMaterialReceipt',
-    { table: 'raw_material_receipts', action: 'delete' }
+    { table: 'raw_material_receipts', action: 'delete', recordId: id }
   );
 }
 
@@ -1693,7 +1826,7 @@ export async function dsDeleteQualityInspection(id: string): Promise<void> {
     async () => { await sbStore.sbDeleteQualityInspection(id); },
     () => { localStore.deleteQualityInspection(id); },
     'dsDeleteQualityInspection',
-    { table: 'quality_inspections', action: 'delete' }
+    { table: 'quality_inspections', action: 'delete', recordId: id }
   );
 }
 
@@ -1780,7 +1913,7 @@ export async function dsDeleteWarehouseEntry(id: string): Promise<void> {
     () => sbStore.sbDeleteWarehouseEntry(id),
     () => localStore.deleteWarehouseEntry(id),
     'dsDeleteWarehouseEntry',
-    { table: 'warehouse_entries', action: 'delete' }
+    { table: 'warehouse_entries', action: 'delete', recordId: id }
   );
 }
 
@@ -1818,7 +1951,7 @@ export async function dsDeleteShipmentOrder(id: string): Promise<void> {
     () => sbStore.sbDeleteShipmentOrder(id),
     () => localStore.deleteShipmentOrder(id),
     'dsDeleteShipmentOrder',
-    { table: 'shipment_orders', action: 'delete' }
+    { table: 'shipment_orders', action: 'delete', recordId: id }
   );
 }
 
@@ -1856,7 +1989,7 @@ export async function dsDeletePattern(id: string): Promise<void> {
     async () => { await sbStore.sbDeletePattern(id); },
     () => { localStore.deletePattern(id); },
     'dsDeletePattern',
-    { table: 'patterns', action: 'delete' }
+    { table: 'patterns', action: 'delete', recordId: id }
   );
 }
 

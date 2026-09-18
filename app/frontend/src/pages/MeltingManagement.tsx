@@ -15,7 +15,7 @@ import {
   dsGetMeltRecords, dsCreateMeltRecord, dsUpdateMeltRecord, dsDeleteMeltRecord,
   dsGetMeltMaterials, dsCreateMeltMaterial, dsDeleteMeltMaterial,
   dsGetMeltChemistry, dsCreateMeltChemistry, dsDeleteMeltChemistry,
-  dsRecalcMeltRecord, dsGetMeltTargetRange, dsSaveMeltTargetRange,
+  dsRecalcMeltRecord, dsGetMeltTargetRange, dsSaveMeltTargetRange, dsDeleteMeltTargetRange,
   dsGetMoldingBatches, dsGetWorkOrders,
   dsGetMeltPourings, dsCreateMeltPouring, dsUpdateMeltPouring, dsDeleteMeltPouring,
   dsGetMeltPresetRecipes, dsCreateMeltPresetRecipe, dsUpdateMeltPresetRecipe, dsDeleteMeltPresetRecipe,
@@ -38,6 +38,7 @@ const deleteMeltChemistry = dsDeleteMeltChemistry as unknown as (...args: Parame
 const recalcMeltRecord = dsRecalcMeltRecord as unknown as (...args: Parameters<typeof dsRecalcMeltRecord>) => Awaited<ReturnType<typeof dsRecalcMeltRecord>>;
 const getMeltTargetRange = dsGetMeltTargetRange as unknown as (...args: Parameters<typeof dsGetMeltTargetRange>) => Awaited<ReturnType<typeof dsGetMeltTargetRange>>;
 const saveMeltTargetRange = dsSaveMeltTargetRange as unknown as (...args: Parameters<typeof dsSaveMeltTargetRange>) => Awaited<ReturnType<typeof dsSaveMeltTargetRange>>;
+const deleteMeltTargetRange = dsDeleteMeltTargetRange as unknown as (...args: Parameters<typeof dsDeleteMeltTargetRange>) => Awaited<ReturnType<typeof dsDeleteMeltTargetRange>>;
 const getMoldingBatches = dsGetMoldingBatches as unknown as (...args: Parameters<typeof dsGetMoldingBatches>) => Awaited<ReturnType<typeof dsGetMoldingBatches>>;
 const getWorkOrders = dsGetWorkOrders as unknown as (...args: Parameters<typeof dsGetWorkOrders>) => Awaited<ReturnType<typeof dsGetWorkOrders>>;
 import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings, Warehouse, Droplets } from 'lucide-react';
@@ -64,7 +65,7 @@ const FURNACE_OPTIONS = ['1-1', '1-2', '1-3', '1-4', '2-1', '2-2', '2-3', '2-4',
  * - 每個選項右側提供刪除鈕，可移除不再使用的原料（僅移除主檔項目，不影響既有投料紀錄）。
  */
 function MaterialCombobox({
-  value, onChange, options, placeholder = '選擇或搜尋原料', className = '', onCreate, onDelete, usedOptions = [],
+  value, onChange, options, placeholder = '選擇或搜尋原料', className = '', onCreate, onDelete, usedOptions = [], testId,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -75,6 +76,8 @@ function MaterialCombobox({
   onDelete?: (name: string) => void;
   /** 已存在於目前清單的原料名稱：下拉中標示「已加入」並禁止再次選取，避免同一清單出現重複原料 */
   usedOptions?: string[];
+  /** 供自動化回歸腳本穩定定位觸發按鈕 */
+  testId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [keyword, setKeyword] = useState('');
@@ -97,6 +100,7 @@ function MaterialCombobox({
           type="button"
           variant="outline"
           role="combobox"
+          data-testid={testId}
           aria-expanded={open}
           className={`w-full justify-between bg-zinc-700 border-zinc-600 !bg-zinc-700 hover:!bg-zinc-600 text-zinc-100 font-normal ${className}`}
         >
@@ -277,6 +281,9 @@ export default function MeltingManagement() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<MeltRecord | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // 每次儲存／刪除後遞增，強制清單卡片重新載入投料與成份明細，
+  // 避免編輯時刪除的投料仍以舊資料顯示（畫面亂跳／資料復活）。
+  const [detailVersion, setDetailVersion] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMaterial, setFilterMaterial] = useState('');
   const [filterFurnace, setFilterFurnace] = useState('');
@@ -301,7 +308,11 @@ export default function MeltingManagement() {
     return () => { cancelled = true; };
   }, [syncTrigger]);
 
-  const refreshRecords = async () => setRecords(await getMeltRecords());
+  const refreshRecords = async () => {
+    setRecords(await getMeltRecords());
+    // 父紀錄重載後同步遞增版本，讓卡片明細重新向資料層取最新結果
+    setDetailVersion(v => v + 1);
+  };
 
   // 原料下拉清單（主檔名稱）
   const materialOptionNames = [...new Set(materialOptions.map(o => o.name))].filter(Boolean);
@@ -471,7 +482,7 @@ export default function MeltingManagement() {
         <div className="flex flex-col sm:flex-row gap-2 print:hidden">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-2 w-4 h-4 text-zinc-500" />
-            <Input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="搜尋編號、材質、爐號、建立人..." className="bg-zinc-800 border-zinc-700 text-zinc-100 pl-9 h-9" />
+            <Input data-testid="melt-search" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="搜尋編號、材質、爐號、建立人..." className="bg-zinc-800 border-zinc-700 text-zinc-100 pl-9 h-9" />
           </div>
           <Select value={filterMaterial} onValueChange={v => setFilterMaterial(v === 'all' ? '' : v)}>
             <SelectTrigger className="bg-zinc-800 border-zinc-700 text-zinc-100 w-full sm:w-36 h-9">
@@ -496,7 +507,7 @@ export default function MeltingManagement() {
         <p className="text-xs text-zinc-500">共 {filteredRecords.length} 筆紀錄</p>
 
         {/* Records List */}
-        <div className="space-y-3">
+        <div className="space-y-3" data-testid="melt-list">
           {filteredRecords.length === 0 ? (
             <Card className="bg-zinc-800 border-zinc-700">
               <CardContent className="p-8 text-center text-zinc-400">
@@ -509,6 +520,7 @@ export default function MeltingManagement() {
                 key={record.id}
                 record={record}
                 expanded={expandedId === record.id}
+                detailVersion={detailVersion}
                 onToggle={() => setExpandedId(expandedId === record.id ? null : record.id)}
                 onEdit={() => { setEditingRecord(record); setIsFormOpen(true); }}
                 onDelete={() => handleDelete(record)}
@@ -569,8 +581,8 @@ function formatMeltMinutes(minutes: number): string {
 }
 
 // === Record Card (list view) ===
-function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
-  record: MeltRecord; expanded: boolean; onToggle: () => void; onEdit: () => void; onDelete: () => void;
+function MeltRecordCard({ record, expanded, detailVersion, onToggle, onEdit, onDelete }: {
+  record: MeltRecord; expanded: boolean; detailVersion: number; onToggle: () => void; onEdit: () => void; onDelete: () => void;
 }) {
   const [materials, setMaterials] = useState<MeltMaterial[]>([]);
   const [chemistry, setChemistry] = useState<MeltChemistry[]>([]);
@@ -584,7 +596,8 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
       if (!cancelled) { setMaterials(mats); setChemistry(chem); }
     })();
     return () => { cancelled = true; };
-  }, [record.id]);
+    // detailVersion 於每次儲存後遞增，確保編輯刪除明細後卡片不會再顯示舊資料
+  }, [record.id, detailVersion]);
 
   useEffect(() => {
     if (!expanded) { setTargetRangeData(null); return; }
@@ -594,10 +607,10 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
       if (!cancelled) { setTargetRangeData(tr); setCardBatches(batches); }
     })();
     return () => { cancelled = true; };
-  }, [expanded, record.id]);
+  }, [expanded, record.id, detailVersion]);
 
   return (
-    <Card className="bg-zinc-800 border-zinc-700">
+    <Card className="bg-zinc-800 border-zinc-700" data-testid="melt-card" data-melt-no={record.melt_no}>
       <CardContent className="p-4">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
           <div className="flex-1">
@@ -610,7 +623,7 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-3 gap-y-1 text-xs text-zinc-400">
               <span className="whitespace-nowrap">材質: <span className="text-zinc-200">{record.material_grade}</span></span>
               <span className="whitespace-nowrap">爐號: <span className="text-zinc-200">{record.furnace_no}</span></span>
-              <span className="whitespace-nowrap">總投料: <span className="text-zinc-200">{record.total_charge_weight} kg</span></span>
+              <span className="whitespace-nowrap">總投料: <span className="text-zinc-200" data-testid="melt-card-total-charge">{record.total_charge_weight}</span></span>
               <span className="whitespace-nowrap">殘湯: <span className="text-violet-300 font-medium">{record.residual_weight || 0} kg</span></span>
               <span className="flex items-center gap-1 whitespace-nowrap"><Zap className="w-3 h-3" />耗電: <span className="text-zinc-200">{record.power_kwh} kWh</span></span>
               <span className="whitespace-nowrap">能耗: <span className={`font-bold ${record.specific_energy > 1 ? 'text-red-400' : 'text-green-400'}`}>{record.specific_energy} kWh/kg</span></span>
@@ -629,13 +642,13 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
             </div>
           </div>
           <div className="flex items-center gap-1 print:hidden">
-            <Button variant="ghost" size="icon" onClick={onToggle} className="text-zinc-400 hover:text-zinc-100 h-7 w-7">
+            <Button variant="ghost" size="icon" data-testid="melt-card-toggle" onClick={onToggle} className="text-zinc-400 hover:text-zinc-100 h-7 w-7">
               {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </Button>
-            <Button variant="ghost" size="icon" onClick={onEdit} className="text-zinc-400 hover:text-amber-400 h-7 w-7">
+            <Button variant="ghost" size="icon" data-testid="melt-card-edit" onClick={onEdit} className="text-zinc-400 hover:text-amber-400 h-7 w-7">
               <Pencil className="w-3.5 h-3.5" />
             </Button>
-            <Button variant="ghost" size="icon" onClick={onDelete} className="text-zinc-400 hover:text-red-400 h-7 w-7">
+            <Button variant="ghost" size="icon" data-testid="melt-card-delete" onClick={onDelete} className="text-zinc-400 hover:text-red-400 h-7 w-7">
               <Trash2 className="w-3.5 h-3.5" />
             </Button>
           </div>
@@ -646,11 +659,11 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <Layers className="w-3.5 h-3.5 text-blue-400" />
-                <span className="text-xs font-medium text-zinc-300">投料明細 ({materials.length} 筆)</span>
+                <span className="text-xs font-medium text-zinc-300" data-testid="melt-card-materials-count">投料明細 ({materials.length} 筆)</span>
               </div>
               {materials.length > 0 && (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
+                  <table className="w-full text-xs" data-testid="melt-card-materials-table">
                     <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-3">原料</th><th className="text-right py-1 pr-3">首次投料(kg)</th><th className="text-right py-1 pr-3">二次添加(kg)</th><th className="text-right py-1">小計(kg)</th></tr></thead>
                     <tbody>
                       {materials.map(m => (<tr key={m.id} className="text-zinc-300 border-b border-zinc-700/50"><td className="py-1 pr-3">{m.raw_material}</td><td className="text-right py-1 pr-3">{m.charge_weight}</td><td className="text-right py-1 pr-3">{m.secondary_weight}</td><td className="text-right py-1 font-medium">{m.subtotal}</td></tr>))}
@@ -663,11 +676,11 @@ function MeltRecordCard({ record, expanded, onToggle, onEdit, onDelete }: {
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <FlaskConical className="w-3.5 h-3.5 text-purple-400" />
-                <span className="text-xs font-medium text-zinc-300">成份紀錄 ({chemistry.length} 筆)</span>
+                <span className="text-xs font-medium text-zinc-300" data-testid="melt-card-chemistry-count">成份紀錄 ({chemistry.length} 筆)</span>
               </div>
               {chemistry.length > 0 && (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
+                  <table className="w-full text-xs" data-testid="melt-card-chemistry-table">
                     <thead><tr className="text-zinc-500 border-b border-zinc-700"><th className="text-left py-1 pr-2">階段</th>{CHEMISTRY_ELEMENTS.map(el => (<th key={el} className="text-right py-1 px-1">{el}</th>))}</tr></thead>
                     <tbody>
                       {[...chemistry].sort((a, b) => { const o: Record<SampleStage, number> = { TARGET: 0, IN_FURNACE: 1, AFTER_FURNACE: 2 }; return o[a.sample_stage] - o[b.sample_stage]; }).map(c => (
@@ -1455,6 +1468,9 @@ function MeltFormDialog({
     remark: '',
   });
   const [timeError, setTimeError] = useState('');
+  // 編輯既有紀錄時，明細（投料／成份）尚未回填完成前不得儲存，
+  // 否則會把空白表單寫回雲端，並被必填驗證誤擋。
+  const [loadingRecord, setLoadingRecord] = useState(false);
 
   // Materials state
   const [materials, setMaterials] = useState<Array<{ id?: string; raw_material: string; charge_weight: number; secondary_weight: number }>>([]);
@@ -1537,21 +1553,14 @@ function MeltFormDialog({
 
   // Load data when dialog opens
   useEffect(() => {
-    if (open) {
-      (async () => {
-      setPresetRecipes(await getPresetRecipes());
-      const [batches, orders] = await Promise.all([getMoldingBatches(), getWorkOrders()]);
-      setAllBatches(batches);
-      setAllWorkOrders(orders);
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      // 編輯既有紀錄時必須「先回填主表單與明細」再載入配比／批次／工單等輔助資料。
+      // 先前把慢速輔助查詢排在最前面，導致對話框開啟後數秒內材質與爐號仍為空，
+      // 使用者此時按儲存會被必填驗證誤擋（且看起來像「儲存沒反應」）。
       if (editRecord) {
-        // Load pouring data
-        const pouringKey = `melt_pouring_${editRecord.id}`;
-        const savedPouring = localStorage.getItem(pouringKey);
-        if (savedPouring) {
-          try { setSelectedPouringBatches(JSON.parse(savedPouring)); } catch { setSelectedPouringBatches([]); }
-        } else {
-          setSelectedPouringBatches([]);
-        }
+        setLoadingRecord(true);
         setForm({
           melt_no: editRecord.melt_no,
           melt_date: editRecord.melt_date,
@@ -1565,44 +1574,64 @@ function MeltFormDialog({
           remark: editRecord.remark,
         });
         setResidualWeight(editRecord.residual_weight ? String(editRecord.residual_weight) : '');
-        const mats = await getMeltMaterials(editRecord.id);
-        setMaterials(mats.map(m => ({ id: m.id, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight })));
-        const chem = await getMeltChemistry(editRecord.id);
-        const loadedChemRows: Record<'IN_FURNACE' | 'AFTER_FURNACE', Record<string, number>> = {
-          IN_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
-          AFTER_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
-        };
-        // Try loading target range from dedicated storage first
-        const savedRange = await getMeltTargetRange(editRecord.id);
-        let loadedTarget: Record<string, number> = {
-          C_min: 0, C_max: 0, Si_min: 0, Si_max: 0, Mn_min: 0, Mn_max: 0,
-          P_min: 0, P_max: 0, S_min: 0, S_max: 0, Ni_min: 0, Ni_max: 0,
-          Cr_min: 0, Cr_max: 0, Mo_min: 0, Mo_max: 0, Cu_min: 0, Cu_max: 0,
-        };
-        if (savedRange) {
-          loadedTarget = savedRange;
+        // Load pouring data
+        const pouringKey = `melt_pouring_${editRecord.id}`;
+        const savedPouring = localStorage.getItem(pouringKey);
+        if (savedPouring) {
+          try { setSelectedPouringBatches(JSON.parse(savedPouring)); } catch { setSelectedPouringBatches([]); }
+        } else {
+          setSelectedPouringBatches([]);
         }
-        chem.forEach(c => {
-          if (c.sample_stage === 'TARGET' && !savedRange) {
-            // Fallback: load from old format (use value as both min and max)
-            const elements = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
-            elements.forEach(el => {
-              const val = c[el as keyof MeltChemistry] as number;
-              loadedTarget[`${el}_min`] = val;
-              loadedTarget[`${el}_max`] = val;
-            });
-          } else if (c.sample_stage === 'IN_FURNACE' || c.sample_stage === 'AFTER_FURNACE') {
-            loadedChemRows[c.sample_stage] = { C: c.C, Si: c.Si, Mn: c.Mn, P: c.P, S: c.S, Ni: c.Ni, Cr: c.Cr, Mo: c.Mo, Cu: c.Cu };
+        try {
+          const [mats, chem, savedRange] = await Promise.all([
+            getMeltMaterials(editRecord.id),
+            getMeltChemistry(editRecord.id),
+            getMeltTargetRange(editRecord.id),
+          ]);
+          if (cancelled) return;
+          setMaterials(mats.map(m => ({ id: m.id, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight })));
+          const loadedChemRows: Record<'IN_FURNACE' | 'AFTER_FURNACE', Record<string, number>> = {
+            IN_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
+            AFTER_FURNACE: { C: 0, Si: 0, Mn: 0, P: 0, S: 0, Ni: 0, Cr: 0, Mo: 0, Cu: 0 },
+          };
+          let loadedTarget: Record<string, number> = {
+            C_min: 0, C_max: 0, Si_min: 0, Si_max: 0, Mn_min: 0, Mn_max: 0,
+            P_min: 0, P_max: 0, S_min: 0, S_max: 0, Ni_min: 0, Ni_max: 0,
+            Cr_min: 0, Cr_max: 0, Mo_min: 0, Mo_max: 0, Cu_min: 0, Cu_max: 0,
+          };
+          if (savedRange) {
+            loadedTarget = savedRange;
           }
-        });
-        setTargetRange(loadedTarget);
-        setChemRows(loadedChemRows);
+          chem.forEach(c => {
+            if (c.sample_stage === 'TARGET' && !savedRange) {
+              // Fallback: load from old format (use value as both min and max)
+              const elements = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
+              elements.forEach(el => {
+                const val = c[el as keyof MeltChemistry] as number;
+                loadedTarget[`${el}_min`] = val;
+                loadedTarget[`${el}_max`] = val;
+              });
+            } else if (c.sample_stage === 'IN_FURNACE' || c.sample_stage === 'AFTER_FURNACE') {
+              loadedChemRows[c.sample_stage] = { C: c.C, Si: c.Si, Mn: c.Mn, P: c.P, S: c.S, Ni: c.Ni, Cr: c.Cr, Mo: c.Mo, Cu: c.Cu };
+            }
+          });
+          setTargetRange(loadedTarget);
+          setChemRows(loadedChemRows);
+        } finally {
+          if (!cancelled) setLoadingRecord(false);
+        }
       } else {
         resetFormState();
       }
       setTimeError('');
-      })();
-    }
+      // 輔助資料（預設配比／造模批次／工單）與主表單無關，平行載入避免拖慢回填
+      const [recipes, batches, orders] = await Promise.all([getPresetRecipes(), getMoldingBatches(), getWorkOrders()]);
+      if (cancelled) return;
+      setPresetRecipes(recipes);
+      setAllBatches(batches);
+      setAllWorkOrders(orders);
+    })();
+    return () => { cancelled = true; };
   }, [open, editRecord]);
 
   const resetFormState = () => {
@@ -1632,6 +1661,7 @@ function MeltFormDialog({
     setPouringBatchSearch('');
     setResidualWeight('');
     setTimeError('');
+    setLoadingRecord(false);
   };
 
   const validateTime = (startTime: string, tapTime: string): boolean => {
@@ -1713,6 +1743,10 @@ function MeltFormDialog({
 
   // Save
   const handleSave = async (andNew: boolean) => {
+    if (loadingRecord) {
+      toast({ title: '明細載入中，請稍候再儲存', variant: 'destructive' });
+      return;
+    }
     if (!form.material_grade || !form.furnace_no) {
       toast({ title: '請填寫材質與爐號', variant: 'destructive' });
       return;
@@ -1817,6 +1851,10 @@ function MeltFormDialog({
         });
         // Save the full min/max range separately
         await saveMeltTargetRange(recordId, targetRange);
+      } else {
+        // 目標值全部清空代表不再需要成份紀錄：除了不重建雲端列，
+        // 也必須清掉本機暫存的目標範圍，否則下次開啟會把舊值回填而讓資料復活。
+        await deleteMeltTargetRange(recordId);
       }
 
       // Save IN_FURNACE and AFTER_FURNACE
@@ -1858,7 +1896,14 @@ function MeltFormDialog({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[MeltingManagement] Save failed:', err);
-      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
+      if (msg.includes('CLOUD_DELETE_NOT_APPLIED')) {
+        // 舊明細未真的從雲端刪除時必須中止，避免雲端留著舊投料而在下次讀取時復活
+        toast({
+          title: '雲端舊明細刪除未生效，已中止儲存',
+          description: '請確認 Supabase 的 DELETE 權限後重新儲存；本次刪除已排入待同步重試。',
+          variant: 'destructive',
+        });
+      } else if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
         toast({ title: '權限不足，儲存失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
       } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
         toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
@@ -2017,7 +2062,7 @@ function MeltFormDialog({
                   {/* Materials table */}
                   {materials.length > 0 && (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
+                      <table className="w-full text-xs" data-testid="dlg-materials-table">
                         <thead>
                           <tr className="text-zinc-500 border-b border-zinc-700">
                             <th className="text-left py-1.5 pr-2">原料</th>
@@ -2029,17 +2074,17 @@ function MeltFormDialog({
                         </thead>
                         <tbody>
                           {materials.map((m, idx) => (
-                            <tr key={idx} className="text-zinc-300 border-b border-zinc-700/50">
+                            <tr key={idx} className="text-zinc-300 border-b border-zinc-700/50" data-testid="dlg-material-row" data-material={m.raw_material}>
                               <td className="py-1 pr-2">{m.raw_material}</td>
                               <td className="text-right py-1 pr-2">
-                                <Input type="number" min="0" value={m.charge_weight || ''} onChange={e => updateMaterialRow(idx, 'charge_weight', Math.max(0, Number(e.target.value)))} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-6 text-xs w-20 ml-auto" />
+                                <Input type="number" min="0" disabled={loadingRecord} value={m.charge_weight || ''} onChange={e => updateMaterialRow(idx, 'charge_weight', Math.max(0, Number(e.target.value)))} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-6 text-xs w-20 ml-auto" />
                               </td>
                               <td className="text-right py-1 pr-2">
-                                <Input type="number" min="0" value={m.secondary_weight || ''} onChange={e => updateMaterialRow(idx, 'secondary_weight', Math.max(0, Number(e.target.value)))} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-6 text-xs w-20 ml-auto" />
+                                <Input type="number" min="0" disabled={loadingRecord} value={m.secondary_weight || ''} onChange={e => updateMaterialRow(idx, 'secondary_weight', Math.max(0, Number(e.target.value)))} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-6 text-xs w-20 ml-auto" />
                               </td>
                               <td className="text-right py-1 pr-2 font-medium text-zinc-200">{m.charge_weight + m.secondary_weight}</td>
                               <td className="py-1">
-                                <Button size="sm" variant="ghost" onClick={() => removeMaterialRow(idx)} className="text-zinc-400 hover:text-red-400 h-5 w-5 p-0"><Trash2 className="w-3 h-3" /></Button>
+                                <Button size="sm" variant="ghost" data-testid="dlg-material-remove" disabled={loadingRecord} onClick={() => removeMaterialRow(idx)} className="text-zinc-400 hover:text-red-400 h-5 w-5 p-0 disabled:opacity-40"><Trash2 className="w-3 h-3" /></Button>
                               </td>
                             </tr>
                           ))}
@@ -2049,7 +2094,7 @@ function MeltFormDialog({
                   )}
 
                   {/* Total */}
-                  <div className="flex justify-end text-xs font-medium text-amber-400 pr-10">
+                  <div className="flex justify-end text-xs font-medium text-amber-400 pr-10" data-testid="dlg-total-charge">
                     總投料重量：{totalChargeWeight} kg
                   </div>
 
@@ -2064,11 +2109,12 @@ function MeltFormDialog({
                         onDelete={onDeleteMaterialOption}
                         usedOptions={materials.map(m => m.raw_material.trim())}
                         className="h-7 text-xs"
+                        testId="dlg-new-material-combobox"
                       />
                     </div>
-                    <Input type="number" min="0" value={newMaterialRow.charge_weight || ''} onChange={e => setNewMaterialRow({ ...newMaterialRow, charge_weight: Math.max(0, Number(e.target.value)) })} placeholder="首次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
-                    <Input type="number" min="0" value={newMaterialRow.secondary_weight || ''} onChange={e => setNewMaterialRow({ ...newMaterialRow, secondary_weight: Math.max(0, Number(e.target.value)) })} placeholder="二次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
-                    <Button size="sm" onClick={addMaterialRow} className="bg-blue-500 hover:bg-blue-600 text-white h-7 text-xs whitespace-nowrap shrink-0">
+                    <Input type="number" min="0" disabled={loadingRecord} value={newMaterialRow.charge_weight || ''} onChange={e => setNewMaterialRow({ ...newMaterialRow, charge_weight: Math.max(0, Number(e.target.value)) })} placeholder="首次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
+                    <Input type="number" min="0" disabled={loadingRecord} value={newMaterialRow.secondary_weight || ''} onChange={e => setNewMaterialRow({ ...newMaterialRow, secondary_weight: Math.max(0, Number(e.target.value)) })} placeholder="二次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
+                    <Button size="sm" data-testid="dlg-add-material" disabled={loadingRecord} onClick={addMaterialRow} className="bg-blue-500 hover:bg-blue-600 text-white h-7 text-xs whitespace-nowrap shrink-0 disabled:opacity-50">
                       <Plus className="w-3 h-3 mr-1" />新增
                     </Button>
                   </div>
@@ -2280,7 +2326,7 @@ function MeltFormDialog({
                     </label>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
+                    <table className="w-full text-xs" data-testid="dlg-chemistry-table">
                       <thead>
                         <tr className="text-zinc-500 border-b border-zinc-700">
                           <th className="text-left py-1.5 pr-2 w-12">階段</th>
@@ -2305,6 +2351,8 @@ function MeltFormDialog({
                                     type="number"
                                     step="0.001"
                                     min="0"
+                                    data-testid={`dlg-chem-TARGET-${el}-min`}
+                                    disabled={loadingRecord}
                                     value={targetRange[`${el}_min`] || ''}
                                     onChange={e => setTargetRange({ ...targetRange, [`${el}_min`]: Number(e.target.value) })}
                                     placeholder="min"
@@ -2314,6 +2362,8 @@ function MeltFormDialog({
                                     type="number"
                                     step="0.001"
                                     min="0"
+                                    data-testid={`dlg-chem-TARGET-${el}-max`}
+                                    disabled={loadingRecord}
                                     value={targetRange[`${el}_max`] || ''}
                                     onChange={e => setTargetRange({ ...targetRange, [`${el}_max`]: Number(e.target.value) })}
                                     placeholder="max"
@@ -2326,7 +2376,7 @@ function MeltFormDialog({
                         </tr>
                         {/* IN_FURNACE and AFTER_FURNACE rows - single value */}
                         {(['IN_FURNACE', 'AFTER_FURNACE'] as const).map(stage => (
-                          <tr key={stage} className="border-b border-zinc-700/50">
+                          <tr key={stage} className="border-b border-zinc-700/50" data-testid={`dlg-chem-row-${stage}`}>
                             <td className="py-1.5 pr-2 text-amber-400 font-medium whitespace-nowrap">{SAMPLE_STAGE_LABELS[stage]}</td>
                             {CHEMISTRY_ELEMENTS.map(el => (
                               <td key={el} className="py-1 px-0.5">
@@ -2339,6 +2389,8 @@ function MeltFormDialog({
                                     type="number"
                                     step="0.001"
                                     min="0"
+                                    data-testid={`dlg-chem-${stage}-${el}`}
+                                    disabled={loadingRecord}
                                     value={chemRows[stage][el] || ''}
                                     onChange={e => {
                                       const newRows = { ...chemRows };
@@ -2363,14 +2415,14 @@ function MeltFormDialog({
 
         {/* Fixed bottom action bar */}
         <div className="sticky bottom-0 p-4 pt-3 border-t border-zinc-700 bg-zinc-800 flex flex-col sm:flex-row gap-2 justify-end">
-          <Button variant="ghost" onClick={() => onOpenChange(false)} className="text-zinc-400 hover:text-zinc-200">
+          <Button variant="ghost" data-testid="dlg-cancel" onClick={() => onOpenChange(false)} className="text-zinc-400 hover:text-zinc-200">
             取消
           </Button>
-          <Button onClick={() => handleSave(false)} disabled={!!timeError} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 disabled:opacity-50">
+          <Button data-testid="dlg-save" onClick={() => handleSave(false)} disabled={!!timeError || loadingRecord} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 disabled:opacity-50">
             儲存
           </Button>
           {!isEdit && (
-            <Button onClick={() => handleSave(true)} disabled={!!timeError} className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
+            <Button onClick={() => handleSave(true)} disabled={!!timeError || loadingRecord} className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
               儲存並新增下一爐
             </Button>
           )}

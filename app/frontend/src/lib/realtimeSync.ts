@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { RealtimeChannel } from '@supabase/supabase-js';
+import { filterRemovedIds, markDeletedIds, purgeRemovedFromStorage, readPendingSyncQueue } from './pendingSyncGuard';
 
 // Tables to monitor for real-time changes
 const WATCHED_TABLES = [
@@ -183,10 +184,19 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
   if (!storageKey) return;
 
   try {
-    const { data, error } = await supabase.from(table).select('*');
-    if (error) {
-      console.warn(`[RealtimeSync] Failed to refresh ${table}:`, error.message);
+    const { data: fetchedRows, error: selectError } = await supabase.from(table).select('*');
+    if (selectError) {
+      console.warn(`[RealtimeSync] Failed to refresh ${table}:`, selectError.message);
       return;
+    }
+    // 後續流程會依待同步刪除與本地保護規則過濾列，因此需要可重賦值的變數
+    let data = fetchedRows;
+    // 待同步刪除保護：在刪除指令真正送達雲端之前，這些資料一律不得寫回本地，
+    // 否則使用者刪掉的投料明細會在每次 Realtime 刷新時「復活」。
+    // 同時清除待刪與墓碑資料的本地殘留，避免後續「孤兒資料保護」又把它們撈回來。
+    purgeRemovedFromStorage(table, storageKey);
+    if (data) {
+      data = filterRemovedIds(table, data as Array<{ id?: unknown }>) as typeof data;
     }
     if (data && data.length > 0) {
       // Supabase has data - it is authoritative, but we must preserve:
@@ -243,9 +253,16 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
           const localRaw = localStorage.getItem(storageKey);
           if (localRaw) {
             const localItems = JSON.parse(localRaw) as Record<string, unknown>[];
-            if (localItems.length > data.length) {
+            // 孤兒資料保護只針對「尚未被刪除」的本地資料：
+            // 若使用者已刪除某筆明細（待刪佇列或刪除墓碑），它就不該被視為
+            // 遺失資料而合併回雲端結果，否則刪除會間歇性失效。
+            const survivingLocalItems = filterRemovedIds(
+              table,
+              localItems as Array<{ id?: unknown }>
+            ) as Record<string, unknown>[];
+            if (survivingLocalItems.length > data.length) {
               const cloudIds = new Set(data.map((d: Record<string, unknown>) => d.id));
-              orphanedLocalItems = localItems.filter(
+              orphanedLocalItems = survivingLocalItems.filter(
                 (item) => item.id && !cloudIds.has(item.id)
               );
               if (orphanedLocalItems.length > 0) {
@@ -367,6 +384,14 @@ export function startRealtimeSync(): void {
       { event: '*', schema: 'public', table },
       async (payload) => {
         console.log(`[RealtimeSync] Change on ${payload.table}:`, payload.eventType);
+        // 遠端刪除事件：立刻在本地留下墓碑，確保同一台裝置上的殘留快取
+        // 不會在後續刷新或整表上傳時把這筆資料寫回雲端。
+        if (payload.eventType === 'DELETE') {
+          const removedId = (payload.old as { id?: unknown } | null)?.id;
+          if (typeof removedId === 'string' && removedId) {
+            markDeletedIds(payload.table, [removedId]);
+          }
+        }
         await refreshLocalFromSupabase(payload.table);
         notifyListeners(payload.table);
 
