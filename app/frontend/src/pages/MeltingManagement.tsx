@@ -64,7 +64,7 @@ const FURNACE_OPTIONS = ['1-1', '1-2', '1-3', '1-4', '2-1', '2-2', '2-3', '2-4',
  * - 每個選項右側提供刪除鈕，可移除不再使用的原料（僅移除主檔項目，不影響既有投料紀錄）。
  */
 function MaterialCombobox({
-  value, onChange, options, placeholder = '選擇或搜尋原料', className = '', onCreate, onDelete,
+  value, onChange, options, placeholder = '選擇或搜尋原料', className = '', onCreate, onDelete, usedOptions = [],
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -73,11 +73,14 @@ function MaterialCombobox({
   className?: string;
   onCreate?: (name: string) => void;
   onDelete?: (name: string) => void;
+  /** 已存在於目前清單的原料名稱：下拉中標示「已加入」並禁止再次選取，避免同一清單出現重複原料 */
+  usedOptions?: string[];
 }) {
   const [open, setOpen] = useState(false);
   const [keyword, setKeyword] = useState('');
   const trimmed = keyword.trim();
-  const canCreate = trimmed.length > 0 && !options.some(o => o === trimmed);
+  const usedMatch = trimmed.length > 0 && usedOptions.includes(trimmed);
+  const canCreate = trimmed.length > 0 && !usedMatch && !options.some(o => o === trimmed);
 
   const select = (v: string) => {
     onChange(v);
@@ -119,15 +122,19 @@ function MaterialCombobox({
               無相符原料，可直接使用下方新增
             </CommandEmpty>
             <CommandGroup>
-              {options.map(m => (
+              {options.map(m => {
+                const used = usedOptions.includes(m);
+                return (
                 <CommandItem
                   key={m}
                   value={m}
+                  disabled={used}
                   onSelect={() => select(m)}
-                  className="text-zinc-100 text-xs aria-selected:bg-zinc-700 gap-2"
+                  className={`text-zinc-100 text-xs aria-selected:bg-zinc-700 gap-2 ${used ? 'opacity-50' : ''}`}
                 >
                   <span className="truncate">{m}</span>
-                  {onDelete && (
+                  {used && <span className="ml-auto shrink-0 text-[10px] text-amber-400">已加入</span>}
+                  {onDelete && !used && (
                     <button
                       type="button"
                       title={`刪除原料「${m}」`}
@@ -145,7 +152,17 @@ function MaterialCombobox({
                     </button>
                   )}
                 </CommandItem>
-              ))}
+                );
+              })}
+              {usedMatch && (
+                <CommandItem
+                  disabled
+                  value={`__used__${trimmed}`}
+                  className="text-amber-400/80 text-xs"
+                >
+                  已在投料明細中：{trimmed}
+                </CommandItem>
+              )}
               {canCreate && (
                 <CommandItem
                   value={`__create__${trimmed}`}
@@ -1650,6 +1667,11 @@ function MeltFormDialog({
   const addMaterialRow = () => {
     const name = newMaterialRow.raw_material.trim();
     if (!name) { toast({ title: '請選擇或輸入原料名稱', variant: 'destructive' }); return; }
+    // 投料明細限制：同一筆熔解紀錄不可有兩種相同的原料
+    if (materials.some(m => m.raw_material.trim() === name)) {
+      toast({ title: `原料「${name}」已在投料明細中，請直接修改該筆重量`, variant: 'destructive' });
+      return;
+    }
     setMaterials([...materials, { raw_material: name, charge_weight: newMaterialRow.charge_weight, secondary_weight: newMaterialRow.secondary_weight }]);
     setNewMaterialRow({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
   };
@@ -1657,8 +1679,26 @@ function MeltFormDialog({
   const loadPresetRecipe = (recipeId: string) => {
     const recipe = presetRecipes.find(r => r.id === recipeId);
     if (!recipe) return;
-    setMaterials([...materials, ...recipe.materials.map(m => ({ raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight }))]);
-    toast({ title: `已載入配比「${recipe.name}」` });
+    // 投料明細限制：配比中與現有清單重複的原料僅保留既有那一筆，不合併也不重複新增
+    const existingNames = new Set(materials.map(m => m.raw_material.trim()));
+    const skipped: string[] = [];
+    const additions: Array<{ raw_material: string; charge_weight: number; secondary_weight: number }> = [];
+    recipe.materials.forEach(m => {
+      const name = m.raw_material.trim();
+      if (!name) return;
+      if (existingNames.has(name)) { skipped.push(name); return; }
+      existingNames.add(name);
+      additions.push({ raw_material: name, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
+    });
+    if (additions.length > 0) setMaterials([...materials, ...additions]);
+    if (skipped.length > 0) {
+      toast({
+        title: `已載入配比「${recipe.name}」`,
+        description: `已有相同原料（${skipped.join('、')}），未重複加入，請直接修改既有該筆重量。`,
+      });
+    } else {
+      toast({ title: `已載入配比「${recipe.name}」` });
+    }
   };
 
   const removeMaterialRow = (idx: number) => {
@@ -1697,6 +1737,22 @@ function MeltFormDialog({
     }
     if (form.power_start_time && form.tap_time && !validateTime(form.power_start_time, form.tap_time)) {
       toast({ title: '出湯時間不可早於開始送電時間', variant: 'destructive' });
+      return;
+    }
+    // 投料明細限制：同一筆熔解紀錄不可有兩種相同的原料（儲存前最後防線）
+    const seenMaterials = new Set<string>();
+    const duplicatedMaterial = materials.find(m => {
+      const name = m.raw_material.trim();
+      if (seenMaterials.has(name)) return true;
+      seenMaterials.add(name);
+      return false;
+    });
+    if (duplicatedMaterial) {
+      toast({
+        title: `投料明細有重複原料「${duplicatedMaterial.raw_material.trim()}」`,
+        description: '請合併為一筆（修改該筆重量）或刪除其中一筆後再儲存。',
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -2006,6 +2062,7 @@ function MeltFormDialog({
                         options={materialOptionNames}
                         onCreate={onCreateMaterialOption}
                         onDelete={onDeleteMaterialOption}
+                        usedOptions={materials.map(m => m.raw_material.trim())}
                         className="h-7 text-xs"
                       />
                     </div>
