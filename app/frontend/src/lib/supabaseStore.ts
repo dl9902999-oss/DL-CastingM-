@@ -568,6 +568,11 @@ export async function sbCreateMeltRecord(recordData: Omit<MeltRecord, 'id' | 'me
 export async function sbUpdateMeltRecord(id: string, updates: Partial<MeltRecord>): Promise<MeltRecord | null> {
   // Recalculate melt_minutes if times changed
   const payload: Record<string, unknown> = { ...updates };
+  // 總投料（total_charge_weight）與能耗（specific_energy）為衍生欄位，
+  // 一律由 sbRecalcMeltRecord 依投料明細重算後寫入；通用更新若夾帶這兩個欄位，
+  // 舊值會覆蓋最新重算結果，造成清單卡片總投料與投料明細不同步，因此一律剝除。
+  delete payload.total_charge_weight;
+  delete payload.specific_energy;
   if (updates.power_start_time && updates.tap_time) {
     const [sh, sm] = updates.power_start_time.split(':').map(Number);
     const [eh, em] = updates.tap_time.split(':').map(Number);

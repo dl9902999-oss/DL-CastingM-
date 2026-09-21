@@ -138,25 +138,50 @@ async function performFullSync(): Promise<void> {
   }
 }
 
-async function bgSyncCollection(table: string): Promise<void> {
-  try {
-    const storageKey = KEY_MAP[table];
-    if (!storageKey) return;
-    // 已刪除（含待同步刪除）的列不得再被整表 upsert 寫回雲端：
-    // 本地快取若仍殘留舊列，背景同步會把它們重新 INSERT 回雲端，
-    // 使用者刪掉的投料明細就會在下一次同步時「復活」。
-    purgeRemovedFromStorage(table, storageKey);
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) return;
-    const items = JSON.parse(raw);
-    if (!items || items.length === 0) return;
-    await sbStore.sbUpsertBatch(table, items);
-  } catch (e) {
-    // IMPORTANT: Background sync failures should NOT block new direct writes.
-    // bgSync failing means "old data couldn't sync" not "new INSERT will fail".
-    // Only log a warning - let withRLSFallback handle write failures for new operations.
-    console.warn(`[Store] bgSync ${table} failed (will not block new writes):`, e);
+// 逐表序列化 + 合併排程的背景同步：
+// 舊版每個 setItems 都立即觸發一次整表 upsert，編輯儲存「逐一刪除舊明細→重建新明細」
+// 期間會有多個並發任務各自讀取「當下」的 localStorage 快照上傳，晚於墓碑寫入才送出的
+// 過期快照會把剛刪除的投料／成份重新 INSERT 回雲端（復活），並讓父紀錄總投料重算
+// 拿到重複列，造成清單卡片與明細不同步。
+const _bgSyncChains: Record<string, Promise<void>> = {};
+const _bgSyncQueued = new Set<string>();
+
+function bgSyncCollection(table: string): Promise<void> {
+  // 已有排程中的同表任務時不再重複排程：該任務啟動時會重新讀取最新 localStorage，
+  // 期間的任何寫入都會被涵蓋；若寫入發生於任務「執行中」（網路等待階段），
+  // _bgSyncQueued 已清除，會排一個接續任務把最新狀態再上傳一次。
+  if (_bgSyncQueued.has(table)) {
+    return _bgSyncChains[table] || Promise.resolve();
   }
+  const prev = _bgSyncChains[table] || Promise.resolve();
+  const task = prev.then(async () => {
+    _bgSyncQueued.delete(table);
+    try {
+      const storageKey = KEY_MAP[table];
+      if (!storageKey) return;
+      // 已刪除（含待同步刪除）的列不得再被整表 upsert 寫回雲端：
+      // 本地快取若仍殘留舊列，背景同步會把它們重新 INSERT 回雲端，
+      // 使用者刪掉的投料明細就會在下一次同步時「復活」。
+      purgeRemovedFromStorage(table, storageKey);
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return;
+      const items = JSON.parse(raw);
+      if (!items || items.length === 0) return;
+      // 送出前再次過濾墓碑／待同步刪除：排程與實際送出之間可能又有新的刪除寫入，
+      // 這裡以上傳當下的最新狀態為準，避免過期快照把已刪列寫回雲端。
+      const alive = filterRemovedIds(table, items as Array<{ id?: unknown }>) as Record<string, unknown>[];
+      if (alive.length === 0) return;
+      await sbStore.sbUpsertBatch(table, alive);
+    } catch (e) {
+      // IMPORTANT: Background sync failures should NOT block new direct writes.
+      // bgSync failing means "old data couldn't sync" not "new INSERT will fail".
+      // Only log a warning - let withRLSFallback handle write failures for new operations.
+      console.warn(`[Store] bgSync ${table} failed (will not block new writes):`, e);
+    }
+  });
+  _bgSyncChains[table] = task;
+  _bgSyncQueued.add(table);
+  return task;
 }
 
 function notifyBgSync(storageKey: string): void {
@@ -189,6 +214,19 @@ function setItems<T>(key: string, items: T[]): void {
   localStorage.setItem(key, JSON.stringify(items));
   // Trigger background sync to Supabase
   notifyBgSync(key);
+}
+
+/**
+ * 靜默寫入：只更新 localStorage，不觸發整表背景同步。
+ *
+ * recalcMeltRecord 的職責是讓「本機父紀錄的總投料／能耗」跟上本機投料明細；
+ * 雲端的對應重算由 sbRecalcMeltRecord（連線路徑）或 pending queue（離線路徑）負責。
+ * 若在這裡觸發整表上傳，會把編輯儲存「逐一刪除舊明細」期間的中間狀態總投料
+ * （例如 150→100→50→0）以非同步整表 upsert 蓋回雲端，與最後一次雲端重算產生競態，
+ * 導致清單卡片總投料與投料明細（內部資料）不同步。
+ */
+function setItemsSilent<T>(key: string, items: T[]): void {
+  localStorage.setItem(key, JSON.stringify(items));
 }
 
 function generateId(): string {
@@ -856,7 +894,9 @@ export function recalcMeltRecord(meltId: string): MeltRecord | null {
     ? Math.round((records[index].power_kwh / totalChargeWeight) * 1000) / 1000
     : 0;
   records[index].updated_at = new Date().toISOString();
-  setItems(STORAGE_KEYS.MELT_RECORDS, records);
+  // 靜默寫入：本機重算不得觸發整表背景同步（見 setItemsSilent 說明），
+  // 否則編輯流程的中間狀態總投料會晚於最後一次雲端重算落地，造成卡片與明細不同步。
+  setItemsSilent(STORAGE_KEYS.MELT_RECORDS, records);
   return records[index];
 }
 

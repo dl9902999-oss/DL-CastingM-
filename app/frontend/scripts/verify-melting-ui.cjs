@@ -395,6 +395,78 @@ const cleanup = async () => {
     check('重新載入後成份紀錄未復活', reloadedChem.chemCount === 0, `${reloadedChem.chemCount} 筆`);
     check('重新載入後投料明細仍為 2 筆', reloadedChem.matCount === 2, `${reloadedChem.matCount} 筆`);
 
+    // ---------- 7.5 重新編輯重量後清單卡片總投料即時同步（本次修復重點） ----------
+    const EDIT_FIRST = 120; // QA原料A 首次投料 100 → 120，總投料 150 → 170
+    const expectedEditedTotal = 170;
+    const expectedEditedEnergy = Math.round((POWER_KWH / expectedEditedTotal) * 1000) / 1000; // 0.588
+    const card4 = await locateCard();
+    const beforeEdit = await readCard(card4);
+    log(`重新編輯前：投料 ${beforeEdit.matCount} 筆、總投料=${beforeEdit.totalCharge}`);
+    check('重新編輯前卡片總投料為 150', beforeEdit.totalCharge === 150, `${beforeEdit.totalCharge}`);
+
+    await card4.locator('[data-testid="melt-card-edit"]').click();
+    await dialog.waitFor({ state: 'visible', timeout: 20000 });
+    await matTable.waitFor({ state: 'visible', timeout: 15000 });
+    await page.waitForFunction(() => {
+      const btn = document.querySelector('[data-testid="dlg-material-remove"]');
+      return !!btn && !btn.hasAttribute('disabled');
+    }, { timeout: 30000 }).catch(() => {});
+
+    const editRow = matTable.locator('[data-testid="dlg-material-row"][data-material="QA原料A"]').first();
+    check('重新編輯可定位投料列', await editRow.count() > 0, 'QA原料A');
+    await editRow.locator('input').first().fill(String(EDIT_FIRST));
+    await sleep(300);
+
+    const saveBtn2 = dialog.locator('[data-testid="dlg-save"]');
+    await saveBtn2.waitFor({ state: 'visible', timeout: 20000 });
+    await page.waitForFunction(() => {
+      const btn = document.querySelector('[data-testid="dlg-save"]');
+      return !!btn && !btn.hasAttribute('disabled');
+    }, { timeout: 20000 }).catch(() => {});
+    await traceClick('修改重量後儲存', saveBtn2);
+    try { await dialog.waitFor({ state: 'hidden', timeout: 60000 }); } catch { /* 由下一檢查判定 */ }
+    check('重量修改儲存成功（對話框關閉）', !(await dialog.isVisible().catch(() => false)));
+
+    // 儲存後「不重新載入」輪詢卡片：總投料必須在短時間內反映新明細合計 170，
+    // 且不得長時間停在舊值 150 或中間狀態 0。
+    let afterEdit = await readCard(card4);
+    const editDeadline = Date.now() + 8000;
+    while (afterEdit.totalCharge !== expectedEditedTotal && Date.now() < editDeadline) {
+      await sleep(400);
+      afterEdit = await readCard(card4);
+    }
+    log(`儲存後立即讀取：總投料=${afterEdit.totalCharge}、能耗=${afterEdit.energyText}`);
+    check('重新編輯後卡片總投料立即更新為 170', afterEdit.totalCharge === expectedEditedTotal, `${afterEdit.totalCharge}`);
+    check('重新編輯後卡片能耗同步為 0.588 kWh/kg', afterEdit.energyText.includes(String(expectedEditedEnergy)), afterEdit.energyText);
+    check('重新編輯後卡片投料筆數仍為 2', afterEdit.matCount === 2, `${afterEdit.matCount} 筆`);
+
+    // 重新載入（含雲端讀回）後不得回退為舊值
+    const card5 = await locateCard();
+    const reloadedEdit = await readCard(card5);
+    log(`重新載入後：總投料=${reloadedEdit.totalCharge}、投料 ${reloadedEdit.matCount} 筆`);
+    check('重新載入後卡片總投料仍為 170（未回退）', reloadedEdit.totalCharge === expectedEditedTotal, `${reloadedEdit.totalCharge}`);
+    check('重新載入後投料筆數仍為 2 筆', reloadedEdit.matCount === 2, `${reloadedEdit.matCount} 筆`);
+
+    // 本機快取父紀錄必須與雲端一致（170 / 0.588）
+    const localParent = await page.evaluate(id => {
+      try {
+        const arr = JSON.parse(localStorage.getItem('foundry_melt_records') || '[]');
+        const rec = arr.find(x => x.id === id);
+        return rec ? { total: rec.total_charge_weight, energy: rec.specific_energy } : null;
+      } catch { return null; }
+    }, tempMeltId);
+    log(`本機快取父紀錄：總投料=${localParent?.total}、能耗=${localParent?.energy}`);
+    check('本機快取父紀錄總投料同步為 170', !!localParent && Number(localParent.total) === expectedEditedTotal, `${localParent?.total}`);
+    check('本機快取父紀錄能耗同步為 0.588', !!localParent && Number(localParent.energy) === expectedEditedEnergy, `${localParent?.energy}`);
+
+    // 雲端父紀錄與明細加總一致
+    const [cloudEditedRec] = await rest(`melt_records?id=eq.${tempMeltId}&select=total_charge_weight,specific_energy`);
+    const cloudEditedMats = await rest(`melt_materials?melt_id=eq.${tempMeltId}&select=charge_weight,secondary_weight`);
+    const cloudEditedSum = cloudEditedMats.reduce((s, m) => s + Number(m.charge_weight || 0) + Number(m.secondary_weight || 0), 0);
+    log(`雲端父紀錄總投料=${cloudEditedRec?.total_charge_weight}、明細加總=${cloudEditedSum}`);
+    check('雲端父紀錄總投料與重新編輯後明細一致（170）', Number(cloudEditedRec?.total_charge_weight) === expectedEditedTotal && cloudEditedSum === expectedEditedTotal, `${cloudEditedRec?.total_charge_weight} / ${cloudEditedSum}`);
+    check('雲端父紀錄能耗與新總投料一致（0.588）', Number(cloudEditedRec?.specific_energy) === expectedEditedEnergy, `${cloudEditedRec?.specific_energy}`);
+
     // ---------- 8. 其他入口可用性 ----------
     for (const [label, expect] of [['庫存管理', /庫存管理/], ['預設配比', /預設配比/], ['材質規範', /材質規範/]]) {
       await page.locator('button', { hasText: label }).first().click();
