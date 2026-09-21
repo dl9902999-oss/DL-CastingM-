@@ -146,7 +146,48 @@ async function performFullSync(): Promise<void> {
 const _bgSyncChains: Record<string, Promise<void>> = {};
 const _bgSyncQueued = new Set<string>();
 
+// ============================================================
+// 編輯交易鎖：熔解紀錄儲存流程會「逐筆刪除舊明細 → 重建新明細」，
+// 期間任何整表背景同步都可能以過期快照覆蓋雲端（把剛刪除的列寫回、復活），
+// 或以中間狀態的父紀錄衍生欄位蓋掉最終重算結果。
+// beginEditTransaction 先等既有同步鏈收斂再上鎖；鎖定期間 bgSyncCollection
+// 與 notifyBgSync 對這些表直接跳過；endEditTransaction 解鎖並補一次最終同步。
+// ============================================================
+const _editLockTables = new Set<string>();
+
+export async function beginEditTransaction(tables: string[]): Promise<void> {
+  const waitForChains = async () => {
+    // 等待既有背景同步任務結束（最多 3 秒），確保上鎖當下沒有在途的整表 upsert
+    const chains = tables.map(t => _bgSyncChains[t]).filter(p => p && typeof p.then === 'function');
+    if (chains.length > 0) {
+      await Promise.race([
+        Promise.allSettled(chains),
+        new Promise<void>(resolve => setTimeout(resolve, 3000)),
+      ]);
+    }
+  };
+  await waitForChains();
+  tables.forEach(t => _editLockTables.add(t));
+  // 雙重等待：第一次等待與上鎖之間若有新任務排入（並發寫入觸發），
+  // 鎖已生效會讓它在啟動時直接跳過；仍在執行的在途任務則由第二次等待收斂。
+  await waitForChains();
+}
+
+export function endEditTransaction(tables: string[]): void {
+  tables.forEach(t => {
+    _editLockTables.delete(t);
+    // 解鎖後補一次最終同步：以上傳當下的最新 localStorage 為準，
+    // 墓碑／待同步刪除會在 bgSyncCollection 內部過濾，不會復活已刪列。
+    if (_bgSyncEnabled === true) {
+      bgSyncCollection(t).catch(e => console.warn(`[Store] final bg sync ${t}:`, e));
+    }
+  });
+}
+
 function bgSyncCollection(table: string): Promise<void> {
+  // 編輯交易鎖生效中：一律不上傳，避免以中間狀態快照覆蓋雲端；
+  // 交易結束時 endEditTransaction 會補一次以上傳當下最新狀態為準的最終同步。
+  if (_editLockTables.has(table)) return Promise.resolve();
   // 已有排程中的同表任務時不再重複排程：該任務啟動時會重新讀取最新 localStorage，
   // 期間的任何寫入都會被涵蓋；若寫入發生於任務「執行中」（網路等待階段），
   // _bgSyncQueued 已清除，會排一個接續任務把最新狀態再上傳一次。
@@ -187,6 +228,10 @@ function bgSyncCollection(table: string): Promise<void> {
 function notifyBgSync(storageKey: string): void {
   const table = TABLE_MAP[storageKey];
   if (!table) return;
+
+  // 編輯交易期間暫停排程（見 beginEditTransaction 說明），
+  // 避免儲存流程「刪除→重建」期間的任何快照被排程上傳。
+  if (_editLockTables.has(table)) return;
 
   // If connection check hasn't completed yet, queue the table for later
   if (_bgSyncEnabled === null) {

@@ -259,6 +259,9 @@ export async function syncPendingToSupabase(
   const remainingQueue: PendingSyncEntry[] = [];
   let errorMessage: string | undefined;
   const tablesInvolved = new Set<string>();
+  // 離線期間新增／刪除的投料、成份明細上傳完成後，必須重算父熔解紀錄的
+  // 總投料與 specific_energy，否則恢復連線後卡片會一直顯示過期衍生值。
+  const meltIdsToRecalc = new Set<string>();
 
   // Group by table for batch upsert
   const tableGroups: Record<string, PendingSyncEntry[]> = {};
@@ -277,6 +280,13 @@ export async function syncPendingToSupabase(
       if (items.length > 0) {
         await sbStore.sbUpsertBatch(table, items);
         success += items.length;
+        // 離線新增的投料明細上傳成功後，父熔解紀錄的衍生欄位需重算
+        if (table === 'melt_materials') {
+          for (const item of items) {
+            const meltId = item.melt_id;
+            if (typeof meltId === 'string' && meltId) meltIdsToRecalc.add(meltId);
+          }
+        }
       }
 
       // Handle deletes
@@ -286,6 +296,17 @@ export async function syncPendingToSupabase(
       const cloudTable = sbStore.resolveSupabaseTableName(table) ?? table;
       for (const del of deletes) {
         try {
+          // 待刪除的投料明細：先查其父熔解紀錄 id，刪除生效後需重算父紀錄衍生欄位
+          if (cloudTable === 'melt_materials') {
+            try {
+              const { data: parent } = await sbStore.supabaseClient()
+                .from(cloudTable)
+                .select('melt_id')
+                .eq('id', del.data!.id)
+                .maybeSingle();
+              if (parent?.melt_id) meltIdsToRecalc.add(parent.melt_id as string);
+            } catch { /* 查不到父紀錄不影響刪除流程 */ }
+          }
           // 以 select('id') 取回實際刪除的列數：RLS 未開放 DELETE 時 PostgREST 會回傳
           // 「0 列且無錯誤」，若誤判為成功，雲端舊資料會留著並在下次讀取時復活。
           const { data: deletedRows, error } = await sbStore.supabaseClient()
@@ -349,6 +370,23 @@ export async function syncPendingToSupabase(
       remainingQueue.push(...entries);
       failed += entries.length;
       errorMessage = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // 離線恢復上傳／刪除完成後，依最新雲端投料明細重算受影響熔解紀錄的
+  // 衍生欄位（總投料、specific_energy），並把重算結果回寫 localStorage，
+  // 確保恢復連線後卡片顯示與投料明細、雲端三者一致。
+  for (const meltId of meltIdsToRecalc) {
+    try {
+      const recalced = await sbStore.sbRecalcMeltRecord(meltId);
+      if (recalced) {
+        markRecentWrite('melt_records');
+        syncResultToLocalStorage('melt_records', 'update', recalced);
+      }
+    } catch (e) {
+      // 父紀錄可能尚未上傳（離線新增）或雲端暫時不可達，略過即可，
+      // 待該父紀錄本身成功上傳後的下一次重算會補上正確值。
+      console.warn(`[DataService] pending sync recalc melt_records (${meltId}) failed:`, e);
     }
   }
 

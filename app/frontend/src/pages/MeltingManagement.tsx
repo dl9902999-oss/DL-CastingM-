@@ -23,6 +23,7 @@ import {
   dsGetMeltMaterialOptions, dsCreateMeltMaterialOption, dsDeleteMeltMaterialOption,
 } from '@/lib/dataService';
 import type { MeltMaterialSpec, MeltPresetRecipe, MeltMaterialOption } from '@/lib/supabaseStore';
+import { beginEditTransaction, endEditTransaction } from '@/lib/store';
 
 // Alias ds* functions to legacy names used throughout this file (sync-compatible wrappers)
 const getMeltRecords = dsGetMeltRecords as unknown as (...args: Parameters<typeof dsGetMeltRecords>) => Awaited<ReturnType<typeof dsGetMeltRecords>>;
@@ -1790,7 +1791,12 @@ function MeltFormDialog({
       return;
     }
 
+    // 編輯交易鎖：整個「更新父紀錄 → 逐一刪除舊明細 → 重建新明細 → 重算」流程期間，
+    // 暫停 melt_records／melt_materials／melt_chemistry 的背景整表同步，
+    // 避免過期快照把剛刪除的列寫回雲端（復活）或以中間狀態蓋掉最終重算的衍生欄位。
+    const editTxTables = ['melt_records', 'melt_materials', 'melt_chemistry'] as const;
     try {
+      await beginEditTransaction([...editTxTables]);
       let recordId: string;
 
       if (isEdit && editRecord) {
@@ -1910,6 +1916,9 @@ function MeltFormDialog({
       } else {
         toast({ title: '儲存失敗，請稍後再試', variant: 'destructive' });
       }
+    } finally {
+      // 無論儲存成功或失敗都必須解鎖；解鎖會補一次以上傳當下最新狀態為準的最終同步
+      endEditTransaction([...editTxTables]);
     }
   };
 

@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { filterRemovedIds } from './pendingSyncGuard';
 import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, MeltChemistry, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder, UserProfile, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
 
 /**
@@ -1655,6 +1656,58 @@ export function resolveSupabaseTableName(table: string): string | undefined {
   return SUPABASE_TABLE_NAME_MAP[table];
 }
 
+/**
+ * 衍生欄位黑名單：這些欄位一律由 sbRecalcMeltRecord 依投料明細重算後寫入。
+ * 整表背景同步與 pending queue 上傳的都是「過去時刻」的本機快照，若夾帶這兩欄，
+ * 過期值會蓋掉雲端最新重算結果，造成清單卡片總投料與投料明細不一致
+ * （例如卡片顯示 12310 kg、明細合計卻只有 3890 kg）。
+ */
+const DERIVED_FIELD_BLOCKLIST: Record<string, string[]> = {
+  melt_records: ['total_charge_weight', 'specific_energy'],
+};
+
+/** 移除指定表的衍生欄位，讓雲端值永遠由最新明細重算決定 */
+function stripDerivedFields(table: string, rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const blocklist = DERIVED_FIELD_BLOCKLIST[table];
+  if (!blocklist || blocklist.length === 0) return rows;
+  return rows.map(row => {
+    const clean = { ...row };
+    for (const field of blocklist) delete clean[field];
+    return clean;
+  });
+}
+
+/**
+ * melt_chemistries 上傳前正規化：
+ * localStorage 的成份列可能同時夾帶 UI 別名鍵（C/Si/Mn/…，來自 store.ts 離線寫入）
+ * 與資料庫欄位鍵（c_val/si_val/…，來自 Realtime／回讀直接寫入的原始列）。
+ * PostgREST upsert 會以 payload 鍵的聯集組出 columns 參數，
+ * 不存在的欄位（C、Si…）會讓整批請求回 400，因此上傳前統一映射並移除別名鍵。
+ */
+const CHEMISTRY_ELEMENT_MAP: Record<string, string> = {
+  C: 'c_val', Si: 'si_val', Mn: 'mn_val', P: 'p_val', S: 's_val',
+  Ni: 'ni_val', Cr: 'cr_val', Mo: 'mo_val', Cu: 'cu_val', Fe: 'fe_val',
+};
+
+function normalizeChemistryRowForUpload(row: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = { ...row };
+  for (const [alias, column] of Object.entries(CHEMISTRY_ELEMENT_MAP)) {
+    if (alias in normalized) {
+      if (normalized[column] === undefined && normalized[alias] !== undefined) {
+        normalized[column] = normalized[alias];
+      }
+      delete normalized[alias];
+    }
+  }
+  // fe_val 缺漏時依其餘元素補算（Fe = 100 − 其餘元素總和），與 sbCreateMeltChemistry 同一公式
+  if (normalized.fe_val === undefined) {
+    const others = (['c_val', 'si_val', 'mn_val', 'p_val', 's_val', 'ni_val', 'cr_val', 'mo_val', 'cu_val'] as const)
+      .reduce((sum, k) => sum + (typeof normalized[k] === 'number' ? (normalized[k] as number) : 0), 0);
+    normalized.fe_val = Math.round((100 - others) * 1000) / 1000;
+  }
+  return normalized;
+}
+
 export async function sbUpsertBatch(table: string, items: Record<string, unknown>[]): Promise<void> {
   if (!items || items.length === 0) return;
  
@@ -1666,10 +1719,23 @@ export async function sbUpsertBatch(table: string, items: Record<string, unknown
   }
 
   try {
+    // 復活防護第二層：pending queue 內嵌的資料是「入隊當下」的快照，
+    // 等待上傳期間可能又發生新的刪除；送出前必須再次排除
+    // 帶有刪除墓碑與待同步刪除標記的列，避免過期快照把剛刪除的明細寫回雲端。
+    const aliveItems = filterRemovedIds(table, items as Array<{ id?: unknown }>) as Record<string, unknown>[];
+    if (aliveItems.length === 0) return;
+    // 衍生欄位剝除：整表背景同步與 pending 上傳都不得夾帶 total_charge_weight／
+    // specific_energy，雲端值一律由 sbRecalcMeltRecord 依最新明細重算決定。
+    const uploadItems = stripDerivedFields(table, aliveItems);
+
     // Upsert in batches of 50 to avoid payload limits
     const BATCH_SIZE = 50;
-    for (let i = 0; i < items.length; i += BATCH_SIZE) {
-      const batch = items.slice(i, i + BATCH_SIZE).map(sanitizeRowForUpsert);
+    for (let i = 0; i < uploadItems.length; i += BATCH_SIZE) {
+      const batch = uploadItems.slice(i, i + BATCH_SIZE).map(row =>
+        supabaseTable === 'melt_chemistries'
+          ? normalizeChemistryRowForUpload(sanitizeRowForUpsert(row))
+          : sanitizeRowForUpsert(row)
+      );
       const { error } = await supabase
         .from(supabaseTable)
         .upsert(batch, { onConflict: 'id', ignoreDuplicates: false });
