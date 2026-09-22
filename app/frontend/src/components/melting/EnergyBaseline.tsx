@@ -95,17 +95,17 @@ function BaselineTable({ title, points, stats, accent, testId }: {
           {stats.count} 爐 · 平均 <span className={`font-bold ${accent}`} data-testid={`${testId}-avg`}>{stats.avg}</span> kWh/kg
         </span>
       </div>
-      <div className="overflow-x-auto rounded border border-zinc-700">
-        <table className="w-full text-[11px]">
+      <div className="rounded border border-zinc-700">
+        <table className="w-full table-fixed text-[11px]">
           <thead>
             <tr className="bg-zinc-900/60 text-zinc-400">
-              <th className="px-2 py-1 text-left font-medium whitespace-nowrap">日期</th>
-              <th className="px-2 py-1 text-left font-medium whitespace-nowrap">熔解編號</th>
-              <th className="px-2 py-1 text-left font-medium whitespace-nowrap">爐號</th>
-              <th className="px-2 py-1 text-right font-medium whitespace-nowrap">總投料(kg)</th>
-              <th className="px-2 py-1 text-right font-medium whitespace-nowrap">耗電(kWh)</th>
-              <th className="px-2 py-1 text-right font-medium whitespace-nowrap">能耗(kWh/kg)</th>
-              <th className="px-2 py-1 text-right font-medium whitespace-nowrap">對平均差異</th>
+              <th className="px-2 py-1 text-left font-medium">日期</th>
+              <th className="px-2 py-1 text-left font-medium">熔解編號</th>
+              <th className="px-2 py-1 text-left font-medium">爐號</th>
+              <th className="px-2 py-1 text-right font-medium">總投料(kg)</th>
+              <th className="px-2 py-1 text-right font-medium">耗電(kWh)</th>
+              <th className="px-2 py-1 text-right font-medium">能耗(kWh/kg)</th>
+              <th className="px-2 py-1 text-right font-medium">對平均差異</th>
             </tr>
           </thead>
           <tbody>
@@ -115,13 +115,13 @@ function BaselineTable({ title, points, stats, accent, testId }: {
               const diff = Number((p.specific_energy - stats.avg).toFixed(3));
               return (
                 <tr key={p.id} className="border-t border-zinc-700/60 text-zinc-300">
-                  <td className="px-2 py-1 whitespace-nowrap">{p.melt_date}</td>
-                  <td className="px-2 py-1 font-mono text-amber-400/90 whitespace-nowrap">{p.melt_no}</td>
-                  <td className="px-2 py-1 whitespace-nowrap">{p.furnace_no}</td>
-                  <td className="px-2 py-1 text-right whitespace-nowrap">{p.total_charge}</td>
-                  <td className="px-2 py-1 text-right whitespace-nowrap">{p.power_kwh}</td>
-                  <td className={`px-2 py-1 text-right font-bold whitespace-nowrap ${p.specific_energy > stats.avg ? 'text-red-400' : 'text-green-400'}`}>{p.specific_energy}</td>
-                  <td className={`px-2 py-1 text-right whitespace-nowrap ${diff > 0 ? 'text-red-400/80' : 'text-green-400/80'}`}>{diff > 0 ? `+${diff}` : diff}</td>
+                  <td className="px-2 py-1">{p.melt_date}</td>
+                  <td className="px-2 py-1 font-mono text-amber-400/90">{p.melt_no}</td>
+                  <td className="px-2 py-1">{p.furnace_no}</td>
+                  <td className="px-2 py-1 text-right">{p.total_charge}</td>
+                  <td className="px-2 py-1 text-right">{p.power_kwh}</td>
+                  <td className={`px-2 py-1 text-right font-bold ${p.specific_energy > stats.avg ? 'text-red-400' : 'text-green-400'}`}>{p.specific_energy}</td>
+                  <td className={`px-2 py-1 text-right ${diff > 0 ? 'text-red-400/80' : 'text-green-400/80'}`}>{diff > 0 ? `+${diff}` : diff}</td>
                 </tr>
               );
             })}
