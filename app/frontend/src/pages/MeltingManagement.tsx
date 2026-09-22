@@ -45,6 +45,7 @@ const getWorkOrders = dsGetWorkOrders as unknown as (...args: Parameters<typeof 
 import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings, Warehouse, Droplets } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import InventoryManager from '@/components/melting/InventoryManager';
+import EnergyBaseline from '@/components/melting/EnergyBaseline';
 
 const SAMPLE_STAGE_LABELS: Record<SampleStage, string> = {
   TARGET: '目標',
@@ -504,6 +505,8 @@ export default function MeltingManagement() {
             </SelectContent>
           </Select>
         </div>
+
+        <EnergyBaseline records={filteredRecords} detailVersion={detailVersion} />
 
         <p className="text-xs text-zinc-500">共 {filteredRecords.length} 筆紀錄</p>
 
