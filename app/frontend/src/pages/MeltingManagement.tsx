@@ -55,6 +55,48 @@ const SAMPLE_STAGE_LABELS: Record<SampleStage, string> = {
 
 const CHEMISTRY_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu', 'Fe'] as const;
 
+/** 重量統一取小數 3 位，避免浮點累加產生 0.30000000000000004 之類的殘差 */
+const roundWeight = (value: number): number => Math.round((Number(value) || 0) * 1000) / 1000;
+
+/**
+ * 自動合併投料明細中的重複原料。
+ *
+ * 同名原料（去除前後空白後比對）只保留第一次出現的位置，
+ * 後續同名項目的首次投料與二次添加重量累加至該筆，並回報被合併的原料名稱。
+ */
+function mergeDuplicateMaterials<T extends { raw_material: string; charge_weight: number; secondary_weight: number }>(
+  rows: T[],
+): { merged: T[]; mergedNames: string[] } {
+  const indexByName = new Map<string, number>();
+  const merged: T[] = [];
+  const mergedNames: string[] = [];
+
+  rows.forEach(row => {
+    const name = (row.raw_material || '').trim();
+    if (!name) return;
+    const existingIdx = indexByName.get(name);
+    if (existingIdx === undefined) {
+      indexByName.set(name, merged.length);
+      merged.push({
+        ...row,
+        raw_material: name,
+        charge_weight: roundWeight(row.charge_weight),
+        secondary_weight: roundWeight(row.secondary_weight),
+      });
+      return;
+    }
+    const target = merged[existingIdx];
+    merged[existingIdx] = {
+      ...target,
+      charge_weight: roundWeight(target.charge_weight + (Number(row.charge_weight) || 0)),
+      secondary_weight: roundWeight(target.secondary_weight + (Number(row.secondary_weight) || 0)),
+    };
+    if (!mergedNames.includes(name)) mergedNames.push(name);
+  });
+
+  return { merged, mergedNames };
+}
+
 // 原料下拉清單已改為持久化主檔（雲端表 melt_material_options）：
 // 使用者自行輸入的新原料會自動記錄，下次免重新輸入；不再使用硬編碼清單。
 // 初始預設項目由 dataService 於首次讀取時自動補進雲端表。
@@ -76,7 +118,7 @@ function MaterialCombobox({
   className?: string;
   onCreate?: (name: string) => void;
   onDelete?: (name: string) => void;
-  /** 已存在於目前清單的原料名稱：下拉中標示「已加入」並禁止再次選取，避免同一清單出現重複原料 */
+  /** 已存在於目前清單的原料名稱：下拉中標示「已加入」，再次選取時由呼叫端自動合併重量 */
   usedOptions?: string[];
   /** 供自動化回歸腳本穩定定位觸發按鈕 */
   testId?: string;
@@ -84,8 +126,7 @@ function MaterialCombobox({
   const [open, setOpen] = useState(false);
   const [keyword, setKeyword] = useState('');
   const trimmed = keyword.trim();
-  const usedMatch = trimmed.length > 0 && usedOptions.includes(trimmed);
-  const canCreate = trimmed.length > 0 && !usedMatch && !options.some(o => o === trimmed);
+  const canCreate = trimmed.length > 0 && !options.some(o => o === trimmed);
 
   const select = (v: string) => {
     onChange(v);
@@ -134,12 +175,11 @@ function MaterialCombobox({
                 <CommandItem
                   key={m}
                   value={m}
-                  disabled={used}
                   onSelect={() => select(m)}
-                  className={`text-zinc-100 text-xs aria-selected:bg-zinc-700 gap-2 ${used ? 'opacity-50' : ''}`}
+                  className="text-zinc-100 text-xs aria-selected:bg-zinc-700 gap-2"
                 >
                   <span className="truncate">{m}</span>
-                  {used && <span className="ml-auto shrink-0 text-[10px] text-amber-400">已加入</span>}
+                  {used && <span className="ml-auto shrink-0 text-[10px] text-amber-400">已加入·將合併</span>}
                   {onDelete && !used && (
                     <button
                       type="button"
@@ -160,15 +200,6 @@ function MaterialCombobox({
                 </CommandItem>
                 );
               })}
-              {usedMatch && (
-                <CommandItem
-                  disabled
-                  value={`__used__${trimmed}`}
-                  className="text-amber-400/80 text-xs"
-                >
-                  已在投料明細中：{trimmed}
-                </CommandItem>
-              )}
               {canCreate && (
                 <CommandItem
                   value={`__create__${trimmed}`}
@@ -1725,9 +1756,21 @@ function MeltFormDialog({
   const addMaterialRow = () => {
     const name = newMaterialRow.raw_material.trim();
     if (!name) { toast({ title: '請選擇或輸入原料名稱', variant: 'destructive' }); return; }
-    // 投料明細限制：同一筆熔解紀錄不可有兩種相同的原料
-    if (materials.some(m => m.raw_material.trim() === name)) {
-      toast({ title: `原料「${name}」已在投料明細中，請直接修改該筆重量`, variant: 'destructive' });
+    // 自動修正重複原料：同名原料不再另起一列，直接把重量累加到既有那一筆
+    const existingIdx = materials.findIndex(m => m.raw_material.trim() === name);
+    if (existingIdx >= 0) {
+      const merged = materials.map((m, i) => (i === existingIdx ? {
+        ...m,
+        raw_material: name,
+        charge_weight: roundWeight((Number(m.charge_weight) || 0) + (Number(newMaterialRow.charge_weight) || 0)),
+        secondary_weight: roundWeight((Number(m.secondary_weight) || 0) + (Number(newMaterialRow.secondary_weight) || 0)),
+      } : m));
+      setMaterials(merged);
+      setNewMaterialRow({ raw_material: '', charge_weight: 0, secondary_weight: 0 });
+      toast({
+        title: `已自動合併重複原料「${name}」`,
+        description: `重量已累加至既有該筆：首次 ${merged[existingIdx].charge_weight} kg、二次 ${merged[existingIdx].secondary_weight} kg。`,
+      });
       return;
     }
     setMaterials([...materials, { raw_material: name, charge_weight: newMaterialRow.charge_weight, secondary_weight: newMaterialRow.secondary_weight }]);
@@ -1737,26 +1780,20 @@ function MeltFormDialog({
   const loadPresetRecipe = (recipeId: string) => {
     const recipe = presetRecipes.find(r => r.id === recipeId);
     if (!recipe) return;
-    // 投料明細限制：配比中與現有清單重複的原料僅保留既有那一筆，不合併也不重複新增
-    const existingNames = new Set(materials.map(m => m.raw_material.trim()));
-    const skipped: string[] = [];
-    const additions: Array<{ raw_material: string; charge_weight: number; secondary_weight: number }> = [];
-    recipe.materials.forEach(m => {
-      const name = m.raw_material.trim();
-      if (!name) return;
-      if (existingNames.has(name)) { skipped.push(name); return; }
-      existingNames.add(name);
-      additions.push({ raw_material: name, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
+    // 自動修正重複原料：配比中與現有清單同名的原料直接累加重量，不再跳過也不重複新增
+    const { merged, mergedNames } = mergeDuplicateMaterials([
+      ...materials,
+      ...recipe.materials
+        .filter(m => m.raw_material.trim())
+        .map(m => ({ raw_material: m.raw_material.trim(), charge_weight: m.charge_weight, secondary_weight: m.secondary_weight })),
+    ]);
+    setMaterials(merged);
+    toast({
+      title: `已載入配比「${recipe.name}」`,
+      description: mergedNames.length > 0
+        ? `重複原料（${mergedNames.join('、')}）已自動合併並累加重量。`
+        : undefined,
     });
-    if (additions.length > 0) setMaterials([...materials, ...additions]);
-    if (skipped.length > 0) {
-      toast({
-        title: `已載入配比「${recipe.name}」`,
-        description: `已有相同原料（${skipped.join('、')}），未重複加入，請直接修改既有該筆重量。`,
-      });
-    } else {
-      toast({ title: `已載入配比「${recipe.name}」` });
-    }
   };
 
   const removeMaterialRow = (idx: number) => {
@@ -1801,22 +1838,16 @@ function MeltFormDialog({
       toast({ title: '出湯時間不可早於開始送電時間', variant: 'destructive' });
       return;
     }
-    // 投料明細限制：同一筆熔解紀錄不可有兩種相同的原料（儲存前最後防線）
-    const seenMaterials = new Set<string>();
-    const duplicatedMaterial = materials.find(m => {
-      const name = m.raw_material.trim();
-      if (seenMaterials.has(name)) return true;
-      seenMaterials.add(name);
-      return false;
-    });
-    if (duplicatedMaterial) {
+    // 自動修正重複原料：儲存前最後防線，同名原料自動合併為一筆並累加重量
+    const { merged: mergedMaterials, mergedNames: autoMergedNames } = mergeDuplicateMaterials(materials);
+    if (autoMergedNames.length > 0) {
+      setMaterials(mergedMaterials);
       toast({
-        title: `投料明細有重複原料「${duplicatedMaterial.raw_material.trim()}」`,
-        description: '請合併為一筆（修改該筆重量）或刪除其中一筆後再儲存。',
-        variant: 'destructive',
+        title: `已自動合併重複原料（${autoMergedNames.join('、')}）`,
+        description: '同名原料已併為一筆並累加重量，總投料與能耗依合併後結果計算。',
       });
-      return;
     }
+    const materialsToSave = mergedMaterials;
 
     // 編輯交易鎖：整個「更新父紀錄 → 逐一刪除舊明細 → 重建新明細 → 重算」流程期間，
     // 暫停 melt_records／melt_materials／melt_chemistry 的背景整表同步，
@@ -1862,7 +1893,7 @@ function MeltFormDialog({
         recordId = newRec.id;
       }
 
-      for (const m of materials) {
+      for (const m of materialsToSave) {
         await createMeltMaterial({ melt_id: recordId, raw_material: m.raw_material, charge_weight: m.charge_weight, secondary_weight: m.secondary_weight });
       }
 
