@@ -600,6 +600,30 @@ function MeltRecordCard({ record, expanded, detailVersion, onToggle, onEdit, onD
     // detailVersion 於每次儲存後遞增，確保編輯刪除明細後卡片不會再顯示舊資料
   }, [record.id, detailVersion]);
 
+  // 總投料／能耗一律由投料明細即時推導，避免歷史紀錄殘留的舊值與明細小計不一致
+  const derivedTotalCharge = materials.reduce(
+    (sum, m) => sum + (Number(m.charge_weight) || 0) + (Number(m.secondary_weight) || 0), 0,
+  );
+  const derivedSpecificEnergy = derivedTotalCharge > 0
+    ? Number(((Number(record.power_kwh) || 0) / derivedTotalCharge).toFixed(3))
+    : 0;
+
+  // 偵測到卡片值與明細不符時，靜默重算修正資料來源（本機＋雲端）
+  useEffect(() => {
+    if (materials.length === 0) return;
+    const stale = Math.abs((Number(record.total_charge_weight) || 0) - derivedTotalCharge) > 0.001;
+    if (!stale) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await recalcMeltRecord(record.id);
+      } catch (err) {
+        if (!cancelled) console.warn('[MeltRecordCard] recalc failed:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [record.id, record.total_charge_weight, derivedTotalCharge, materials.length]);
+
   useEffect(() => {
     if (!expanded) { setTargetRangeData(null); return; }
     let cancelled = false;
@@ -624,10 +648,10 @@ function MeltRecordCard({ record, expanded, detailVersion, onToggle, onEdit, onD
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-3 gap-y-1 text-xs text-zinc-400">
               <span className="whitespace-nowrap">材質: <span className="text-zinc-200">{record.material_grade}</span></span>
               <span className="whitespace-nowrap">爐號: <span className="text-zinc-200">{record.furnace_no}</span></span>
-              <span className="whitespace-nowrap">總投料: <span className="text-zinc-200" data-testid="melt-card-total-charge">{record.total_charge_weight}</span></span>
+              <span className="whitespace-nowrap">總投料: <span className="text-zinc-200" data-testid="melt-card-total-charge">{derivedTotalCharge}</span></span>
               <span className="whitespace-nowrap">殘湯: <span className="text-violet-300 font-medium">{record.residual_weight || 0} kg</span></span>
               <span className="flex items-center gap-1 whitespace-nowrap"><Zap className="w-3 h-3" />耗電: <span className="text-zinc-200">{record.power_kwh} kWh</span></span>
-              <span className="whitespace-nowrap">能耗: <span className={`font-bold ${record.specific_energy > 1 ? 'text-red-400' : 'text-green-400'}`}>{record.specific_energy} kWh/kg</span></span>
+              <span className="whitespace-nowrap">能耗: <span className={`font-bold ${derivedSpecificEnergy > 1 ? 'text-red-400' : 'text-green-400'}`}>{derivedSpecificEnergy} kWh/kg</span></span>
               <span className="flex items-center gap-1 whitespace-nowrap"><Clock className="w-3 h-3" />時間: <span className="text-zinc-200">{(() => {
                 if (record.power_start_time && record.tap_time) {
                   const [sh, sm] = record.power_start_time.split(':').map(Number);
