@@ -42,7 +42,7 @@ const saveMeltTargetRange = dsSaveMeltTargetRange as unknown as (...args: Parame
 const deleteMeltTargetRange = dsDeleteMeltTargetRange as unknown as (...args: Parameters<typeof dsDeleteMeltTargetRange>) => Awaited<ReturnType<typeof dsDeleteMeltTargetRange>>;
 const getMoldingBatches = dsGetMoldingBatches as unknown as (...args: Parameters<typeof dsGetMoldingBatches>) => Awaited<ReturnType<typeof dsGetMoldingBatches>>;
 const getWorkOrders = dsGetWorkOrders as unknown as (...args: Parameters<typeof dsGetWorkOrders>) => Awaited<ReturnType<typeof dsGetWorkOrders>>;
-import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings, Warehouse, Droplets } from 'lucide-react';
+import { Plus, Flame, Pencil, Trash2, FlaskConical, Layers, Zap, Clock, Thermometer, ChevronDown, ChevronUp, Copy, Search, Download, FileText, Package, Settings, Warehouse, Droplets, Gauge } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import InventoryManager from '@/components/melting/InventoryManager';
 import EnergyBaseline from '@/components/melting/EnergyBaseline';
@@ -323,6 +323,7 @@ export default function MeltingManagement() {
   const [showPresetManager, setShowPresetManager] = useState(false);
   const [showSpecManager, setShowSpecManager] = useState(false);
   const [showInventoryManager, setShowInventoryManager] = useState(false);
+  const [showEnergyBaseline, setShowEnergyBaseline] = useState(false);
   const [materialSpecs, setMaterialSpecs] = useState<MaterialSpec[]>([]);
   const [materialOptions, setMaterialOptions] = useState<MeltMaterialOption[]>([]);
   const { toast } = useToast();
@@ -493,6 +494,9 @@ export default function MeltingManagement() {
             <Button onClick={() => setShowSpecManager(true)} variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 text-xs h-8">
               <FlaskConical className="w-3.5 h-3.5 mr-1" />材質規範
             </Button>
+            <Button onClick={() => setShowEnergyBaseline(true)} variant="outline" className="border-sky-600/60 text-sky-300 hover:bg-sky-900/30 text-xs h-8">
+              <Gauge className="w-3.5 h-3.5 mr-1" />能耗基線
+            </Button>
             <Button onClick={() => setShowInventoryManager(true)} variant="outline" className="border-emerald-600/60 text-emerald-300 hover:bg-emerald-900/30 text-xs h-8">
               <Warehouse className="w-3.5 h-3.5 mr-1" />庫存管理
             </Button>
@@ -536,8 +540,6 @@ export default function MeltingManagement() {
             </SelectContent>
           </Select>
         </div>
-
-        <EnergyBaseline records={filteredRecords} detailVersion={detailVersion} />
 
         <p className="text-xs text-zinc-500">共 {filteredRecords.length} 筆紀錄</p>
 
@@ -594,6 +596,19 @@ export default function MeltingManagement() {
           onOpenChange={setShowSpecManager}
           onChanged={async () => setMaterialSpecs(await getMaterialSpecs())}
         />
+
+        {/* Energy Baseline Dialog */}
+        <Dialog open={showEnergyBaseline} onOpenChange={setShowEnergyBaseline}>
+          <DialogContent className="bg-zinc-900 border-zinc-700 max-w-5xl max-h-[88vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-zinc-100 flex items-center gap-2">
+                <Gauge className="w-5 h-5 text-sky-400" />
+                能耗基線
+              </DialogTitle>
+            </DialogHeader>
+            <EnergyBaseline records={filteredRecords} detailVersion={detailVersion} />
+          </DialogContent>
+        </Dialog>
 
         {/* Raw Material Inventory Manager Dialog */}
         <InventoryManager
