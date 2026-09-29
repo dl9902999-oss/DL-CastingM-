@@ -512,7 +512,7 @@ function mapMeltingRecord(row: Record<string, unknown>): MeltingRecord {
 // Melt Records (New full version)
 // ============================================================
 export async function sbGetMeltRecords(): Promise<MeltRecord[]> {
-  const { data, error } = await supabase.from('melt_records').select('*').order('created_at', { ascending: false });
+  const { data, error } = await supabase.from('melt_sequence_records').select('*').order('created_at', { ascending: false });
   if (error) throw error;
   return (data || []).map(mapMeltRecord);
 }
@@ -608,6 +608,14 @@ export async function sbRecalcMeltRecord(meltId: string): Promise<MeltRecord | n
 
 function mapMeltRecord(row: Record<string, unknown>): MeltRecord {
   return {
+    furnace_body: Number(row.furnace_body) || undefined,
+    rebuild: Boolean(row.rebuild),
+    heat_anchor: row.heat_anchor == null ? null : Number(row.heat_anchor),
+    heat_sequence: Number(row.heat_sequence) || undefined,
+    daily_sequence: Number(row.daily_sequence) || undefined,
+    cycle_number: Number(row.cycle_number) || 0,
+    cycle_id: row.cycle_id as string | undefined,
+    sequence_updated_at: row.sequence_updated_at as string | undefined,
     id: row.id as string,
     melt_no: (row.melt_no as string) || '',
     melt_date: (row.melt_date as string) || '',
@@ -1663,7 +1671,7 @@ export function resolveSupabaseTableName(table: string): string | undefined {
  * （例如卡片顯示 12310 kg、明細合計卻只有 3890 kg）。
  */
 const DERIVED_FIELD_BLOCKLIST: Record<string, string[]> = {
-  melt_records: ['total_charge_weight', 'specific_energy'],
+  melt_records: ['total_charge_weight', 'specific_energy', 'furnace_body', 'rebuild', 'heat_anchor', 'heat_sequence', 'daily_sequence', 'cycle_number', 'cycle_id', 'sequence_updated_at', 'sort_key', 'cycle_rank'],
 };
 
 /** 移除指定表的衍生欄位，讓雲端值永遠由最新明細重算決定 */

@@ -184,7 +184,8 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
   if (!storageKey) return;
 
   try {
-    const { data: fetchedRows, error: selectError } = await supabase.from(table).select('*');
+    const source = table === 'melt_records' ? 'melt_sequence_records' : table;
+    const { data: fetchedRows, error: selectError } = await supabase.from(source).select('*');
     if (selectError) {
       console.warn(`[RealtimeSync] Failed to refresh ${table}:`, selectError.message);
       return;

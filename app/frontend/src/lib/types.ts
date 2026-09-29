@@ -98,6 +98,15 @@ export interface MeltingRecord {
 export type SampleStage = 'TARGET' | 'IN_FURNACE' | 'AFTER_FURNACE';
 
 export interface MeltRecord {
+  /** 爐體與累計爐次由雲端檢視計算，禁止一般同步回寫。 */
+  furnace_body?: number;
+  rebuild?: boolean;
+  heat_anchor?: number | null;
+  heat_sequence?: number;
+  daily_sequence?: number;
+  cycle_number?: number;
+  cycle_id?: string;
+  sequence_updated_at?: string;
   id: string;
   melt_no: string;
   melt_date: string;

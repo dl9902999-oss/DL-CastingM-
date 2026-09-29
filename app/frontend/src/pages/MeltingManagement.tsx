@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { calculateSequences, compareMelts, formatHeat, furnaceBody, loadSequenceRecords, saveSequenceRecord } from '@/lib/meltSequence';
 import { useSyncTrigger } from '@/hooks/useSyncedData';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
@@ -696,7 +697,7 @@ function MeltRecordCard({ record, expanded, detailVersion, onToggle, onEdit, onD
             {/* 兩列濃縮版面：第一列為材質／爐號／重量類，第二列為能耗／時間／溫度／建立人 */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-3 gap-y-1 text-xs text-zinc-400">
               <span className="whitespace-nowrap">材質: <span className="text-zinc-200">{record.material_grade}</span></span>
-              <span className="whitespace-nowrap">爐號: <span className="text-zinc-200">{record.furnace_no}</span></span>
+              <span className="min-w-0 break-words">爐號: <span className="text-zinc-200">{record.furnace_no}</span> · {furnaceBody(record)}號爐體 / {formatHeat(record.heat_sequence)} 次{record.rebuild ? '（築爐）' : ''}</span>
               <span className="whitespace-nowrap">總投料: <span className="text-zinc-200" data-testid="melt-card-total-charge">{derivedTotalCharge}</span></span>
               <span className="whitespace-nowrap">殘湯: <span className="text-violet-300 font-medium">{record.residual_weight || 0} kg</span></span>
               <span className="flex items-center gap-1 whitespace-nowrap"><Zap className="w-3 h-3" />耗電: <span className="text-zinc-200">{record.power_kwh} kWh</span></span>
@@ -1542,6 +1543,44 @@ function MeltFormDialog({
     remark: '',
   });
   const [timeError, setTimeError] = useState('');
+  const [sequenceRecords, setSequenceRecords] = useState<MeltRecord[]>([]);
+  const [sequenceError, setSequenceError] = useState('');
+  const [body, setBody] = useState(1);
+  const [rebuild, setRebuild] = useState(false);
+  const [heatInput, setHeatInput] = useState('');
+  const [heatChanged, setHeatChanged] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [draftId, setDraftId] = useState(() => crypto.randomUUID());
+  useEffect(() => {
+    if (!open) return;
+    setDraftId(editRecord?.id || crypto.randomUUID());
+    setBody(editRecord ? furnaceBody(editRecord) || 1 : 1);
+    setRebuild(Boolean(editRecord?.rebuild));
+    setHeatInput(editRecord?.heat_sequence ? String(editRecord.heat_sequence) : '');
+    setHeatChanged(false);
+    setSequenceError('爐次資料載入中…');
+    let active = true;
+    loadSequenceRecords().then(rows => {
+      if (active) { setSequenceRecords(rows); setSequenceError(''); }
+    }).catch(error => { if (active) setSequenceError(error.message); });
+    return () => { active = false; };
+  }, [open, editRecord]);
+
+  const sequencePreview = useMemo(() => {
+    const base = form.melt_no.trim() || `ML-${form.melt_date.replace(/-/g, '')}-${form.furnace_no || 'NA'}`;
+    let meltNo = base;
+    let suffix = 2;
+    while (!form.melt_no.trim() && sequenceRecords.some(r => r.melt_no === meltNo && r.id !== draftId)) meltNo = `${base}-${suffix++}`;
+    const candidate = { ...editRecord, ...form, id: draftId, melt_no: meltNo, furnace_body: body, rebuild,
+      heat_anchor: rebuild ? 1 : heatChanged ? (heatInput ? Number(heatInput) : null) : editRecord?.heat_anchor ?? null,
+      sequence_updated_at: heatChanged || body !== furnaceBody(editRecord || { furnace_no: '', furnace_body: 1 }) || rebuild !== Boolean(editRecord?.rebuild) ? '9999' : editRecord?.sequence_updated_at,
+    } as MeltRecord;
+    const calculated = calculateSequences([...sequenceRecords.filter(r => r.id !== draftId), candidate]);
+    const current = calculated.find(r => r.id === draftId)!;
+    const affected = calculated.filter(r => r.furnace_body === body && r.cycle_id === current.cycle_id);
+    const invalid = affected.some(r => !Number.isInteger(r.heat_sequence) || r.heat_sequence! < 1 || (r.cycle_number! > 0 && r.heat_sequence !== affected.indexOf(r) + 1));
+    return { current, affected, invalid };
+  }, [form, editRecord, draftId, body, rebuild, heatInput, heatChanged, sequenceRecords]);
   // 編輯既有紀錄時，明細（投料／成份）尚未回填完成前不得儲存，
   // 否則會把空白表單寫回雲端，並被必填驗證誤擋。
   const [loadingRecord, setLoadingRecord] = useState(false);
@@ -1736,6 +1775,10 @@ function MeltFormDialog({
     setResidualWeight('');
     setTimeError('');
     setLoadingRecord(false);
+    setDraftId(crypto.randomUUID());
+    setHeatInput('');
+    setHeatChanged(false);
+    setRebuild(false);
   };
 
   const validateTime = (startTime: string, tapTime: string): boolean => {
@@ -1823,6 +1866,11 @@ function MeltFormDialog({
 
   // Save
   const handleSave = async (andNew: boolean) => {
+    if (saving) return;
+    if (sequenceError || sequencePreview.invalid || (heatChanged && heatInput && !Number.isInteger(Number(heatInput)))) {
+      toast({ title: '無法儲存爐次校正', description: sequenceError || '爐次必須是正整數；築爐週期必須從001連續累計。', variant: 'destructive' });
+      return;
+    }
     if (loadingRecord) {
       toast({ title: '明細載入中，請稍候再儲存', variant: 'destructive' });
       return;
@@ -1869,43 +1917,18 @@ function MeltFormDialog({
     // 避免過期快照把剛刪除的列寫回雲端（復活）或以中間狀態蓋掉最終重算的衍生欄位。
     const editTxTables = ['melt_records', 'melt_materials', 'melt_chemistry'] as const;
     try {
+      setSaving(true);
       await beginEditTransaction([...editTxTables]);
-      let recordId: string;
-
+      const saved = await saveSequenceRecord({
+        ...form, id: draftId, melt_no: sequencePreview.current.melt_no,
+        melt_minutes: meltMinutes, residual_weight: Number(residualWeight) || 0,
+      }, body, rebuild, sequencePreview.current.heat_anchor ?? null);
+      const recordId = saved.id;
       if (isEdit && editRecord) {
-        await updateMeltRecord(editRecord.id, {
-          melt_no: trimmedMeltNo,
-          melt_date: form.melt_date,
-          material_grade: form.material_grade,
-          furnace_no: form.furnace_no,
-          power_kwh: form.power_kwh,
-          power_start_time: form.power_start_time,
-          tap_time: form.tap_time,
-          tap_temp: form.tap_temp,
-          created_by: form.created_by,
-          remark: form.remark,
-          residual_weight: Number(residualWeight) || 0,
-        });
-        recordId = editRecord.id;
         const oldMats = await getMeltMaterials(recordId);
         for (const m of oldMats) { await deleteMeltMaterial(m.id); }
         const oldChem = await getMeltChemistry(recordId);
         for (const c of oldChem) { await deleteMeltChemistry(c.id); }
-      } else {
-        const newRec = await createMeltRecord({
-          melt_no: trimmedMeltNo || undefined,
-          melt_date: form.melt_date,
-          material_grade: form.material_grade,
-          furnace_no: form.furnace_no,
-          power_kwh: form.power_kwh,
-          power_start_time: form.power_start_time,
-          tap_time: form.tap_time,
-          tap_temp: form.tap_temp,
-          created_by: form.created_by,
-          remark: form.remark,
-          residual_weight: Number(residualWeight) || 0,
-        });
-        recordId = newRec.id;
       }
 
       for (const m of materialsToSave) {
@@ -1963,6 +1986,7 @@ function MeltFormDialog({
       }
 
       await recalcMeltRecord(recordId);
+      setSequenceRecords(await loadSequenceRecords());
       toast({ title: isEdit ? '熔解紀錄已更新' : '熔解紀錄已建立' });
 
       if (andNew) {
@@ -1983,15 +2007,16 @@ function MeltFormDialog({
           variant: 'destructive',
         });
       } else if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
-        toast({ title: '權限不足，儲存失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
+        toast({ title: '權限不足，儲存未完成', description: '爐次校正未排入離線同步；請確認權限後再儲存。', variant: 'destructive' });
       } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
-        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
+        toast({ title: '連線異常，請重新載入確認儲存結果', description: '爐次校正不採離線儲存，請恢復連線後再試。', variant: 'destructive' });
       } else {
-        toast({ title: '儲存失敗，請稍後再試', variant: 'destructive' });
+        toast({ title: '儲存未完成', description: msg, variant: 'destructive' });
       }
     } finally {
       // 無論儲存成功或失敗都必須解鎖；解鎖會補一次以上傳當下最新狀態為準的最終同步
       endEditTransaction([...editTxTables]);
+      setSaving(false);
     }
   };
 
@@ -2077,6 +2102,24 @@ function MeltFormDialog({
                   <Input type="time" value={form.tap_time} onChange={e => { setForm({ ...form, tap_time: e.target.value }); validateTime(form.power_start_time, e.target.value); }} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
                 </div>
               </div>
+              <fieldset disabled={saving} className="mt-3 rounded border border-zinc-600 p-3 space-y-3">
+                <legend className="px-1 text-sm text-zinc-200">爐體與累計爐次</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label htmlFor="furnace-body" className="text-zinc-300">爐體</Label>
+                    <select id="furnace-body" data-testid="furnace-body" value={body} onChange={e => setBody(Number(e.target.value))} className="w-full rounded border border-zinc-600 bg-zinc-700 p-2 text-zinc-100">
+                      {[1,2,3].map(n => <option key={n} value={n}>{n} 號爐體</option>)}
+                    </select>
+                  </div>
+                  <div><Label htmlFor="heat-sequence" className="text-zinc-300">累計爐次（可校正）</Label>
+                    <Input id="heat-sequence" data-testid="heat-sequence" type="number" min={1} step={1} disabled={rebuild} value={rebuild ? '1' : heatChanged ? heatInput : String(sequencePreview.current.heat_sequence || '')} placeholder={String(sequencePreview.current.heat_sequence || 1)} onChange={e => { setHeatInput(e.target.value); setHeatChanged(true); }} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-sm text-zinc-200"><input data-testid="heat-rebuild" type="checkbox" checked={rebuild} onChange={e => setRebuild(e.target.checked)} />本批為重新築爐後第一批（001）</label>
+                <p className="text-xs text-zinc-300">依日期及熔解編號數字順序校正（ML-2 → ML-9 → ML-10），僅調整同爐體、同築爐週期。每日第一批另行判定。</p>
+                <p data-testid="heat-preview" className="text-sm text-amber-300">預計爐次 {formatHeat(sequencePreview.current.heat_sequence)} · {sequencePreview.current.cycle_number ? `築爐週期 ${sequencePreview.current.cycle_number}` : '既有週期（未標記築爐）'} · 每日第 {sequencePreview.current.daily_sequence} 批</p>
+                {(sequenceError || sequencePreview.invalid) && <p role="alert" className="text-sm text-red-300">{sequenceError || '校正後不得出現零或負爐次；已築爐週期必須由001連續累計。'}</p>}
+                <details className="text-xs text-zinc-300"><summary className="cursor-pointer">查看同週期校正預覽（{sequencePreview.affected.length} 批）</summary><div className="max-h-40 overflow-y-auto mt-2">{sequencePreview.affected.map(r => <div key={r.id} className="flex justify-between gap-2 py-1"><span>{r.melt_date} · {r.melt_no}</span><span>{formatHeat(sequenceRecords.find(old => old.id === r.id)?.heat_sequence)} → {formatHeat(r.heat_sequence)}</span></div>)}</div></details>
+              </fieldset>
               {timeError && <p className="text-xs text-red-400 mt-2">⚠️ {timeError}</p>}
 
               {/* Auto-calculated fields */}
@@ -2500,11 +2543,11 @@ function MeltFormDialog({
           <Button variant="ghost" data-testid="dlg-cancel" onClick={() => onOpenChange(false)} className="text-zinc-400 hover:text-zinc-200">
             取消
           </Button>
-          <Button data-testid="dlg-save" onClick={() => handleSave(false)} disabled={!!timeError || loadingRecord} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 disabled:opacity-50">
+          <Button data-testid="dlg-save" onClick={() => handleSave(false)} disabled={!!timeError || loadingRecord || saving || !!sequenceError || sequencePreview.invalid} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 disabled:opacity-50">
             儲存
           </Button>
           {!isEdit && (
-            <Button onClick={() => handleSave(true)} disabled={!!timeError || loadingRecord} className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
+            <Button onClick={() => handleSave(true)} disabled={!!timeError || loadingRecord || saving || !!sequenceError || sequencePreview.invalid} className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
               儲存並新增下一爐
             </Button>
           )}

@@ -298,6 +298,7 @@ export async function syncPendingToSupabase(
         try {
           // 待刪除的投料明細：先查其父熔解紀錄 id，刪除生效後需重算父紀錄衍生欄位
           if (cloudTable === 'melt_materials') {
+            if (typeof del.data?.melt_id === 'string') meltIdsToRecalc.add(del.data.melt_id);
             try {
               const { data: parent } = await sbStore.supabaseClient()
                 .from(cloudTable)
@@ -521,6 +522,7 @@ interface PendingSyncMeta {
    * pending queue 的刪除項目會缺少 data.id，連線恢復後永遠不會真正刪除雲端資料。
    */
   recordId?: string;
+  parentMeltId?: string;
 }
 
 /**
@@ -539,7 +541,7 @@ function buildPendingPayload(
       );
       return undefined;
     }
-    return { id: syncMeta.recordId };
+    return { id: syncMeta.recordId, ...(syncMeta.parentMeltId ? { melt_id: syncMeta.parentMeltId } : {}) };
   }
   return result && typeof result === 'object' ? (result as Record<string, unknown>) : undefined;
 }
@@ -1145,11 +1147,12 @@ export async function dsUpdateMeltMaterial(id: string, data: Partial<Omit<MeltMa
 }
 
 export async function dsDeleteMeltMaterial(id: string): Promise<boolean> {
+  const parentMeltId = localStore.getMeltMaterials().find(row => row.id === id)?.melt_id;
   return withRLSFallback(
     () => sbStore.sbDeleteMeltMaterial(id),
     () => localStore.deleteMeltMaterial(id),
     'dsDeleteMeltMaterial',
-    { table: 'melt_materials', action: 'delete', recordId: id }
+    { table: 'melt_materials', action: 'delete', recordId: id, parentMeltId }
   );
 }
 
