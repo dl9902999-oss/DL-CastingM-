@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { dsGetMeltMaterials } from '@/lib/dataService';
 import { formatHeat, furnaceBody, compareMelts } from '@/lib/meltSequence';
@@ -26,6 +26,9 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
   const [error, setError] = useState('');
   const [mode, setMode] = useState<'daily' | 'rebuild'>('daily');
   const [page, setPage] = useState(0);
+  const [windowOffset, setWindowOffset] = useState(0);
+  const drag = useRef<{ pointerId: number; x: number; offset: number; width: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
   useEffect(() => {
     let active = true;
     setLoading(true); setError(''); setPage(0);
@@ -43,7 +46,23 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
   const isFirst = (r: EnergyPoint) => mode === 'daily' ? r.daily_sequence === 1 : r.rebuild && r.heat_sequence === 1;
   const groups = [1,2].map(body => points.filter(r => furnaceBody(r) === body));
   const plotted = groups.flat().sort(compareMelts);
-  const dates = useMemo(() => [...new Set(points.map(r => r.date))].sort((a,b) => a-b), [points]);
+  const extent = useMemo(() => {
+    const dates = points.filter(r => [1, 2].includes(furnaceBody(r))).map(r => r.date).filter(Number.isFinite);
+    return dates.length ? [Math.min(...dates), Math.max(...dates)] : [0, 0];
+  }, [points]);
+  const day = 86400000;
+  const totalDays = Math.round((extent[1] - extent[0]) / day) + 1;
+  const visibleDays = Math.min(21, totalDays);
+  const maxOffset = Math.max(0, totalDays - visibleDays);
+  const offset = Math.min(windowOffset, maxOffset);
+  const windowStart = extent[0] + offset * day;
+  const windowEnd = windowStart + (visibleDays - 1) * day;
+  const dates = Array.from({ length: visibleDays }, (_, i) => windowStart + i * day);
+  const visibleGroups = groups.map(rows => rows.filter(r => r.date >= windowStart && r.date <= windowEnd));
+  const energyMax = Math.max(1, ...plotted.map(r => r.energy)) * 1.1;
+  const moveWindow = (next: number) => setWindowOffset(Math.max(0, Math.min(maxOffset, next)));
+  const stopDragging = () => { drag.current = null; setDragging(false); };
+  useEffect(() => { setWindowOffset(0); }, [extent[0], extent[1]]);
   const shown = plotted.slice(page * 30, (page + 1) * 30);
   return <section className="space-y-5 text-zinc-200" data-testid="energy-baseline">
     <div className="flex flex-wrap gap-4 items-end">
@@ -63,16 +82,53 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
     </div>
     <div data-testid="baseline-chart" className="rounded border border-zinc-700 p-3">
       <h3 className="mb-3 text-sm font-medium">日期能耗比較 <span className="text-zinc-400 font-normal">· kWh/kg</span></h3>
-      {loading ? <p className="py-12 text-center text-zinc-400">正在加總投料與計算能耗…</p> : !plotted.length ? <p className="py-12 text-center text-zinc-400">尚無可比較的1、2號爐體資料，需填寫投料及耗電量。</p> : <ResponsiveContainer width="100%" height={300}>
+      {loading ? <p className="py-12 text-center text-zinc-400">正在加總投料與計算能耗…</p> : !plotted.length ? <p className="py-12 text-center text-zinc-400">尚無可比較的1、2號爐體資料，需填寫投料及耗電量。</p> : <>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <button type="button" disabled={offset === 0} onClick={() => moveWindow(offset - 21)} className="rounded border border-zinc-600 px-3 py-2 text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">前21天</button>
+        <span data-testid="energy-date-window" data-start={windowStart} data-end={windowEnd} aria-live="polite">{dateLabel(windowStart)} ～ {dateLabel(windowEnd)} · {visibleDays}天</span>
+        <button type="button" disabled={offset === maxOffset} onClick={() => moveWindow(offset + 21)} className="rounded border border-zinc-600 px-3 py-2 text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">後21天</button>
+      </div>
+      <div data-testid="energy-drag-chart" role="group" aria-label="可左右拖曳的能耗圖表" tabIndex={0}
+        className={`select-none rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 ${maxOffset ? dragging ? 'cursor-grabbing' : 'cursor-grab' : ''}`}
+        style={{ touchAction: 'pan-y' }}
+        onKeyDown={e => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            const delta = e.key === 'ArrowLeft' ? -1 : 1;
+            setWindowOffset(current => Math.max(0, Math.min(maxOffset, Math.min(current, maxOffset) + delta)));
+          }
+        }}
+        onPointerDown={e => {
+          if (!maxOffset || !e.isPrimary || e.button !== 0) return;
+          drag.current = { pointerId: e.pointerId, x: e.clientX, offset, width: Math.max(1, e.currentTarget.clientWidth - 73) };
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={e => {
+          const start = drag.current;
+          if (!start || start.pointerId !== e.pointerId) return;
+          if (Math.abs(e.clientX - start.x) > 4) setDragging(true);
+          moveWindow(start.offset + Math.round((start.x - e.clientX) / start.width * visibleDays));
+        }}
+        onPointerUp={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); stopDragging(); }}
+        onPointerCancel={stopDragging} onLostPointerCapture={stopDragging}>
+      <ResponsiveContainer width="100%" height={300}>
         <ScatterChart margin={{ top: 10, right: 20, bottom: 15, left: 5 }}>
           <CartesianGrid stroke="#3f3f46" strokeDasharray="3 3" />
-          <XAxis type="number" dataKey="date" name="日期" domain={['dataMin','dataMax']} ticks={dates} tickFormatter={dateLabel} minTickGap={24} stroke="#a1a1aa" fontSize={11} />
-          <YAxis type="number" dataKey="energy" name="能耗" stroke="#a1a1aa" fontSize={11} width={48} />
+          <XAxis type="number" dataKey="date" name="日期" domain={[windowStart - day / 2, windowEnd + day / 2]} allowDataOverflow ticks={dates} tickFormatter={dateLabel} minTickGap={24} stroke="#a1a1aa" fontSize={11} />
+          <YAxis type="number" dataKey="energy" name="能耗" domain={[0, energyMax]} stroke="#a1a1aa" fontSize={11} width={48} />
           <Tooltip content={<PointTooltip />} /><Legend />
-          {groups.map((rows,index) => <Scatter key={index} name={`${index+1}號爐體`} data={rows} fill={colors[index]} isAnimationActive={false} />)}
+          {visibleGroups.map((rows,index) => <Scatter key={index} name={`${index+1}號爐體`} data={rows} fill={colors[index]} isAnimationActive={false} />)}
           {groups.map((rows,index) => { const avg = mean(rows.filter(isFirst)); return avg == null ? null : <ReferenceLine key={index} y={avg} stroke={colors[index]} strokeDasharray="5 5" label={{ value: `${index+1}號第一批均 ${avg.toFixed(3)}`,fill: colors[index],fontSize:10,position:index ? 'insideBottomRight':'insideTopRight' }} />; })}
         </ScatterChart>
-      </ResponsiveContainer>}
+      </ResponsiveContainer>
+      </div>
+      {!visibleGroups.some(rows => rows.length) && <p className="py-2 text-center text-xs text-zinc-400">這段日期沒有能耗資料，可左右拖曳查看其他日期。</p>}
+      <label className="mt-2 block text-xs text-zinc-300">拖曳日期範圍
+        <input aria-label="拖曳日期範圍" type="range" min={0} max={maxOffset} step={1} value={offset} disabled={!maxOffset} onChange={e => moveWindow(Number(e.target.value))} className="mt-2 w-full accent-amber-300 disabled:opacity-40" />
+      </label>
+      <p className="mb-3 text-xs text-zinc-400">左右拖曳圖表或滑桿查看其他日期，每次最多21個日曆天（含無資料日期）。聚焦圖表後亦可用左右方向鍵。上方統計、平均基線與下方明細維持完整篩選範圍。</p>
+      </>}
       <p className="text-xs text-zinc-400">每一點代表一批；同日期共用X座標，依實際能耗上下排列。相同日期且能耗相同的點會重疊，全部批次可在下方明細查看。</p>
     </div>
     <div className="rounded border border-zinc-700">
