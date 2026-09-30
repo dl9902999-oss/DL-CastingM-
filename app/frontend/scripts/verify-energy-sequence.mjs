@@ -70,6 +70,61 @@ try {
   assert.ok(await energy.getByText('日期能耗比較', { exact: false }).count());
   await energy.getByLabel('第一批定義').selectOption('daily');
   console.log('通過：固定日期軸、築爐001與每日第一批切換');
+  const bands = await page.evaluate(async () => {
+    const { getEnergyBand } = await import('/src/lib/energyComparison.ts');
+    return [0.8, 0.9, 1, 1.1, 1.2].map(value => getEnergyBand(value, 1)?.key);
+  });
+  assert.deepEqual(bands, ['low', 'normal', 'normal', 'normal', 'high']);
+  const averageElement = energy.getByTestId('energy-average');
+  const originalCount = Number(await averageElement.getAttribute('data-count'));
+  const originalAverage = Number(await averageElement.getAttribute('data-average'));
+  const verifyBands = async () => {
+    const avg = Number(await averageElement.getAttribute('data-average'));
+    const cells = await energy.getByTestId('energy-band').evaluateAll(elements => elements.map(el => ({
+      energy: Number(el.dataset.energy), band: el.dataset.band, classes: el.className,
+    })));
+    for (const cell of cells) {
+      const delta = (cell.energy / avg - 1) * 100;
+      const expected = delta > 10 + 1e-10 ? 'high' : delta < -10 - 1e-10 ? 'low' : 'normal';
+      assert.equal(cell.band, expected);
+      assert.ok(cell.classes.includes({ high: 'text-red-300', low: 'text-green-300', normal: 'text-yellow-300' }[expected]));
+    }
+    return cells;
+  };
+  await verifyBands();
+  const selectedDate = await energy.getByTestId('energy-details').locator('tbody tr[data-date]').first().getAttribute('data-date');
+  const applyDates = async (start, end) => {
+    await energy.getByLabel('開始日期', { exact: true }).fill(start);
+    await energy.getByLabel('結束日期', { exact: true }).fill(end);
+    await energy.getByRole('button', { name: '套用日期', exact: true }).click();
+  };
+  await applyDates(selectedDate, selectedDate);
+  await page.waitForFunction(date => document.querySelector('[data-testid="energy-date-window"]')?.getAttribute('data-end') === String(Date.parse(`${date}T00:00:00Z`)), selectedDate);
+  const rows = energy.getByTestId('energy-details').locator('tbody tr[data-date]');
+  assert.ok(await rows.count() > 0);
+  assert.ok((await rows.evaluateAll(els => els.map(el => el.dataset.date))).every(date => date === selectedDate));
+  assert.equal(await slider.isDisabled(), true);
+  const dayCells = await verifyBands();
+  if (Number(await averageElement.getAttribute('data-count')) <= 30) {
+    assert.ok(Math.abs(Number(await averageElement.getAttribute('data-average')) - dayCells.reduce((sum, cell) => sum + cell.energy, 0) / dayCells.length) < 1e-10);
+  }
+  await applyDates('2099-02-02', '2099-01-01');
+  await energy.getByRole('alert').filter({ hasText: '開始日期不可晚於結束日期' }).waitFor();
+  assert.equal(await rows.first().getAttribute('data-date'), selectedDate, '無效範圍不可改變已套用資料');
+  await applyDates('2099-01-01', '2099-01-02');
+  await energy.getByText('此範圍沒有符合的批次。', { exact: true }).waitFor();
+  assert.equal(await averageElement.getAttribute('data-average'), '');
+  assert.equal(await energy.getByTestId('energy-band').count(), 0);
+  await applyDates('', selectedDate);
+  await rows.first().waitFor();
+  assert.ok((await rows.evaluateAll(els => els.map(el => el.dataset.date))).every(date => date <= selectedDate));
+  await energy.getByRole('button', { name: '清除日期', exact: true }).click();
+  await page.waitForFunction(count => Number(document.querySelector('[data-testid="energy-average"]')?.getAttribute('data-count')) === count, originalCount);
+  assert.equal(Number(await averageElement.getAttribute('data-average')), originalAverage);
+  await verifyBands();
+  await energy.getByTestId('baseline-chart').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/tmp/energy-date-range.png', fullPage: true });
+  console.log('通過：日期區間、单日含邊界、單邊日期、無效與空區間、清除篩選、區間平均及紅綠黃±10%標記');
   await page.goto('http://localhost:3000/melting-management');
   await page.getByTestId('melt-card-edit').first().click();
   await page.getByTestId('heat-preview').waitFor();
