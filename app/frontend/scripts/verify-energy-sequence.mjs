@@ -23,6 +23,9 @@ try {
   assert.ok(ticks.length > 0, '須有實際能耗日期刻度');
   assert.ok(ticks.every(t => /^\d{4}-\d{2}-\d{2}$/.test(t)), 'X軸只顯示日期');
   console.log('通過：日期刻度', ticks);
+  assert.ok(await energy.locator('.recharts-scatter-symbol path[fill="#ef4444"]').count() > 0, '每日第一爐須顯示紅色點');
+  assert.ok(await energy.getByText('第一爐（各爐體每日第一批）', { exact: true }).count(), '須顯示紅點圖例');
+  console.log('通過：每日第一爐紅點及圖例');
   const dateWindow = energy.getByTestId('energy-date-window');
   const startDate = async () => Number(await dateWindow.getAttribute('data-start'));
   const assertWindow = async () => {
@@ -46,9 +49,11 @@ try {
     await assertWindow();
     await slider.focus();
     await page.keyboard.press('End');
+    await waitForStart(initialStart + Number(await slider.getAttribute('max')) * 86400000);
     assert.equal(await energy.getByRole('button', { name: '後21天', exact: true }).isDisabled(), true);
     await assertWindow();
     await page.keyboard.press('Home');
+    await waitForStart(initialStart);
     assert.equal(await startDate(), initialStart);
     assert.equal(await energy.getByRole('button', { name: '前21天', exact: true }).isDisabled(), true);
     await chart.focus();

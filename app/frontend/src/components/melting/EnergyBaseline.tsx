@@ -118,7 +118,8 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
           <XAxis type="number" dataKey="date" name="日期" domain={[windowStart - day / 2, windowEnd + day / 2]} allowDataOverflow ticks={dates} tickFormatter={dateLabel} minTickGap={24} stroke="#a1a1aa" fontSize={11} />
           <YAxis type="number" dataKey="energy" name="能耗" domain={[0, energyMax]} stroke="#a1a1aa" fontSize={11} width={48} />
           <Tooltip content={<PointTooltip />} /><Legend />
-          {visibleGroups.map((rows,index) => <Scatter key={index} name={`${index+1}號爐體`} data={rows} fill={colors[index]} isAnimationActive={false} />)}
+          {visibleGroups.map((rows,index) => <Scatter key={index} name={`${index+1}號爐體（非第一爐）`} data={rows.filter(r => !isFirst(r))} fill={colors[index]} isAnimationActive={false} />)}
+          <Scatter name={mode === 'daily' ? '第一爐（各爐體每日第一批）' : '第一爐（重新築爐後第001批）'} data={visibleGroups.flat().filter(isFirst)} fill="#ef4444" isAnimationActive={false} />
           {groups.map((rows,index) => { const avg = mean(rows.filter(isFirst)); return avg == null ? null : <ReferenceLine key={index} y={avg} stroke={colors[index]} strokeDasharray="5 5" label={{ value: `${index+1}號第一批均 ${avg.toFixed(3)}`,fill: colors[index],fontSize:10,position:index ? 'insideBottomRight':'insideTopRight' }} />; })}
         </ScatterChart>
       </ResponsiveContainer>
