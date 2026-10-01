@@ -963,6 +963,9 @@ export default function InventoryManager({
                       );
                     })}
 
+                    {/* 本爐產生的殘湯獨立列示，不計入投料分類合計。 */}
+                    <ResidualStatistics rows={meltResidualRows} source="melt" />
+
                     {/* 三分類彙總對照 */}
                     <div className="overflow-x-auto border border-zinc-700 rounded">
                       <table className="w-full text-xs">
@@ -1000,6 +1003,8 @@ export default function InventoryManager({
                     </p>
                   </>
                 )}
+
+                {consumptionRows.length === 0 && <ResidualStatistics rows={meltResidualRows} source="melt" />}
 
                 <div className="space-y-3">
                   {CATEGORY_ORDER.map(cat => {

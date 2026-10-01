@@ -2,8 +2,8 @@ import { residualRate, summarizeResidual, type ResidualStatRow } from '@/lib/res
 
 export default function ResidualStatistics({ rows, source }: { rows: ResidualStatRow[]; source: 'melt' | 'pour' }) {
   const isMelt = source === 'melt';
-  const title = isMelt ? '爐次殘湯（本爐產生）' : '批次澆注殘湯（獨立登錄）';
-  const baseLabel = isMelt ? '總熔湯重' : '總出湯重';
+  const title = isMelt ? '爐次殘湯統計（本爐產生）' : '批次澆注殘湯（獨立登錄）';
+  const baseLabel = isMelt ? '總投料重' : '總出湯重';
   const summary = summarizeResidual(rows);
   return (
     <section data-testid={`residual-${source}`} className="space-y-3 rounded border border-violet-900/50 p-4 text-zinc-300">

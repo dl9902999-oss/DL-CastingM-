@@ -321,6 +321,7 @@ export default function MeltingManagement() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMaterial, setFilterMaterial] = useState('');
   const [filterFurnace, setFilterFurnace] = useState('');
+  const [dateSort, setDateSort] = useState<'asc' | 'desc'>('desc');
   const [showPresetManager, setShowPresetManager] = useState(false);
   const [showSpecManager, setShowSpecManager] = useState(false);
   const [showInventoryManager, setShowInventoryManager] = useState(false);
@@ -477,7 +478,7 @@ export default function MeltingManagement() {
     const matchMaterial = !filterMaterial || r.material_grade === filterMaterial;
     const matchFurnace = !filterFurnace || r.furnace_no === filterFurnace;
     return matchSearch && matchMaterial && matchFurnace;
-  }).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }).sort((a, b) => dateSort === 'asc' ? compareMelts(a, b) : compareMelts(b, a));
 
   const uniqueMaterials = [...new Set(records.map(r => r.material_grade))].filter(Boolean);
   const uniqueFurnaces = [...new Set(records.map(r => r.furnace_no))].filter(Boolean);
@@ -538,6 +539,15 @@ export default function MeltingManagement() {
             <SelectContent className="bg-zinc-800 border-zinc-700">
               <SelectItem value="all" className="text-zinc-100">全部爐號</SelectItem>
               {uniqueFurnaces.map(f => (<SelectItem key={f} value={f} className="text-zinc-100">{f}</SelectItem>))}
+            </SelectContent>
+          </Select>
+          <Select value={dateSort} onValueChange={value => setDateSort(value === 'asc' ? 'asc' : 'desc')}>
+            <SelectTrigger aria-label="熔解日期排序" data-testid="melt-date-sort" className="bg-zinc-800 border-zinc-700 text-zinc-100 w-full sm:w-48 h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-zinc-800 border-zinc-700">
+              <SelectItem value="desc" className="text-zinc-100">日期降冪（新到舊）</SelectItem>
+              <SelectItem value="asc" className="text-zinc-100">日期升冪（舊到新）</SelectItem>
             </SelectContent>
           </Select>
         </div>
