@@ -15,7 +15,7 @@ import {
 import type { RawMaterialReceipt, RawMaterialReceiptInput } from '@/lib/supabaseStore';
 import type { MeltRecord, MeltMaterial, MeltingRecord } from '@/lib/types';
 import ResidualStatistics from './ResidualStatistics';
-import { buildMeltResidualRows, buildPourResidualRows, residualExportRows } from '@/lib/residualStatistics';
+import { buildMeltResidualRows, buildPourResidualRows, buildPreviousResidualRows, isResidualMaterial, residualExportRows } from '@/lib/residualStatistics';
 
 /** 原料入庫可登錄的成分規格元素 */
 const SPEC_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
@@ -28,9 +28,6 @@ const SPEC_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as con
  */
 type MaterialCategory = 'PURCHASED' | 'RETURN' | 'RESIDUAL';
 
-/** 殘湯（液態剩湯）關鍵字，優先於回爐料判定 */
-const RESIDUAL_MATERIAL_KEYWORDS = ['殘湯', '殘鐵水', '殘鐵', '殘水', '剩湯', '餘湯', '殘鋼', '殘料'];
-
 /** 回爐料（廠內自產固態循環料）關鍵字 */
 const RETURN_MATERIAL_KEYWORDS = ['回爐', '回料', '澆道', '冒口', '澆冒', '自產'];
 
@@ -41,7 +38,7 @@ const RETURN_MATERIAL_KEYWORDS = ['回爐', '回料', '澆道', '冒口', '澆�
 function categorizeMaterial(name: string): MaterialCategory {
   const n = (name || '').trim();
   if (!n) return 'PURCHASED';
-  if (RESIDUAL_MATERIAL_KEYWORDS.some(k => n.includes(k))) return 'RESIDUAL';
+  if (isResidualMaterial(n)) return 'RESIDUAL';
   if (RETURN_MATERIAL_KEYWORDS.some(k => n.includes(k))) return 'RETURN';
   return 'PURCHASED';
 }
@@ -563,6 +560,10 @@ export default function InventoryManager({
   const residualUtilizationRate = totalMeltWeight > 0
     ? round((residualTotal / totalMeltWeight) * 100, 1)
     : 0;
+  const previousResidualRows = useMemo(
+    () => buildPreviousResidualRows(meltRecords, meltMaterials, startDate, endDate),
+    [meltRecords, meltMaterials, startDate, endDate]
+  );
   const meltResidualRows = useMemo(
     () => buildMeltResidualRows(meltRecords, meltMaterials, startDate, endDate),
     [meltRecords, meltMaterials, startDate, endDate]
@@ -935,6 +936,7 @@ export default function InventoryManager({
                   <>
                     {/* 三分類分開統計：外購原料／回爐料／殘湯，各自獨立占比分母 */}
                     {CATEGORY_ORDER.map(cat => {
+                      if (cat === 'RESIDUAL') return <ResidualStatistics key={cat} rows={previousResidualRows} source="previous" />;
                       const meta = CATEGORY_META[cat];
                       return (
                         <div key={cat}>
@@ -943,12 +945,10 @@ export default function InventoryManager({
                               {meta.label}投料統計
                               {cat === 'PURCHASED' && `（${startDate} ~ ${endDate}）`}
                               {cat === 'RETURN' && '（依當爐材質分組，各自獨立計算）'}
-                              {cat === 'RESIDUAL' && '（獨立計算）'}
                             </p>
                             <span className="text-[11px] text-zinc-500">
                               {cat === 'PURCHASED' && '占比分母：外購原料合計'}
                               {cat === 'RETURN' && '舊料投料比例分母：各材質溶解投料總重'}
-                              {cat === 'RESIDUAL' && `前爐殘湯利用率分母：總熔湯重 ${totalMeltWeight} kg`}
                             </span>
                           </div>
                           <ConsumptionTable
@@ -1004,7 +1004,10 @@ export default function InventoryManager({
                   </>
                 )}
 
-                {consumptionRows.length === 0 && <ResidualStatistics rows={meltResidualRows} source="melt" />}
+                {consumptionRows.length === 0 && <>
+                  <ResidualStatistics rows={previousResidualRows} source="previous" />
+                  <ResidualStatistics rows={meltResidualRows} source="melt" />
+                </>}
 
                 <div className="space-y-3">
                   {CATEGORY_ORDER.map(cat => {

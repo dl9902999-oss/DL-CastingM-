@@ -7,7 +7,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 }, acceptDownloads: true });
   await page.goto('http://localhost:3000');
   const results = await page.evaluate(async () => {
-    const { buildMeltResidualRows, buildPourResidualRows, summarizeResidual, residualExportRows } = await import('/src/lib/residualStatistics.ts');
+    const { buildMeltResidualRows, buildPourResidualRows, buildPreviousResidualRows, summarizeResidual, residualExportRows } = await import('/src/lib/residualStatistics.ts');
     const melts = [
       { id: 'a', melt_date: '2026-09-01', melt_no: 'ML-1', furnace_no: '1', material_grade: 'FC', total_charge_weight: 999, residual_weight: 30 },
       { id: 'b', melt_date: '2026-09-02', melt_no: 'ML-2', total_charge_weight: 200, residual_weight: 20 },
@@ -20,7 +20,11 @@ try {
     const rows = buildMeltResidualRows(melts, materials, '2026-09-01', '2026-09-02');
     const changed = buildMeltResidualRows(melts, materials.map(m => ({ ...m, charge_weight: m.charge_weight + 100 })), '2026-09-01', '2026-09-02');
     const pours = buildPourResidualRows([{ id: 'p', created_at: '2026-09-01T10:00:00Z', pouring_weight: 100, residual_weight: 7 }], '2026-09-01', '2026-09-02');
+    const previous = buildPreviousResidualRows(melts, materials, '2026-09-01', '2026-09-02');
     return {
+      previous: summarizeResidual(previous), previousRows: previous,
+      previousChanged: summarizeResidual(buildPreviousResidualRows(melts.map(r => ({ ...r, residual_weight: 888 })), materials, '2026-09-01', '2026-09-02')),
+      previousEmpty: summarizeResidual(buildPreviousResidualRows(melts, materials, '2099-01-01', '2099-01-02')),
       summary: summarizeResidual(rows), changed: summarizeResidual(changed), pour: summarizeResidual(pours),
       single: buildMeltResidualRows(melts, materials, '2026-09-01', '2026-09-01').length,
       empty: summarizeResidual(buildMeltResidualRows(melts, materials, '2099-01-01', '2099-01-02')),
@@ -28,6 +32,12 @@ try {
       exported: residualExportRows(rows, '熔解爐次'),
     };
   });
+  assert.deepEqual(results.previous, { baseWeight: 1199, residualWeight: 30, rate: 2.5 });
+  assert.deepEqual(results.previousChanged, results.previous);
+  assert.deepEqual(results.previousEmpty, { baseWeight: 0, residualWeight: 0, rate: 0 });
+  assert.equal(results.previousRows.find(row => row.id === 'a').chargeWeight, 20);
+  assert.equal(results.previousRows.find(row => row.id === 'a').secondaryWeight, 10);
+  assert.equal(results.previousRows.find(row => row.id === 'b').residualWeight, 0);
   assert.deepEqual(results.summary, { baseWeight: 300, residualWeight: 50, rate: 16.67 });
   assert.equal(results.changed.residualWeight, 50, '前爐投料異動不可改變本爐殘湯合計');
   assert.deepEqual(results.pour, { baseWeight: 100, residualWeight: 7, rate: 7 });
@@ -72,6 +82,32 @@ try {
   assert.equal(await dialog.getByTestId('residual-pour').count(), 0);
   await dialog.getByRole('heading', { name: '爐次殘湯統計（本爐產生）' }).waitFor();
   assert.ok((await dialog.getByTestId('residual-melt').textContent()).includes('總投料重'));
+  const previousSection = dialog.getByTestId('residual-previous');
+  const meltSection = dialog.getByTestId('residual-melt');
+  await previousSection.waitFor();
+  const previousSummary = await previousSection.locator('dl').textContent();
+  const meltSummary = await meltSection.locator('dl').textContent();
+  await previousSection.getByRole('button', { name: /收折清單/ }).click();
+  assert.equal(await previousSection.getByTestId('residual-list').isVisible(), false);
+  assert.equal(await meltSection.getByTestId('residual-list').isVisible(), true);
+  await meltSection.getByRole('button', { name: /收折清單/ }).click();
+  assert.equal(await meltSection.getByTestId('residual-list').isVisible(), false);
+  assert.equal(await previousSection.locator('dl').textContent(), previousSummary);
+  assert.equal(await meltSection.locator('dl').textContent(), meltSummary);
+  await previousSection.getByRole('button', { name: /展開清單/ }).focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await previousSection.getByTestId('residual-list').isVisible(), true);
+  assert.equal(await meltSection.getByTestId('residual-list').isVisible(), false);
+  await meltSection.getByRole('button', { name: /展開清單/ }).click();
+  const previousExpected = await page.evaluate(async () => {
+    const { dsGetMeltRecords, dsGetMeltMaterials } = await import('/src/lib/dataService.ts');
+    const { buildPreviousResidualRows, summarizeResidual } = await import('/src/lib/residualStatistics.ts');
+    const [records, materials] = await Promise.all([dsGetMeltRecords(), dsGetMeltMaterials()]);
+    return summarizeResidual(buildPreviousResidualRows(records, materials, '2000-01-01', '2099-12-31'));
+  });
+  assert.equal(await previousSection.getByTestId('residual-total').textContent(), `${previousExpected.residualWeight} kg`);
+  assert.equal(await previousSection.getByTestId('residual-base').textContent(), `${previousExpected.baseWeight} kg`);
+  console.log('通過：前爐逐爐摘要、兩份清單獨立收折、摘要不變及鍵盤展開。');
   const consumptionSummary = await dialog.getByTestId('residual-melt').locator('dl').textContent();
   async function exportCsv() {
     const downloadPromise = page.waitForEvent('download');
@@ -115,7 +151,8 @@ try {
   await dialog.getByRole('button', { name: '匯出', exact: true }).click();
   await page.getByText('無資料可匯出', { exact: true }).first().waitFor();
   await dialog.getByRole('button', { name: '投料統計', exact: true }).click();
-  await dialog.getByText('此日期區間內無熔解紀錄', { exact: true }).waitFor();
+  await dialog.getByTestId('residual-melt').getByText('此日期區間內無熔解紀錄', { exact: true }).waitFor();
+  assert.equal(await dialog.getByTestId('residual-previous').getByTestId('residual-total').textContent(), '0 kg');
   assert.equal(await dialog.getByTestId('residual-melt').getByTestId('residual-total').textContent(), '0 kg');
   assert.equal(await dialog.getByTestId('residual-melt').getByTestId('residual-base').textContent(), '0 kg');
   console.log('通過：登入後投料／爐次分頁、真實資料合計、分頁CSV與空區間；未修改正式紀錄。');
