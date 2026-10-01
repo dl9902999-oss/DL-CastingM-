@@ -76,7 +76,7 @@ const CATEGORY_META: Record<MaterialCategory, {
   RETURN: {
     label: '回爐料',
     itemLabel: '回爐料項目',
-    note: '澆道、冒口等廠內自產固態循環料，已排除殘湯；依材質分開統計，舊料投料比例 = 該材質回爐料總重 ÷ 該材質溶解投料總重 × 100%。',
+    note: '澆道、冒口等廠內自產固態循環料，已排除前爐殘湯；依使用當爐的材質分開統計，同名回爐料不跨材質合併。舊料投料比例 = 該材質回爐料總重 ÷ 該材質溶解投料總重 × 100%。',
     titleText: 'text-cyan-300',
     valueText: 'text-cyan-300',
     bar: 'bg-cyan-500',
@@ -488,26 +488,31 @@ export default function InventoryManager({
    * - 殘湯：區間總熔湯重（前爐殘湯利用率）
    */
   const consumptionRows = useMemo<ConsumptionRow[]>(() => {
-    const acc: Record<string, { charge: number; secondary: number; melts: Set<string>; grade: string }> = {};
+    const acc = new Map<string, { raw_material: string; charge: number; secondary: number; melts: Set<string>; grade: string }>();
     meltMaterials.forEach(m => {
       const date = meltDateMap[m.melt_id];
       if (!inRange(date)) return;
-      const key = m.raw_material || '(未命名)';
-      if (!acc[key]) {
-        acc[key] = { charge: 0, secondary: 0, melts: new Set(), grade: normalizeGrade(meltGradeMap[m.melt_id]) };
+      const rawMaterial = (m.raw_material || '').trim() || '(未命名)';
+      const grade = normalizeGrade(meltGradeMap[m.melt_id]);
+      // 回爐料依使用當爐的材質分組，不能沿用同名原料第一筆的材質。
+      const key = JSON.stringify([rawMaterial, categorizeMaterial(rawMaterial) === 'RETURN' ? grade : '']);
+      let entry = acc.get(key);
+      if (!entry) {
+        entry = { raw_material: rawMaterial, charge: 0, secondary: 0, melts: new Set(), grade };
+        acc.set(key, entry);
       }
-      acc[key].charge += Number(m.charge_weight) || 0;
-      acc[key].secondary += Number(m.secondary_weight) || 0;
-      acc[key].melts.add(m.melt_id);
+      entry.charge += Number(m.charge_weight) || 0;
+      entry.secondary += Number(m.secondary_weight) || 0;
+      entry.melts.add(m.melt_id);
     });
-    const rows: ConsumptionRow[] = Object.entries(acc).map(([raw_material, v]) => ({
-      raw_material,
+    const rows: ConsumptionRow[] = [...acc.values()].map(v => ({
+      raw_material: v.raw_material,
       charge_weight: round(v.charge),
       secondary_weight: round(v.secondary),
       total: round(v.charge + v.secondary),
       melt_count: v.melts.size,
       ratio: 0,
-      category: categorizeMaterial(raw_material),
+      category: categorizeMaterial(v.raw_material),
       grade: v.grade,
       grade_melt_total: round(gradeMeltWeight[v.grade] || 0),
     }));
@@ -585,13 +590,14 @@ export default function InventoryManager({
     const receiptAcc: Record<string, number> = {};
     receipts.forEach(r => {
       if (!inRange(r.receipt_date)) return;
-      const key = r.raw_material || '(未命名)';
+      const key = (r.raw_material || '').trim() || '(未命名)';
       receiptAcc[key] = (receiptAcc[key] || 0) + (Number(r.weight) || 0);
     });
     const names = new Set<string>([...Object.keys(receiptAcc), ...consumptionRows.map(r => r.raw_material)]);
     return [...names].map(name => {
       const received = round(receiptAcc[name] || 0);
-      const used = consumptionRows.find(r => r.raw_material === name)?.total || 0;
+      // 入庫尚無材質欄位，原料結算須累加所有當爐材質的用量，避免只取第一組。
+      const used = consumptionRows.filter(r => r.raw_material === name).reduce((sum, r) => sum + r.total, 0);
       return {
         raw_material: name,
         received,
@@ -936,7 +942,7 @@ export default function InventoryManager({
                             <p className={`text-xs font-medium ${meta.titleText}`}>
                               {meta.label}投料統計
                               {cat === 'PURCHASED' && `（${startDate} ~ ${endDate}）`}
-                              {cat === 'RETURN' && '（依材質分組，各自獨立計算）'}
+                              {cat === 'RETURN' && '（依當爐材質分組，各自獨立計算）'}
                               {cat === 'RESIDUAL' && '（獨立計算）'}
                             </p>
                             <span className="text-[11px] text-zinc-500">
