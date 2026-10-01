@@ -28,9 +28,12 @@ try {
   console.log('通過：每日第一爐紅點及圖例');
   const dateWindow = energy.getByTestId('energy-date-window');
   const startDate = async () => Number(await dateWindow.getAttribute('data-start'));
+  const zoom = energy.getByLabel('能耗圖表顯示區間');
+  assert.equal(await zoom.inputValue(), '30', '預設顯示一個月');
   const assertWindow = async () => {
     const days = (Number(await dateWindow.getAttribute('data-end')) - await startDate()) / 86400000 + 1;
-    assert.ok(days >= 1 && days <= 21, '每次最多顯示21個日曆天');
+    const limit = Number(await zoom.inputValue());
+    assert.ok(days >= 1 && days <= limit, `每次最多顯示${limit}個日曆天`);
   };
   await assertWindow();
   const initialStart = await startDate();
@@ -38,6 +41,32 @@ try {
     Number(document.querySelector('[data-testid="energy-date-window"]')?.getAttribute('data-start')) === value,
   expected);
   const slider = energy.getByRole('slider', { name: '拖曳日期範圍' });
+  const initialDays = (Number(await dateWindow.getAttribute('data-end')) - initialStart) / 86400000 + 1;
+  const totalDays = initialDays + Number(await slider.getAttribute('max'));
+  const statistics = await energy.getByTestId('energy-average').textContent();
+  const details = await energy.getByTestId('energy-details').textContent();
+  for (const size of [14, 7, 30]) {
+    await zoom.selectOption(String(size));
+    await assertWindow();
+    assert.equal((Number(await dateWindow.getAttribute('data-end')) - await startDate()) / 86400000 + 1, Math.min(size, totalDays));
+    assert.equal(await energy.getByTestId('energy-average').textContent(), statistics, '縮放不影響區間統計');
+    assert.equal(await energy.getByTestId('energy-details').textContent(), details, '縮放不影響明細');
+    const max = Number(await slider.getAttribute('max'));
+    if (max > 0) {
+      await energy.getByRole('button', { name: `後${size}天`, exact: true }).click();
+      await waitForStart(initialStart + Math.min(size, max) * 86400000);
+      await slider.focus();
+      await page.keyboard.press('End');
+      await waitForStart(initialStart + max * 86400000);
+      assert.equal(await energy.getByRole('button', { name: `後${size}天`, exact: true }).isDisabled(), true);
+      await zoom.selectOption('30');
+      await assertWindow();
+      assert.ok(Number(await slider.inputValue()) <= Number(await slider.getAttribute('max')), '放大區間不可越界');
+      await slider.focus();
+      await page.keyboard.press('Home');
+      await waitForStart(initialStart);
+    }
+  }
   if (Number(await slider.getAttribute('max')) > 0) {
     const chart = energy.getByTestId('energy-drag-chart');
     const box = await chart.boundingBox();
@@ -50,12 +79,12 @@ try {
     await slider.focus();
     await page.keyboard.press('End');
     await waitForStart(initialStart + Number(await slider.getAttribute('max')) * 86400000);
-    assert.equal(await energy.getByRole('button', { name: '後21天', exact: true }).isDisabled(), true);
+    assert.equal(await energy.getByRole('button', { name: '後30天', exact: true }).isDisabled(), true);
     await assertWindow();
     await page.keyboard.press('Home');
     await waitForStart(initialStart);
     assert.equal(await startDate(), initialStart);
-    assert.equal(await energy.getByRole('button', { name: '前21天', exact: true }).isDisabled(), true);
+    assert.equal(await energy.getByRole('button', { name: '前30天', exact: true }).isDisabled(), true);
     await chart.focus();
     await page.keyboard.press('ArrowRight');
     await waitForStart(initialStart + 86400000);
@@ -64,7 +93,7 @@ try {
     await waitForStart(initialStart);
     assert.equal(await startDate(), initialStart);
   }
-  console.log('通過：21天視窗、滑鼠拖曳、日期滑桿與鍵盤邊界');
+  console.log('通過：30／14／7天縮放、統計不變、滑鼠拖曳、日期滑桿與鍵盤邊界');
   await energy.getByLabel('第一批定義').selectOption('rebuild');
   assert.equal(await energy.getByLabel('分析座標').count(), 0, '不可切換為爐次軸');
   assert.ok(await energy.getByText('日期能耗比較', { exact: false }).count());
@@ -104,6 +133,12 @@ try {
   assert.ok(await rows.count() > 0);
   assert.ok((await rows.evaluateAll(els => els.map(el => el.dataset.date))).every(date => date === selectedDate));
   assert.equal(await slider.isDisabled(), true);
+  for (const size of [7, 14, 30]) {
+    await zoom.selectOption(String(size));
+    await assertWindow();
+    assert.equal(await dateWindow.getAttribute('data-start'), await dateWindow.getAttribute('data-end'), '單日範圍不因縮放擴大');
+    assert.equal(await slider.isDisabled(), true);
+  }
   const dayCells = await verifyBands();
   if (Number(await averageElement.getAttribute('data-count')) <= 30) {
     assert.ok(Math.abs(Number(await averageElement.getAttribute('data-average')) - dayCells.reduce((sum, cell) => sum + cell.energy, 0) / dayCells.length) < 1e-10);

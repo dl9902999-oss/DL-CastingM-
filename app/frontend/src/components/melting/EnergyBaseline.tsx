@@ -34,6 +34,7 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
   const [dateError, setDateError] = useState('');
   const [page, setPage] = useState(0);
   const [windowOffset, setWindowOffset] = useState(0);
+  const [windowDays, setWindowDays] = useState(30);
   const drag = useRef<{ pointerId: number; x: number; offset: number; width: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   useEffect(() => {
@@ -64,7 +65,7 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
   }, [filteredPoints, dateRange]);
   const day = 86400000;
   const totalDays = Math.round((extent[1] - extent[0]) / day) + 1;
-  const visibleDays = Math.min(21, totalDays);
+  const visibleDays = Math.min(windowDays, totalDays);
   const maxOffset = Math.max(0, totalDays - visibleDays);
   const offset = Math.min(windowOffset, maxOffset);
   const windowStart = extent[0] + offset * day;
@@ -110,11 +111,24 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
         {dateError && <p id="energy-date-error" role="alert" className="text-xs text-red-300">{dateError}</p>}
         <p data-testid="energy-applied-range" className="text-xs text-zinc-400" aria-live="polite">已套用：{dateRange.start || '最早日期'} ～ {dateRange.end || '最新日期'}（含起訖日）。圖表、上方統計及下方明細同步篩選；日期留空表示不限。</p>
       </form>
+      <label className="mb-3 flex flex-wrap items-center gap-2 text-xs text-zinc-300">
+        顯示區間
+        <select aria-label="能耗圖表顯示區間" value={windowDays} onChange={e => {
+          const nextDays = Number(e.target.value);
+          stopDragging();
+          setWindowOffset(Math.min(offset, Math.max(0, totalDays - nextDays)));
+          setWindowDays(nextDays);
+        }} className="rounded border border-zinc-600 bg-zinc-800 px-3 py-2 text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300">
+          <option value={30}>一個月（30天）</option>
+          <option value={14}>雙週（14天）</option>
+          <option value={7}>單週（7天）</option>
+        </select>
+      </label>
       {loading ? <p className="py-12 text-center text-zinc-400">正在加總投料與計算能耗…</p> : !plotted.length ? <p className="py-12 text-center text-zinc-400">尚無可比較的1、2號爐體資料，需填寫投料及耗電量。</p> : <>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
-        <button type="button" disabled={offset === 0} onClick={() => moveWindow(offset - 21)} className="rounded border border-zinc-600 px-3 py-2 text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">前21天</button>
+        <button type="button" disabled={offset === 0} onClick={() => moveWindow(offset - windowDays)} className="rounded border border-zinc-600 px-3 py-2 text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">前{windowDays}天</button>
         <span data-testid="energy-date-window" data-start={windowStart} data-end={windowEnd} aria-live="polite">{dateLabel(windowStart)} ～ {dateLabel(windowEnd)} · {visibleDays}天</span>
-        <button type="button" disabled={offset === maxOffset} onClick={() => moveWindow(offset + 21)} className="rounded border border-zinc-600 px-3 py-2 text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">後21天</button>
+        <button type="button" disabled={offset === maxOffset} onClick={() => moveWindow(offset + windowDays)} className="rounded border border-zinc-600 px-3 py-2 text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">後{windowDays}天</button>
       </div>
       <div data-testid="energy-drag-chart" role="group" aria-label="可左右拖曳的能耗圖表" tabIndex={0}
         className={`select-none rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 ${maxOffset ? dragging ? 'cursor-grabbing' : 'cursor-grab' : ''}`}
@@ -156,7 +170,7 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
       <label className="mt-2 block text-xs text-zinc-300">拖曳日期範圍
         <input aria-label="拖曳日期範圍" type="range" min={0} max={maxOffset} step={1} value={offset} disabled={!maxOffset} onChange={e => moveWindow(Number(e.target.value))} className="mt-2 w-full accent-amber-300 disabled:opacity-40" />
       </label>
-      <p className="mb-3 text-xs text-zinc-400">左右拖曳圖表或滑桿查看其他日期，每次最多21個日曆天（含無資料日期）。聚焦圖表後亦可用左右方向鍵。上方統計、平均基線與下方明細維持完整篩選範圍。</p>
+      <p className="mb-3 text-xs text-zinc-400">左右拖曳圖表或滑桿查看其他日期，每次最多顯示{windowDays}個日曆天（含無資料日期），可切換一個月、雙週或單週；不足所選天數時顯示全部日期。聚焦圖表後亦可用左右方向鍵。上方統計、平均基線與下方明細維持完整篩選範圍。</p>
       </>}
       <p className="text-xs text-zinc-400">每一點代表一批；同日期共用X座標，依實際能耗上下排列。相同日期且能耗相同的點會重疊，全部批次可在下方明細查看。</p>
     </div>
