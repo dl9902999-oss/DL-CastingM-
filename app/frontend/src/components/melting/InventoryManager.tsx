@@ -15,7 +15,7 @@ import {
 import type { RawMaterialReceipt, RawMaterialReceiptInput } from '@/lib/supabaseStore';
 import type { MeltRecord, MeltMaterial, MeltingRecord } from '@/lib/types';
 import ResidualStatistics from './ResidualStatistics';
-import { buildMeltResidualRows, buildPourResidualRows, buildPreviousResidualRows, isResidualMaterial, residualExportRows } from '@/lib/residualStatistics';
+import { buildMeltResidualRows, buildPourResidualRows, buildPreviousResidualRows, isResidualMaterial, residualExportRows, summarizeResidual } from '@/lib/residualStatistics';
 
 /** 原料入庫可登錄的成分規格元素 */
 const SPEC_ELEMENTS = ['C', 'Si', 'Mn', 'P', 'S', 'Ni', 'Cr', 'Mo', 'Cu'] as const;
@@ -568,6 +568,7 @@ export default function InventoryManager({
     () => buildMeltResidualRows(meltRecords, meltMaterials, startDate, endDate),
     [meltRecords, meltMaterials, startDate, endDate]
   );
+  const meltResidualSummary = useMemo(() => summarizeResidual(meltResidualRows), [meltResidualRows]);
   const pourResidualRows = useMemo(
     () => buildPourResidualRows(pourRecords, startDate, endDate),
     [pourRecords, startDate, endDate]
@@ -582,9 +583,6 @@ export default function InventoryManager({
   );
 
   const totalReceiptWeight = round(rangeReceipts.reduce((s, r) => s + (Number(r.weight) || 0), 0));
-  const totalReceiptAmount = round(
-    rangeReceipts.reduce((s, r) => s + (Number(r.weight) || 0) * (Number(r.unit_price) || 0), 0)
-  );
 
   /** 區間內各原料的入庫量 vs 投料量結算（依三分類標示） */
   const balanceRows = useMemo<BalanceRow[]>(() => {
@@ -848,7 +846,14 @@ export default function InventoryManager({
               </CardContent>
             </Card>
 
-            {tab !== 'residual' && <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {tab !== 'residual' && <div data-testid="inventory-summary" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+              <Card className="bg-zinc-800 border-zinc-700">
+                <CardContent className="p-3">
+                  <p className="text-xs text-zinc-400">總投料</p>
+                  <p className="text-lg font-bold text-zinc-100">{totalConsumption} kg</p>
+                  <p className="text-[10px] text-zinc-400">外購＋回爐料＋前爐殘湯</p>
+                </CardContent>
+              </Card>
               <Card className="bg-zinc-800 border-zinc-700">
                 <CardContent className="p-3">
                   <p className="text-xs text-zinc-400">外購投料</p>
@@ -870,22 +875,18 @@ export default function InventoryManager({
                   <p className="text-[10px] text-zinc-500">前爐殘湯利用率 {residualUtilizationRate}%（分母：總熔湯重 {totalMeltWeight} kg）</p>
                 </CardContent>
               </Card>
+              <Card className="bg-zinc-800 border-violet-900/50">
+                <CardContent className="p-3">
+                  <p className="text-xs text-zinc-400">爐次澆注殘湯</p>
+                  <p className="text-lg font-bold text-violet-300">{meltResidualSummary.residualWeight} kg</p>
+                  <p className="text-[10px] text-zinc-400">殘湯率 {meltResidualSummary.rate}%（分母：總投料重 {meltResidualSummary.baseWeight} kg）</p>
+                  <p className="text-[10px] text-zinc-400">本爐產生，不含前爐投料</p>
+                </CardContent>
+              </Card>
               <Card className="bg-zinc-800 border-zinc-700">
                 <CardContent className="p-3">
-                  <p className="text-xs text-zinc-400">區間總入庫</p>
+                  <p className="text-xs text-zinc-400">原料入庫總量</p>
                   <p className="text-lg font-bold text-emerald-400">{totalReceiptWeight} kg</p>
-                </CardContent>
-              </Card>
-              <Card className="bg-zinc-800 border-zinc-700">
-                <CardContent className="p-3">
-                  <p className="text-xs text-zinc-400">入庫金額</p>
-                  <p className="text-lg font-bold text-blue-400">{totalReceiptAmount.toLocaleString()}</p>
-                </CardContent>
-              </Card>
-              <Card className="bg-zinc-800 border-zinc-700">
-                <CardContent className="p-3">
-                  <p className="text-xs text-zinc-400">原料種類</p>
-                  <p className="text-lg font-bold text-zinc-100">{balanceRows.length}</p>
                 </CardContent>
               </Card>
             </div>}
