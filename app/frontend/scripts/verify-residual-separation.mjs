@@ -86,11 +86,12 @@ try {
   assert.equal(await summaryCards.count(), 6);
   assert.deepEqual(await summaryCards.locator('p:first-child').allTextContents(), ['總投料', '外購投料', '回爐料投料', '前爐殘湯投料', '爐次澆注殘湯', '原料入庫總量']);
   const cardWeights = (await summaryCards.locator('p:nth-child(2)').allTextContents()).map(text => Number(text.replace(' kg', '')));
-  assert.equal(cardWeights[0], Math.round((cardWeights[1] + cardWeights[2] + cardWeights[3]) * 100) / 100);
+  assert.equal(cardWeights[0], Math.round((cardWeights[1] + cardWeights[2]) * 100) / 100);
+  assert.ok((await summaryCards.nth(0).textContent()).includes('不含前爐殘湯'));
   assert.equal(await summaryCards.nth(4).locator('p:nth-child(2)').textContent(), await dialog.getByTestId('residual-melt').getByTestId('residual-total').textContent());
   const meltRate = await dialog.getByTestId('residual-melt').locator('dl > div').last().locator('dd').textContent();
   assert.ok((await summaryCards.nth(4).textContent()).includes(`殘湯率 ${meltRate}`));
-  console.log('通過：六卡順序、三項投料加總、本爐殘湯重量與殘湯率一致。');
+  console.log('通過：六卡順序、總投料僅加總外購與回爐料並排除前爐殘湯、本爐殘湯重量與殘湯率一致。');
   const previousSection = dialog.getByTestId('residual-previous');
   const meltSection = dialog.getByTestId('residual-melt');
   await previousSection.waitFor();

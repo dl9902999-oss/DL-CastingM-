@@ -850,8 +850,8 @@ export default function InventoryManager({
               <Card className="bg-zinc-800 border-zinc-700">
                 <CardContent className="p-3">
                   <p className="text-xs text-zinc-400">總投料</p>
-                  <p className="text-lg font-bold text-zinc-100">{totalConsumption} kg</p>
-                  <p className="text-[10px] text-zinc-400">外購＋回爐料＋前爐殘湯</p>
+                  <p className="text-lg font-bold text-zinc-100">{round(purchasedTotal + returnTotal)} kg</p>
+                  <p className="text-[10px] text-zinc-400">外購＋回爐料（不含前爐殘湯）</p>
                 </CardContent>
               </Card>
               <Card className="bg-zinc-800 border-zinc-700">
