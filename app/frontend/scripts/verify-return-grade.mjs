@@ -3,6 +3,11 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 
 // 直接執行元件中的純彙總邏輯，避免測試另寫一套計算公式。
+const residualSource = readFileSync(new URL('../src/lib/residualStatistics.ts', import.meta.url), 'utf8');
+const residualCode = ts.transpileModule(residualSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+const residualExports = {};
+new Function('exports', residualCode)(residualExports);
+const isResidualMaterial = residualExports.isResidualMaterial;
 const source = readFileSync(new URL('../src/components/melting/InventoryManager.tsx', import.meta.url), 'utf8');
 function between(start, end) {
   const from = source.indexOf(start);
@@ -16,10 +21,11 @@ const normalize = between('function normalizeGrade(', '/**\n * 將回爐料投�
 const group = between('function buildReturnGradeGroups(', 'interface BalanceRow');
 const helpers = `type MaterialCategory =${definitions}\nfunction round(${round}\nfunction normalizeGrade(${normalize}\nfunction buildReturnGradeGroups(${group}`;
 function run(body, inputs) {
+  inputs = { isResidualMaterial, ...inputs };
   const code = ts.transpileModule(`${helpers}\nfunction calculate(){${body}}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
   return new Function(...Object.keys(inputs), `${code}\nreturn calculate();`)(...Object.values(inputs));
 }
-const aggregateBody = between('const consumptionRows = useMemo<ConsumptionRow[]>(() => {', '}, [meltMaterials, meltDateMap, inRange, meltGradeMap, gradeMeltWeight, totalMeltWeight]);');
+const aggregateBody = between('const consumptionRows = useMemo<ConsumptionRow[]>(() => {', '}, [meltMaterials, meltDateMap, inRange, meltGradeMap, totalMeltWeight]);');
 const balanceBody = between('const balanceRows = useMemo<BalanceRow[]>(() => {', '}, [receipts, consumptionRows, inRange]);');
 const fixtures = {
   meltMaterials: [
@@ -39,7 +45,7 @@ const fixtures = {
   meltDateMap: { a: '2026-09-01', b: '2026-09-02', c: '2026-09-02', u: '2026-09-02', old: '2026-08-31' },
   meltGradeMap: { a: 'FC250', b: 'FCD450', c: ' FC250 ', u: '' },
   gradeMeltWeight: { FC250: 200, FCD450: 400, 未分類材質: 0 },
-  totalMeltWeight: 600,
+  totalMeltWeight: 217,
   inRange: date => !!date && date >= '2026-09-01' && date <= '2026-09-02',
 };
 const rows = run(aggregateBody, fixtures);
@@ -49,17 +55,21 @@ assert.equal(fc.total, 40);
 assert.equal(fc.charge_weight, 33);
 assert.equal(fc.secondary_weight, 7);
 assert.equal(fc.melt_count, 2);
-assert.equal(fc.ratio, 20);
+assert.equal(fc.ratio, 18.4);
 assert.equal(fcd.total, 80);
-assert.equal(fcd.ratio, 20);
+assert.equal(fcd.ratio, 36.9);
 assert.equal(fcd.melt_count, 1);
-assert.equal(rows.find(r => r.grade === '未分類材質').ratio, 0);
+assert.equal(rows.find(r => r.grade === '未分類材質').ratio, 3.2);
+assert.ok(run(aggregateBody, { ...fixtures, totalMeltWeight: 0 }).filter(r => r.category !== 'PURCHASED').every(r => r.ratio === 0));
+const baseBody = between('const totalMeltWeight = useMemo(() => {', '}, [meltMaterials, meltDateMap, meltGradeMap, inRange]);');
+assert.equal(run(baseBody, fixtures), 217);
+assert.equal(run(baseBody, { ...fixtures, meltMaterials: fixtures.meltMaterials.map(m => isResidualMaterial(m.raw_material) ? { ...m, charge_weight: 999 } : m) }), 217);
 assert.equal(rows.find(r => r.category === 'RESIDUAL').total, 17);
 assert.equal(rows.find(r => r.category === 'PURCHASED').total, 70);
 const groups = run("return buildReturnGradeGroups(rows.filter(r => r.category === 'RETURN'));", { rows });
 assert.equal(groups.find(g => g.grade === 'FCD450').total, 100);
-assert.equal(groups.find(g => g.grade === 'FCD450').melt_total, 400);
-assert.equal(groups.find(g => g.grade === 'FCD450').ratio, 25);
+assert.equal(groups.find(g => g.grade === 'FCD450').melt_total, 217);
+assert.equal(groups.find(g => g.grade === 'FCD450').ratio, 46.1);
 assert.equal(groups.reduce((sum, g) => sum + g.total, 0), 147);
 const reverseRows = run(aggregateBody, { ...fixtures, meltMaterials: [...fixtures.meltMaterials].reverse() });
 assert.equal(reverseRows.find(r => r.raw_material === '回爐料' && r.grade === 'FC250').total, 40);

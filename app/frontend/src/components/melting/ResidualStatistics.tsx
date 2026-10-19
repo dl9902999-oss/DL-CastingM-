@@ -9,7 +9,7 @@ export default function ResidualStatistics({ rows, source }: { rows: ResidualSta
   const isPrevious = source === 'previous';
   const isPour = source === 'pour';
   const title = isPrevious ? '前爐殘湯投料統計（獨立計算）' : isPour ? '批次澆注殘湯（獨立登錄）' : '爐次殘湯統計（本爐產生）';
-  const baseLabel = isPour ? '總出湯重' : '總投料重';
+  const baseLabel = isPour ? '總出湯重' : '總投料重（不含前爐殘湯）';
   const totalLabel = isPrevious ? '前爐殘湯投料合計' : isPour ? '澆注殘湯合計' : '本爐殘湯合計';
   const rateLabel = isPrevious ? '前爐殘湯利用率' : isPour ? '澆注殘湯率' : '本爐殘湯率';
   const summary = summarizeResidual(rows);
@@ -21,7 +21,7 @@ export default function ResidualStatistics({ rows, source }: { rows: ResidualSta
     <section data-testid={`residual-${source}`} className="space-y-3 rounded border border-violet-900/50 p-4 text-zinc-300">
       <h3 className="text-sm font-semibold text-violet-200">{title}</h3>
       <p className="text-xs text-zinc-400">
-        {isPrevious ? '來源：投料明細中的前爐殘湯（首次投料＋二次添加），依使用當爐的熔解日期篩選；不含本爐產生的殘湯。清單包含區間內全部爐次，未投入前爐殘湯者顯示0，合計分母為全部爐次總投料重。'
+        {isPrevious ? '來源：投料明細中的前爐殘湯（首次投料＋二次添加），依使用當爐的熔解日期篩選；不含本爐產生的殘湯。清單包含區間內全部爐次，未投入前爐殘湯者顯示0，合計分母為全部爐次的外購與回爐料投料重，不含前爐殘湯。'
           : isPour ? '來源：批次澆注登錄值，依建立日期篩選；與上方熔解爐次分開統計，不合併、不互相補值。'
             : '來源：熔解紀錄的本爐殘湯重量，依熔解日期篩選；不包含投料明細的前爐殘湯。'}
       </p>

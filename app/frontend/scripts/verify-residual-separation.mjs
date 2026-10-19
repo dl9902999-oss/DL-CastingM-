@@ -29,21 +29,26 @@ try {
       single: buildMeltResidualRows(melts, materials, '2026-09-01', '2026-09-01').length,
       empty: summarizeResidual(buildMeltResidualRows(melts, materials, '2099-01-01', '2099-01-02')),
       zero: summarizeResidual([{ baseWeight: 0, residualWeight: 10 }]),
+      residualOnly: summarizeResidual(buildMeltResidualRows(melts, materials.filter(m => m.raw_material === '前爐殘湯'), '2026-09-01', '2026-09-02')),
+      previousOnlyChanged: summarizeResidual(buildMeltResidualRows(melts, materials.map(m => m.raw_material === '前爐殘湯' ? { ...m, charge_weight: 999 } : m), '2026-09-01', '2026-09-02')),
       exported: residualExportRows(rows, '熔解爐次'),
     };
   });
-  assert.deepEqual(results.previous, { baseWeight: 1199, residualWeight: 30, rate: 2.5 });
+  assert.deepEqual(results.previous, { baseWeight: 70, residualWeight: 30, rate: 42.86 });
   assert.deepEqual(results.previousChanged, results.previous);
   assert.deepEqual(results.previousEmpty, { baseWeight: 0, residualWeight: 0, rate: 0 });
   assert.equal(results.previousRows.find(row => row.id === 'a').chargeWeight, 20);
   assert.equal(results.previousRows.find(row => row.id === 'a').secondaryWeight, 10);
   assert.equal(results.previousRows.find(row => row.id === 'b').residualWeight, 0);
-  assert.deepEqual(results.summary, { baseWeight: 300, residualWeight: 50, rate: 16.67 });
+  assert.deepEqual(results.summary, { baseWeight: 70, residualWeight: 50, rate: 71.43 });
   assert.equal(results.changed.residualWeight, 50, '前爐投料異動不可改變本爐殘湯合計');
   assert.deepEqual(results.pour, { baseWeight: 100, residualWeight: 7, rate: 7 });
   assert.equal(results.single, 1);
   assert.deepEqual(results.empty, { baseWeight: 0, residualWeight: 0, rate: 0 });
   assert.equal(results.zero.rate, 0);
+  assert.deepEqual(results.residualOnly, { baseWeight: 0, residualWeight: 50, rate: 0 });
+  assert.deepEqual(results.previousOnlyChanged, results.summary);
+  assert.equal(results.exported.at(-1)[5], 70);
   assert.equal(results.exported.at(-1)[6], 50);
   console.log('通過：日期含邊界、單日、空區間、零分母、投料異動不影響本爐殘湯、澆注來源隔離、CSV合計。');
   await page.locator('#employeeId').fill('A001');
@@ -91,7 +96,17 @@ try {
   assert.equal(await summaryCards.nth(4).locator('p:nth-child(2)').textContent(), await dialog.getByTestId('residual-melt').getByTestId('residual-total').textContent());
   const meltRate = await dialog.getByTestId('residual-melt').locator('dl > div').last().locator('dd').textContent();
   assert.ok((await summaryCards.nth(4).textContent()).includes(`殘湯率 ${meltRate}`));
-  console.log('通過：六卡順序、總投料僅加總外購與回爐料並排除前爐殘湯、本爐殘湯重量與殘湯率一致。');
+  for (const index of [2, 3, 4]) {
+    assert.ok((await summaryCards.nth(index).textContent()).includes(`總投料（不含前爐殘湯）${cardWeights[0]} kg`));
+  }
+  for (const source of ['previous', 'melt']) {
+    assert.equal(await dialog.getByTestId(`residual-${source}`).getByTestId('residual-base').textContent(), `${cardWeights[0]} kg`);
+  }
+  const ratio = (value, digits = 1) => cardWeights[0] > 0 ? Math.round(value / cardWeights[0] * 100 * 10 ** digits) / 10 ** digits : 0;
+  assert.ok((await summaryCards.nth(2).textContent()).includes(`舊料投料比例 ${ratio(cardWeights[2])}%`));
+  assert.ok((await summaryCards.nth(3).textContent()).includes(`前爐殘湯利用率 ${ratio(cardWeights[3])}%`));
+  assert.ok((await summaryCards.nth(4).textContent()).includes(`殘湯率 ${ratio(cardWeights[4], 2)}%`));
+  console.log('通過：三種比例共用不含前爐殘湯的總投料，摘要與明細分母一致。');
   const previousSection = dialog.getByTestId('residual-previous');
   const meltSection = dialog.getByTestId('residual-melt');
   await previousSection.waitFor();
@@ -126,6 +141,11 @@ try {
     return { filename: download.suggestedFilename(), text: readFileSync(await download.path(), 'utf8') };
   }
   const consumption = await exportCsv();
+  const csvRows = consumption.text.replace(/^\uFEFF/, '').trim().split('\n').slice(1).map(line => line.slice(1, -1).split('\",\"').map(cell => cell.replaceAll('\"\"', '\"')));
+  for (const row of csvRows.filter(row => ['舊料投料比例', '前爐殘湯利用率'].includes(row[7]))) {
+    assert.equal(Number(row[9]), cardWeights[0], 'CSV比例分母應與總投料卡一致');
+    assert.equal(Number(row[8]), ratio(Number(row[5])));
+  }
   assert.ok(consumption.filename.startsWith('原料投料統計'));
   assert.ok(consumption.text.includes('前爐殘湯'));
   assert.ok(!consumption.text.includes('總殘湯率'));

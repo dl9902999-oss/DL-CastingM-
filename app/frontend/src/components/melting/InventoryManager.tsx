@@ -73,7 +73,7 @@ const CATEGORY_META: Record<MaterialCategory, {
   RETURN: {
     label: '回爐料',
     itemLabel: '回爐料項目',
-    note: '澆道、冒口等廠內自產固態循環料，已排除前爐殘湯；依使用當爐的材質分開統計，同名回爐料不跨材質合併。舊料投料比例 = 該材質回爐料總重 ÷ 該材質溶解投料總重 × 100%。',
+    note: '澆道、冒口等廠內自產固態循環料，已排除前爐殘湯；依使用當爐的材質分開統計，同名回爐料不跨材質合併。舊料投料比例 = 回爐料重量 ÷ 區間總投料（不含前爐殘湯）× 100%。',
     titleText: 'text-cyan-300',
     valueText: 'text-cyan-300',
     bar: 'bg-cyan-500',
@@ -86,7 +86,7 @@ const CATEGORY_META: Record<MaterialCategory, {
   RESIDUAL: {
     label: '前爐殘湯',
     itemLabel: '前爐殘湯項目',
-    note: '僅加總投料明細中的前爐殘湯（首次投料＋二次添加），不含本爐產生的殘湯；前爐殘湯利用率 = 前爐殘湯投料總重 ÷ 總熔湯重 × 100%。',
+    note: '僅加總投料明細中的前爐殘湯（首次投料＋二次添加），不含本爐產生的殘湯；前爐殘湯利用率 = 前爐殘湯投料總重 ÷ 總投料（不含前爐殘湯）× 100%。',
     titleText: 'text-violet-300',
     valueText: 'text-violet-300',
     bar: 'bg-violet-500',
@@ -242,8 +242,8 @@ function ConsumptionTable({ rows, category, total, groups, meltWeight }: {
   const secondarySum = round(rows.reduce((s, r) => s + r.secondary_weight, 0));
   const ratioLabel = RATIO_LABEL[category];
   const isReturn = category === 'RETURN' && !!groups && groups.length > 0;
-  /** 回爐料：各材質溶解投料總重合計 */
-  const groupMeltTotal = round((groups || []).reduce((s, g) => s + g.melt_total, 0));
+  /** 回爐料合計使用同一區間分母，不重複加總各組分母。 */
+  const groupMeltTotal = meltWeight || 0;
   /** 合計列的比例：外購為 100%，回爐料為舊料投料比例，殘湯為總殘湯率 */
   const totalRatio = category === 'PURCHASED'
     ? 100
@@ -254,8 +254,8 @@ function ConsumptionTable({ rows, category, total, groups, meltWeight }: {
   const totalRatioNote = category === 'PURCHASED'
     ? '占比'
     : category === 'RETURN'
-      ? `溶解 ${groupMeltTotal} kg`
-      : `總熔湯 ${meltWeight || 0} kg`;
+      ? `總投料（不含前爐殘湯）${groupMeltTotal} kg`
+      : `總投料（不含前爐殘湯）${meltWeight || 0} kg`;
   const renderRow = (r: ConsumptionRow) => (
     <tr key={r.raw_material} className={`text-zinc-300 border-b ${meta.rowBorder}`}>
       <td className="py-2 px-3 font-medium">
@@ -271,7 +271,7 @@ function ConsumptionTable({ rows, category, total, groups, meltWeight }: {
       <td className="text-right py-2 px-3">
         <div className="flex items-center justify-end gap-2">
           {category === 'RETURN' && (
-            <span className="text-[10px] text-zinc-500">溶解 {r.grade_melt_total} kg</span>
+            <span className="text-[10px] text-zinc-500">總投料（不含前爐殘湯）{r.grade_melt_total} kg</span>
           )}
           <div className="w-16 h-1.5 bg-zinc-700 rounded overflow-hidden">
             <div className={`h-full ${meta.bar}`} style={{ width: `${Math.min(r.ratio, 100)}%` }} />
@@ -307,7 +307,7 @@ function ConsumptionTable({ rows, category, total, groups, meltWeight }: {
                   <td className="text-right py-1.5 px-3 text-[10px] text-cyan-200/70">{g.rows.length} 項</td>
                   <td className="text-right py-1.5 px-3">
                     <div className="flex items-center justify-end gap-2">
-                      <span className="text-[10px] text-cyan-200/60">溶解 {g.melt_total} kg</span>
+                      <span className="text-[10px] text-cyan-200/60">總投料（不含前爐殘湯）{g.melt_total} kg</span>
                       <div className="w-16 h-1.5 bg-zinc-700 rounded overflow-hidden">
                         <div className={`h-full ${meta.bar}`} style={{ width: `${Math.min(g.ratio, 100)}%` }} />
                       </div>
@@ -447,35 +447,17 @@ export default function InventoryManager({
     return map;
   }, [meltRecords]);
 
-  /** melt_id -> 投料明細加總重量，作為熔解紀錄總投料缺失時的回退值 */
-  const meltChargeTotalMap = useMemo(() => {
-    const map: Record<string, number> = {};
+  /** 區間總投料只含外購及回爐料，排除前爐殘湯。 */
+  const totalMeltWeight = useMemo(() => {
+    const totals = new Map<string, number>();
     meltMaterials.forEach(m => {
-      map[m.melt_id] = (map[m.melt_id] || 0) + (Number(m.charge_weight) || 0) + (Number(m.secondary_weight) || 0);
+      if (!inRange(meltDateMap[m.melt_id]) || isResidualMaterial(m.raw_material)) return;
+      const name = (m.raw_material || '').trim() || '(未命名)';
+      const key = JSON.stringify([name, categorizeMaterial(name) === 'RETURN' ? normalizeGrade(meltGradeMap[m.melt_id]) : '']);
+      totals.set(key, (totals.get(key) || 0) + (Number(m.charge_weight) || 0) + (Number(m.secondary_weight) || 0));
     });
-    return map;
-  }, [meltMaterials]);
-
-  /**
-   * 各材質「溶解投料總重」：該材質在日期區間內所有爐次的總投料重。
-   * 優先取熔解紀錄的 total_charge_weight，無值時以投料明細加總回退。
-   */
-  const gradeMeltWeight = useMemo(() => {
-    const map: Record<string, number> = {};
-    meltRecords.forEach(r => {
-      if (!inRange(r.melt_date)) return;
-      const grade = normalizeGrade(r.material_grade);
-      const charge = Number(r.total_charge_weight) || meltChargeTotalMap[r.id] || 0;
-      map[grade] = (map[grade] || 0) + charge;
-    });
-    return map;
-  }, [meltRecords, meltChargeTotalMap, inRange]);
-
-  /** 區間總熔湯重：全部爐次總投料重合計，作為前爐殘湯利用率／總殘湯率的分母 */
-  const totalMeltWeight = useMemo(
-    () => round(Object.values(gradeMeltWeight).reduce((s, v) => s + v, 0)),
-    [gradeMeltWeight]
-  );
+    return round([...totals.values()].reduce((sum, value) => sum + round(value), 0));
+  }, [meltMaterials, meltDateMap, meltGradeMap, inRange]);
 
   /**
    * 日期區間內各原料投料統計。
@@ -511,7 +493,7 @@ export default function InventoryManager({
       ratio: 0,
       category: categorizeMaterial(v.raw_material),
       grade: v.grade,
-      grade_melt_total: round(gradeMeltWeight[v.grade] || 0),
+      grade_melt_total: totalMeltWeight,
     }));
     const sums: Record<MaterialCategory, number> = { PURCHASED: 0, RETURN: 0, RESIDUAL: 0 };
     rows.forEach(r => { sums[r.category] += r.total; });
@@ -522,7 +504,7 @@ export default function InventoryManager({
       r.ratio = base > 0 ? round((r.total / base) * 100, 1) : 0;
     });
     return rows.sort((a, b) => b.total - a.total);
-  }, [meltMaterials, meltDateMap, inRange, meltGradeMap, gradeMeltWeight, totalMeltWeight]);
+  }, [meltMaterials, meltDateMap, inRange, meltGradeMap, totalMeltWeight]);
 
   /** 依分類拆分的投料明細 */
   const rowsByCategory = useMemo<Record<MaterialCategory, ConsumptionRow[]>>(() => ({
@@ -550,8 +532,8 @@ export default function InventoryManager({
     () => buildReturnGradeGroups(rowsByCategory.RETURN),
     [rowsByCategory.RETURN]
   );
-  /** 回爐料各材質溶解投料總重合計（回爐料合計列的比例分母） */
-  const returnMeltTotal = round(returnGradeGroups.reduce((s, g) => s + g.melt_total, 0));
+  /** 所有材質共用區間總投料分母，不能將同一分母重複加總。 */
+  const returnMeltTotal = totalMeltWeight;
 
   /**
    * 前爐殘湯利用率 = 殘湯投料總重 ÷ 總熔湯重 × 100%
@@ -739,7 +721,7 @@ export default function InventoryManager({
     if (isResidual) {
       headers = ['統計來源', '日期', '紀錄編號', '爐號', '材質／批次', '比例分母重量(kg)', '本爐殘湯重量(kg)', '殘湯率(%)'];
       body = [
-        ...residualExportRows(meltResidualRows, '熔解爐次（分母：總熔湯重）'),
+        ...residualExportRows(meltResidualRows, '熔解爐次（分母：總投料，不含前爐殘湯）'),
         ...residualExportRows(pourResidualRows, '批次澆注（分母：總出湯重）'),
       ];
     } else if (isConsumption) {
@@ -778,7 +760,7 @@ export default function InventoryManager({
         }
       });
       body.push(['彙總', '', '全部投料', '', '', totalConsumption, '', '', 100, totalConsumption]);
-      body.push(['彙總', '', '總熔湯重', '', '', totalMeltWeight, '', '分母', '', totalMeltWeight]);
+      body.push(['彙總', '', '總投料（不含前爐殘湯）', '', '', totalMeltWeight, '', '分母', '', totalMeltWeight]);
       body.push(['彙總', '', '前爐殘湯利用率(%)', '', '', residualTotal, '', '前爐殘湯利用率', residualUtilizationRate, totalMeltWeight]);
       body.push(['彙總', '', '回爐料使用率(%)', '', '', returnTotal, '', '占全部投料', returnUsageRate, totalConsumption]);
     } else {
@@ -865,21 +847,21 @@ export default function InventoryManager({
                 <CardContent className="p-3">
                   <p className="text-xs text-zinc-400">回爐料投料</p>
                   <p className="text-lg font-bold text-cyan-300">{returnTotal} kg</p>
-                  <p className="text-[10px] text-zinc-500">舊料投料比例 {returnMeltTotal > 0 ? round((returnTotal / returnMeltTotal) * 100, 1) : 0}%（分母：各材質溶解投料 {returnMeltTotal} kg）</p>
+                  <p className="text-[10px] text-zinc-500">舊料投料比例 {returnMeltTotal > 0 ? round((returnTotal / returnMeltTotal) * 100, 1) : 0}%（分母：總投料（不含前爐殘湯）{returnMeltTotal} kg）</p>
                 </CardContent>
               </Card>
               <Card className="bg-zinc-800 border-violet-900/50">
                 <CardContent className="p-3">
                   <p className="text-xs text-zinc-400">前爐殘湯投料</p>
                   <p className="text-lg font-bold text-violet-300">{residualTotal} kg</p>
-                  <p className="text-[10px] text-zinc-500">前爐殘湯利用率 {residualUtilizationRate}%（分母：總熔湯重 {totalMeltWeight} kg）</p>
+                  <p className="text-[10px] text-zinc-500">前爐殘湯利用率 {residualUtilizationRate}%（分母：總投料（不含前爐殘湯）{totalMeltWeight} kg）</p>
                 </CardContent>
               </Card>
               <Card className="bg-zinc-800 border-violet-900/50">
                 <CardContent className="p-3">
                   <p className="text-xs text-zinc-400">爐次澆注殘湯</p>
                   <p className="text-lg font-bold text-violet-300">{meltResidualSummary.residualWeight} kg</p>
-                  <p className="text-[10px] text-zinc-400">殘湯率 {meltResidualSummary.rate}%（分母：總投料重 {meltResidualSummary.baseWeight} kg）</p>
+                  <p className="text-[10px] text-zinc-400">殘湯率 {meltResidualSummary.rate}%（分母：總投料（不含前爐殘湯）{meltResidualSummary.baseWeight} kg）</p>
                   <p className="text-[10px] text-zinc-400">本爐產生，不含前爐投料</p>
                 </CardContent>
               </Card>
@@ -949,7 +931,7 @@ export default function InventoryManager({
                             </p>
                             <span className="text-[11px] text-zinc-500">
                               {cat === 'PURCHASED' && '占比分母：外購原料合計'}
-                              {cat === 'RETURN' && '舊料投料比例分母：各材質溶解投料總重'}
+                              {cat === 'RETURN' && '舊料投料比例分母：區間總投料（不含前爐殘湯）'}
                             </span>
                           </div>
                           <ConsumptionTable
