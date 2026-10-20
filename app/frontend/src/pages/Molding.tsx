@@ -62,6 +62,13 @@ function PhotoUploadSection({ label, icon, images, onChange }: { label: string; 
   );
 }
 
+function getMoldingCompletion(order: WorkOrder, batches: MoldingBatch[]) {
+  const completed = batches
+    .filter(batch => batch.work_order_id === order.id)
+    .reduce((total, batch) => total + Math.max(0, Number(batch.quantity_completed) || 0), 0);
+  return { completed, remaining: Math.max(0, (Number(order.quantity) || 0) - completed) };
+}
+
 export default function Molding() {
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
@@ -122,6 +129,10 @@ export default function Molding() {
         wo.product_name.toLowerCase().includes(woSearch.toLowerCase())
       )
     : workOrders;
+
+  const selectedCompletion = selectedWo
+    ? getMoldingCompletion(allWorkOrders.find(order => order.id === selectedWo.id) || selectedWo, batches)
+    : null;
 
   const handleSelectWo = (wo: WorkOrder) => {
     setSelectedWo(wo);
@@ -305,6 +316,15 @@ export default function Molding() {
                       <Label className="text-zinc-400 text-xs">工單預估重量</Label>
                       <p className="text-sm font-medium text-zinc-100">{selectedWo.estimated_weight > 0 ? `${selectedWo.estimated_weight} kg` : '未填寫'}</p>
                     </div>
+                    <div>
+                      <Label className="text-zinc-400 text-xs">已完成數量</Label>
+                      <p className="text-sm font-medium text-zinc-100">{selectedCompletion?.completed.toLocaleString('zh-TW')} 件</p>
+                    </div>
+                    <div aria-live="polite">
+                      <Label className="text-amber-300 text-xs">未完成數量</Label>
+                      <p className="text-lg font-semibold text-amber-400">{selectedCompletion?.remaining.toLocaleString('zh-TW')} 件</p>
+                    </div>
+                    <p className="col-span-2 text-xs text-zinc-400 leading-5">未完成數量＝工單數量－各批次已完成數量，包含已開工但尚未完成的部分；新增批次仍依尚未開工的餘量限制。</p>
                   </div>
                 )}
                 <div>
