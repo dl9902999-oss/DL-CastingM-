@@ -1403,6 +1403,7 @@ export async function sbCreatePattern(patternData: Omit<Pattern, 'id' | 'pattern
 
   const { data, error } = await supabase.from('patterns').insert({
     ...patternData,
+    open_date: patternData.open_date || null,
     pattern_no: patternNo,
     usage_count: 0,
   }).select().single();
@@ -1411,7 +1412,8 @@ export async function sbCreatePattern(patternData: Omit<Pattern, 'id' | 'pattern
 }
 
 export async function sbUpdatePattern(id: string, updates: Partial<Pattern>): Promise<void> {
-  const { error } = await supabase.from('patterns').update(updates).eq('id', id);
+  const payload = { ...updates, ...('open_date' in updates ? { open_date: updates.open_date || null } : {}) };
+  const { error } = await supabase.from('patterns').update(payload).eq('id', id);
   if (error) throw error;
 }
 
@@ -1435,6 +1437,7 @@ function mapPattern(row: Record<string, unknown>): Pattern {
     dimensions: (row.dimensions as string) || '',
     weight: (row.weight as number) || 0,
     photos: (row.photos as string[]) || [],
+    drawings: Array.isArray(row.drawings) ? row.drawings as Pattern['drawings'] : [],
     open_date: (row.open_date as string) || '',
     supplier: (row.supplier as string) || '',
     cost: (row.cost as number) || 0,

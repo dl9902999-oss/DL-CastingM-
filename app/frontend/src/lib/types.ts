@@ -293,6 +293,14 @@ export type PatternStatus = '待驗收' | '可生產' | '維修中' | '停用' |
 export type PatternLocationStatus = '在庫' | '借出' | '維修' | '使用中';
 export type MaintenanceType = '清潔' | '補修' | '加工' | '翻修' | '更換';
 
+export interface PatternDrawing {
+  id: string;
+  name: string;
+  path: string;
+  type: string;
+  size: number;
+}
+
 export interface Pattern {
   id: string;
   pattern_no: string;
@@ -307,6 +315,7 @@ export interface Pattern {
   dimensions: string;
   weight: number;
   photos: string[];
+  drawings?: PatternDrawing[];
   open_date: string;
   supplier: string;
   cost: number;

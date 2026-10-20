@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSyncTrigger } from '@/hooks/useSyncedData';
+import PatternDrawings from '@/components/PatternDrawings';
+import { uploadDrawings } from '@/lib/patternDrawings';
+import type { PatternDrawing } from '@/lib/types';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -102,6 +105,9 @@ export default function MoldManagement() {
   const [loans, setLoans] = useState<PatternLoan[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [drawings, setDrawings] = useState<PatternDrawing[]>([]);
+  const [drawingFiles, setDrawingFiles] = useState<File[]>([]);
+  const [saving, setSaving] = useState(false);
   const [editPattern, setEditPattern] = useState<Pattern | null>(null);
   const [maintDialogOpen, setMaintDialogOpen] = useState(false);
   const [loanDialogOpen, setLoanDialogOpen] = useState(false);
@@ -198,6 +204,8 @@ export default function MoldManagement() {
   });
 
   const handleOpenCreate = () => {
+    setDrawings([]);
+    setDrawingFiles([]);
     setEditPattern(null);
     setForm({
       customer: '', name: '', product_no: '', pattern_type: '上下模', material: '',
@@ -210,6 +218,8 @@ export default function MoldManagement() {
   };
 
   const handleOpenEdit = (p: Pattern) => {
+    setDrawings(p.drawings || []);
+    setDrawingFiles([]);
     setEditPattern(p);
     setForm({
       customer: p.customer, name: p.name, product_no: p.product_no,
@@ -226,16 +236,30 @@ export default function MoldManagement() {
   };
 
   const handleSave = async () => {
+    if (saving) return;
     if (!form.name.trim()) {
       toast({ title: '請輸入模具名稱', variant: 'destructive' });
       return;
     }
+    setSaving(true);
+    let savedDrawings = drawings;
     try {
+      const uploaded = await uploadDrawings(drawingFiles);
+      savedDrawings = [...drawings, ...uploaded];
+      setDrawings(savedDrawings);
+      setDrawingFiles([]);
+    } catch {
+      toast({ title: '圖面上傳失敗，尚未儲存模具', description: '請確認網路連線及檔案權限後重試，已選圖面仍保留。', variant: 'destructive' });
+      setSaving(false);
+      return;
+    }
+    try {
+      const payload = { ...form, drawings: savedDrawings };
       if (editPattern) {
-        await updatePattern(editPattern.id, form);
+        await updatePattern(editPattern.id, payload);
         toast({ title: '模具已更新' });
       } else {
-        await createPattern(form);
+        await createPattern(payload);
         toast({ title: '模具已建立' });
       }
       setDialogOpen(false);
@@ -250,6 +274,8 @@ export default function MoldManagement() {
       } else {
         toast({ title: '模具儲存失敗，請稍後再試', variant: 'destructive' });
       }
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -491,6 +517,7 @@ export default function MoldManagement() {
                             <span>砂心: {p.sand_core_count ?? 0}</span>
                             {p.cost >= 0 && <span>成本: NT${p.cost.toLocaleString()}</span>}
                           </div>
+                          {!!p.drawings?.length && <PatternDrawings drawings={p.drawings} />}
                           {p.photos && p.photos.length > 0 && (
                             <div className="flex gap-1 mt-1">
                               {p.photos.slice(0, 4).map((img, i) => (
@@ -767,7 +794,7 @@ export default function MoldManagement() {
         </Tabs>
 
         {/* Create/Edit Pattern Dialog */}
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <Dialog open={dialogOpen} onOpenChange={open => { if (!saving) setDialogOpen(open); }}>
           <DialogContent className="bg-zinc-800 border-zinc-700 max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-zinc-100">{editPattern ? '編輯模具' : '新增模具'}</DialogTitle>
@@ -894,13 +921,14 @@ export default function MoldManagement() {
                   </SelectContent>
                 </Select>
               </div>
-              <MoldImageUpload images={form.photos} onChange={(imgs) => setForm({ ...form, photos: imgs })} />
+              <PatternDrawings drawings={drawings} files={drawingFiles} onFilesChange={setDrawingFiles} onRemove={id => setDrawings(current => current.filter(item => item.id !== id))} disabled={saving} />
+              <MoldImageUpload images={form.photos} onChange={(imgs) => setForm(current => ({ ...current, photos: imgs }))} />
               <div className="space-y-1">
                 <Label className="text-zinc-300 text-xs">備註</Label>
                 <Textarea value={form.remarks} onChange={e => setForm({ ...form, remarks: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" rows={2} />
               </div>
-              <Button onClick={handleSave} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">
-                {editPattern ? '更新' : '建立'}
+              <Button onClick={handleSave} disabled={saving} className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-900">
+                {saving ? '上傳圖面並儲存中…' : editPattern ? '更新' : '建立'}
               </Button>
             </div>
           </DialogContent>
