@@ -230,7 +230,7 @@ function getDispositionLabel(d: DefectDisposition): string {
 }
 
 export default function Quality() {
-  const [activeTab, setActiveTab] = useState('inspections');
+  const [activeTab, setActiveTab] = useState(() => new URLSearchParams(window.location.search).get('tab') === 'capa' ? 'capa' : 'inspections');
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
   const [resultFilter, setResultFilter] = useState<string>('ALL');
