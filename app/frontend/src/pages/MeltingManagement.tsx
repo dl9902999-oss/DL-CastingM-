@@ -1,3 +1,4 @@
+import { batchItem } from '@/lib/workOrderItems';
 import { useState, useEffect, useMemo } from 'react';
 import { calculateSequences, compareMelts, formatHeat, furnaceBody, loadSequenceRecords, saveSequenceRecord } from '@/lib/meltSequence';
 import { useSyncTrigger } from '@/hooks/useSyncedData';
@@ -1560,7 +1561,7 @@ function MeltFormDialog({
   const [heatInput, setHeatInput] = useState('');
   const [heatChanged, setHeatChanged] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [draftId, setDraftId] = useState(() => crypto.randomUUID());
+  const [draftId, setDraftId] = useState<string>(() => crypto.randomUUID());
   useEffect(() => {
     if (!open) return;
     setDraftId(editRecord?.id || crypto.randomUUID());
@@ -2338,7 +2339,7 @@ function MeltFormDialog({
                         <div className="max-h-32 overflow-y-auto border border-zinc-600 rounded-md p-1 space-y-0.5">
                           {completedBatches.map(b => {
                             const wo = allWorkOrders.find(w => w.id === b.work_order_id);
-                            const estWeight = wo?.estimated_weight || 0;
+                            const estWeight = batchItem(wo, b)?.estimated_weight || 0;
                             return (
                               <button
                                 key={b.id}

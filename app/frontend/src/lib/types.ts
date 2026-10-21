@@ -37,7 +37,26 @@ export interface Customer {
   updated_at: string;
 }
 
+export interface WorkOrderItem {
+  id: string;
+  line_no: string;
+  product_name: string;
+  material: string;
+  quantity: number;
+  estimated_weight: number;
+  mold_supply: MoldSupply | '';
+  mold_type: MoldType | '';
+  pattern_id: string;
+  heat_treatment: HeatTreatment | '';
+  group: string;
+  remarks: string;
+}
+
 export interface WorkOrder {
+  items?: WorkOrderItem[];
+  order_date?: string;
+  delivery_address?: string;
+  source_filename?: string;
   id: string;
   order_no: string;
   customer: string;
@@ -59,6 +78,7 @@ export interface WorkOrder {
 }
 
 export interface MoldingBatch {
+  work_order_item_id?: string;
   id: string;
   batch_no: string;
   work_order_id: string;
@@ -269,6 +289,7 @@ export interface WarehouseEntry {
 }
 
 export interface ShipmentOrder {
+  work_order_item_id?: string;
   id: string;
   shipment_no: string;
   work_order_id: string;

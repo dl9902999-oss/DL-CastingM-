@@ -338,13 +338,13 @@ export async function syncPendingToSupabase(
                 }
               } catch { /* 解析失敗時保留原資料 */ }
             }
-            markDeletedIds(table, [del.data!.id]);
+            markDeletedIds(table, [String(del.data!.id)]);
             success++;
           } else {
             // 雲端已確認刪除，同步清掉本地殘留，
             // 避免「本地孤兒資料保護」把剛刪掉的資料又合併回畫面，
             // 並留下刪除墓碑，確保任何殘留快取都不會再次復活。
-            markDeletedIds(table, [del.data!.id]);
+            markDeletedIds(table, [String(del.data!.id)]);
             const storageKey = LOCAL_STORAGE_KEY_MAP[table];
             if (storageKey) {
               try {
@@ -732,6 +732,12 @@ async function withRLSFallback<T>(
       throw err;
     }
 
+    // 品項驗證屬於業務錯誤，不可降級成本機成功。
+    const databaseCode = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+    if (databaseCode === 'P0001' || msg.includes('[code: P0001]')) {
+      throw err;
+    }
+
     // 1. RLS / Permission errors → switch to offline mode and queue for later sync
     const isRLSError = (
       msg.includes('row-level security') ||
@@ -1005,7 +1011,7 @@ export async function dsGetMoldingBatches(): Promise<MoldingBatch[]> {
   );
 }
 
-export async function dsCreateMoldingBatch(data: { work_order_id: string; order_no: string; customer: string; product_name: string; material: string; quantity_planned: number; estimated_pouring_weight: number; remarks: string; molding_photos: string[]; closing_photos?: string[] }): Promise<MoldingBatch> {
+export async function dsCreateMoldingBatch(data: { work_order_item_id?: string; work_order_id: string; order_no: string; customer: string; product_name: string; material: string; quantity_planned: number; estimated_pouring_weight: number; remarks: string; molding_photos: string[]; closing_photos?: string[] }): Promise<MoldingBatch> {
   return withRLSFallback(
     () => sbStore.sbCreateMoldingBatch(data),
     () => localStore.createMoldingBatch(data),
@@ -1969,7 +1975,7 @@ export async function dsGetShipmentOrders(): Promise<ShipmentOrder[]> {
   );
 }
 
-export async function dsCreateShipmentOrder(data: { work_order_id: string; order_no: string; customer: string; quantity: number; ship_date: string }): Promise<ShipmentOrder> {
+export async function dsCreateShipmentOrder(data: { work_order_item_id?: string; work_order_id: string; order_no: string; customer: string; quantity: number; ship_date: string }): Promise<ShipmentOrder> {
   return withRLSFallback(
     () => sbStore.sbCreateShipmentOrder(data),
     () => localStore.createShipmentOrder(data),

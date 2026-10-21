@@ -1,3 +1,5 @@
+import { orderItems, resolveOrderItem } from '@/lib/workOrderItems';
+import type { WorkOrder, MoldingBatch, ShipmentOrder } from '@/lib/types';
 import { useState } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
@@ -8,12 +10,12 @@ import { dsTraceByWorkOrder, dsTraceByBatch, dsTraceByHeatNo, dsTraceByShipment 
 import { Search, ClipboardList, Layers, Flame, CheckCircle, Package, Truck } from 'lucide-react';
 
 interface TraceResult {
-  orders: { order_no: string; customer: string; status: string }[];
-  batches: { batch_no: string; quantity_planned: number; quantity_completed: number; status: string }[];
+  orders: WorkOrder[];
+  batches: MoldingBatch[];
   meltings: { heat_no: string; furnace_no: string; melting_weight: number; pouring_weight: number; yield_rate: number }[];
   inspections: { batch_no: string; result: string; inspected_quantity: number; defect_count: number }[];
   warehouse: { batch_no: string; location: string; quantity: number }[];
-  shipments: { shipment_no: string; customer: string; quantity: number; status: string }[];
+  shipments: ShipmentOrder[];
 }
 
 export default function Traceability() {
@@ -97,7 +99,7 @@ export default function Traceability() {
                 <CardContent>
                   {result.orders.map((o, i) => (
                     <div key={i} className="flex justify-between items-center py-2 border-b border-zinc-700 last:border-0">
-                      <span className="text-sm text-zinc-200">{o.order_no}</span>
+                      <span className="text-sm text-zinc-200">{o.order_no}<span className="block text-xs text-zinc-400">{orderItems(o).map(item => `${item.line_no}. ${item.product_name} ${item.quantity}件`).join(' ／ ')}</span></span>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-zinc-400">{o.customer}</span>
                         <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-300">{o.status === 'Open' ? '待造模' : o.status === 'Partial' ? '部分造模' : o.status === 'In Progress' ? '造模中' : o.status === 'Completed' ? '已完成' : '已取消'}</span>
@@ -119,7 +121,7 @@ export default function Traceability() {
                 <CardContent>
                   {result.batches.map((b, i) => (
                     <div key={i} className="flex justify-between items-center py-2 border-b border-zinc-700 last:border-0">
-                      <span className="text-sm text-zinc-200">{b.batch_no}</span>
+                      <span className="text-sm text-zinc-200">{b.batch_no} · {b.product_name}</span>
                       <span className="text-xs text-zinc-400">{b.quantity_completed}/{b.quantity_planned} ({b.status === 'Pending' ? '待處理' : b.status === 'In Progress' ? '進行中' : '已完成'})</span>
                     </div>
                   ))}
@@ -186,7 +188,7 @@ export default function Traceability() {
                 <CardContent>
                   {result.warehouse.map((w, i) => (
                     <div key={i} className="flex justify-between items-center py-2 border-b border-zinc-700 last:border-0">
-                      <span className="text-sm text-zinc-200">{w.batch_no}</span>
+                      <span className="text-sm text-zinc-200">{w.batch_no} · {result.batches.find(batch => batch.batch_no === w.batch_no)?.product_name || '—'}</span>
                       <span className="text-xs text-zinc-400">庫位: {w.location} | 數量: {w.quantity}</span>
                     </div>
                   ))}
@@ -205,7 +207,7 @@ export default function Traceability() {
                 <CardContent>
                   {result.shipments.map((s, i) => (
                     <div key={i} className="flex justify-between items-center py-2 border-b border-zinc-700 last:border-0">
-                      <span className="text-sm text-zinc-200">{s.shipment_no}</span>
+                      <span className="text-sm text-zinc-200">{s.shipment_no} · {resolveOrderItem(result.orders.find(order => order.id === s.work_order_id),s.work_order_item_id)?.product_name || '未關聯品項'}</span>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-zinc-400">{s.customer} | {s.quantity}件</span>
                         <span className={`text-xs px-2 py-0.5 rounded-full ${

@@ -483,11 +483,12 @@ export function getMoldingBatches(): MoldingBatch[] {
   return getItems<MoldingBatch>(STORAGE_KEYS.MOLDING_BATCHES);
 }
 
-export function createMoldingBatch(data: { work_order_id: string; order_no: string; customer: string; product_name: string; material: string; quantity_planned: number; estimated_pouring_weight: number; remarks: string; molding_photos: string[]; closing_photos?: string[] }): MoldingBatch {
+export function createMoldingBatch(data: { work_order_item_id?: string; work_order_id: string; order_no: string; customer: string; product_name: string; material: string; quantity_planned: number; estimated_pouring_weight: number; remarks: string; molding_photos: string[]; closing_photos?: string[] }): MoldingBatch {
   const batches = getMoldingBatches();
   const newBatch: MoldingBatch = {
     id: generateId(),
     batch_no: generateOrderNo('MB'),
+    work_order_item_id: data.work_order_item_id,
     work_order_id: data.work_order_id,
     order_no: data.order_no,
     customer: data.customer || '',
@@ -722,7 +723,7 @@ export function getShipmentOrders(): ShipmentOrder[] {
   return getItems<ShipmentOrder>(STORAGE_KEYS.SHIPMENT_ORDERS);
 }
 
-export function createShipmentOrder(data: { work_order_id: string; order_no: string; customer: string; quantity: number; ship_date: string }): ShipmentOrder {
+export function createShipmentOrder(data: { work_order_item_id?: string; work_order_id: string; order_no: string; customer: string; quantity: number; ship_date: string }): ShipmentOrder {
   const orders = getShipmentOrders();
   const newOrder: ShipmentOrder = {
     ...data,

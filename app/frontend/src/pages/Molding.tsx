@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSyncTrigger } from '@/hooks/useSyncedData';
 import AppLayout from '@/components/layout/AppLayout';
+import { orderItems, resolveOrderItem, batchItem, itemMatches } from '@/lib/workOrderItems';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -82,6 +83,7 @@ export default function Molding() {
   const [searchTerm, setSearchTerm] = useState('');
   const [woSearch, setWoSearch] = useState('');
   const [selectedWo, setSelectedWo] = useState<WorkOrder | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState('');
   const [form, setForm] = useState({
     quantity_planned: 0,
     estimated_pouring_weight: 0,
@@ -118,7 +120,7 @@ export default function Molding() {
       customer: batch.customer || wo?.customer || '-',
       product_name: batch.product_name || wo?.product_name || '-',
       material: batch.material || wo?.material || '-',
-      estimated_weight: wo?.estimated_weight || 0,
+      estimated_weight: batchItem(wo, batch)?.estimated_weight || 0,
     };
   };
 
@@ -130,33 +132,36 @@ export default function Molding() {
       )
     : workOrders;
 
-  const selectedCompletion = selectedWo
-    ? getMoldingCompletion(allWorkOrders.find(order => order.id === selectedWo.id) || selectedWo, batches)
-    : null;
+  const currentWo = selectedWo ? allWorkOrders.find(order => order.id === selectedWo.id) || selectedWo : null;
+  const selectedItem = resolveOrderItem(currentWo || undefined, selectedItemId);
+  const itemBatches = currentWo && selectedItem ? batches.filter(batch => batch.work_order_id === currentWo.id && itemMatches(currentWo, selectedItem, batch.work_order_item_id)) : [];
+  const selectedCompletion = currentWo && selectedItem ? getMoldingCompletion({ ...currentWo, quantity: selectedItem.quantity }, itemBatches) : null;
+  const availableQuantity = selectedItem ? Math.max(0, selectedItem.quantity - itemBatches.reduce((sum,batch) => sum + batch.quantity_planned, 0)) : 0;
 
   const handleSelectWo = (wo: WorkOrder) => {
     setSelectedWo(wo);
+    setSelectedItemId(orderItems(wo).length === 1 ? orderItems(wo)[0].id : '');
+    setForm(previous => ({ ...previous, quantity_planned: 0 }));
     setWoSearch('');
   };
 
   const handleCreate = async () => {
-    if (!selectedWo || form.quantity_planned <= 0) {
-      toast({ title: '請選擇工單並填寫數量', variant: 'destructive' });
+    if (!currentWo || !selectedItem || !Number.isInteger(form.quantity_planned) || form.quantity_planned <= 0) {
+      toast({ title: '請選擇工單及品項，並填寫正整數數量', variant: 'destructive' });
       return;
     }
-    // Check cumulative quantity does not exceed work order quantity
-    const existingQty = batches.filter(b => b.work_order_id === selectedWo.id).reduce((sum, b) => sum + b.quantity_planned, 0);
-    if (existingQty + form.quantity_planned > selectedWo.quantity) {
-      toast({ title: `累計數量不能大於工單數量（工單數量: ${selectedWo.quantity}，已開工: ${existingQty}，可用餘量: ${selectedWo.quantity - existingQty}）`, variant: 'destructive' });
+    if (form.quantity_planned > availableQuantity) {
+      toast({ title: `計劃數量超過此品項可開工餘量（${availableQuantity} 件）`, variant: 'destructive' });
       return;
     }
     try {
       await dsCreateMoldingBatch({
-        work_order_id: selectedWo.id,
+        work_order_id: currentWo.id,
+        work_order_item_id: selectedItem.id,
         order_no: selectedWo.order_no,
         customer: selectedWo.customer,
-        product_name: selectedWo.product_name,
-        material: selectedWo.material,
+        product_name: selectedItem.product_name,
+        material: selectedItem.material,
         quantity_planned: form.quantity_planned,
         estimated_pouring_weight: form.estimated_pouring_weight,
         remarks: form.remarks,
@@ -186,6 +191,13 @@ export default function Molding() {
 
   const handleEditSave = async () => {
     if (!editBatch) return;
+    const order = allWorkOrders.find(row => row.id === editBatch.work_order_id);
+    const item = batchItem(order, editBatch);
+    const otherPlanned = batches.filter(row => row.id !== editBatch.id && row.work_order_id === order?.id && item && order && itemMatches(order, item, row.work_order_item_id)).reduce((sum,row) => sum+row.quantity_planned,0);
+    if (!item || !Number.isInteger(editBatch.quantity_planned) || editBatch.quantity_planned <= 0 || otherPlanned + editBatch.quantity_planned > item.quantity || !Number.isInteger(editBatch.quantity_completed) || editBatch.quantity_completed < 0 || editBatch.quantity_completed > editBatch.quantity_planned) {
+      toast({ title: '請確認品項餘量與完成數量，完成數量不可超過本批計劃數量', variant: 'destructive' });
+      return;
+    }
     // Determine status based on photos
     const closingPhotos = editBatch.closing_photos || [];
     const moldingPhotos = editBatch.molding_photos || [];
@@ -306,15 +318,20 @@ export default function Molding() {
                     </div>
                   )}
                 </div>
-                {selectedWo && (
+                {currentWo && <label className="block text-sm text-zinc-300">工單品項
+                  <select aria-label="選擇工單品項" value={selectedItemId} onChange={event => { setSelectedItemId(event.target.value); setForm(previous => ({ ...previous, quantity_planned: 0 })); }} className="mt-1 w-full h-10 rounded border border-zinc-600 bg-zinc-700 px-2">
+                    <option value="">請選擇品項</option>{orderItems(currentWo).map(item => <option key={item.id} value={item.id}>項次 {item.line_no} · {item.product_name} · {item.material} · {item.quantity} 件</option>)}
+                  </select>
+                </label>}
+                {selectedWo && selectedItem && (
                   <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600 grid grid-cols-2 gap-3">
                     <div>
-                      <Label className="text-zinc-400 text-xs">工單數量</Label>
-                      <p className="text-sm font-medium text-zinc-100">{selectedWo.quantity > 0 ? `${selectedWo.quantity} 件` : '未填寫'}</p>
+                      <Label className="text-zinc-400 text-xs">品項數量</Label>
+                      <p className="text-sm font-medium text-zinc-100">{selectedItem.quantity} 件</p>
                     </div>
                     <div>
-                      <Label className="text-zinc-400 text-xs">工單預估重量</Label>
-                      <p className="text-sm font-medium text-zinc-100">{selectedWo.estimated_weight > 0 ? `${selectedWo.estimated_weight} kg` : '未填寫'}</p>
+                      <Label className="text-zinc-400 text-xs">品項預估單重</Label>
+                      <p className="text-sm font-medium text-zinc-100">{selectedItem.estimated_weight} kg／件</p>
                     </div>
                     <div>
                       <Label className="text-zinc-400 text-xs">已完成數量</Label>
@@ -324,7 +341,7 @@ export default function Molding() {
                       <Label className="text-amber-300 text-xs">未完成數量</Label>
                       <p className="text-lg font-semibold text-amber-400">{selectedCompletion?.remaining.toLocaleString('zh-TW')} 件</p>
                     </div>
-                    <p className="col-span-2 text-xs text-zinc-400 leading-5">未完成數量＝工單數量－各批次已完成數量，包含已開工但尚未完成的部分；新增批次仍依尚未開工的餘量限制。</p>
+                    <p className="col-span-2 text-xs text-zinc-400 leading-5">未完成數量＝品項數量－該品項各批次已完成數量。可新增開工餘量：{availableQuantity} 件（扣除已排定批次）。</p>
                   </div>
                 )}
                 <div>
@@ -488,7 +505,8 @@ export default function Molding() {
                   <p className="text-xs text-zinc-400">工單: {editBatch.order_no} | 客戶: {getWoInfo(editBatch).customer} | 品名: {getWoInfo(editBatch).product_name} | 材質: {getWoInfo(editBatch).material}</p>
                 </div>
                 {(() => {
-                  const wo = allWorkOrders.find(w => w.id === editBatch.work_order_id);
+                  const parent = allWorkOrders.find(w => w.id === editBatch.work_order_id);
+                  const wo = batchItem(parent, editBatch);
                   return wo ? (
                     <div className="p-3 bg-zinc-700/30 rounded-md border border-zinc-600 grid grid-cols-2 gap-3">
                       <div>

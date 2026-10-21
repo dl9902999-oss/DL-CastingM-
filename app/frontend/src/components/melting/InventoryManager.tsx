@@ -772,7 +772,7 @@ export default function InventoryManager({
         r.created_by, r.remark,
       ]);
     }
-    const csvCell = (value: string | number) => '"' + String(value).replaceAll('"', '""') + '"';
+    const csvCell = (value: string | number) => '"' + String(value).replace(/"/g, '""') + '"';
     const csv = '\uFEFF' + [headers, ...body].map(row => row.map(csvCell).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);

@@ -229,6 +229,7 @@ function mapCustomer(row: Record<string, unknown>): Customer {
  * would make Postgres reject the whole INSERT/UPDATE, so we whitelist here.
  */
 const WORK_ORDER_COLUMNS = [
+  'items', 'order_date', 'delivery_address', 'source_filename',
   'customer',
   'product_name',
   'material',
@@ -246,7 +247,7 @@ const WORK_ORDER_COLUMNS = [
 ] as const;
 
 /** DATE / TIMESTAMP columns: an empty string is invalid for Postgres, must be NULL. */
-const WORK_ORDER_DATE_COLUMNS = new Set<string>(['due_date']);
+const WORK_ORDER_DATE_COLUMNS = new Set<string>(['due_date', 'order_date']);
 
 /** Numeric columns: an empty string is invalid for Postgres, coerce to a number. */
 const WORK_ORDER_NUMERIC_COLUMNS = new Set<string>(['quantity', 'estimated_weight']);
@@ -355,6 +356,10 @@ export async function sbDeleteWorkOrder(id: string): Promise<void> {
 
 function mapWorkOrder(row: Record<string, unknown>): WorkOrder {
   return {
+    items: Array.isArray(row.items) ? row.items as WorkOrder['items'] : [],
+    order_date: (row.order_date as string) || '',
+    delivery_address: (row.delivery_address as string) || '',
+    source_filename: (row.source_filename as string) || '',
     id: row.id as string,
     order_no: (row.order_no as string) || '',
     customer: (row.customer as string) || '',
@@ -385,13 +390,14 @@ export async function sbGetMoldingBatches(): Promise<MoldingBatch[]> {
   return (data || []).map(mapMoldingBatch);
 }
 
-export async function sbCreateMoldingBatch(batchData: { work_order_id: string; order_no: string; customer: string; product_name: string; material: string; quantity_planned: number; estimated_pouring_weight: number; remarks: string; molding_photos: string[]; closing_photos?: string[] }): Promise<MoldingBatch> {
+export async function sbCreateMoldingBatch(batchData: { work_order_item_id?: string; work_order_id: string; order_no: string; customer: string; product_name: string; material: string; quantity_planned: number; estimated_pouring_weight: number; remarks: string; molding_photos: string[]; closing_photos?: string[] }): Promise<MoldingBatch> {
   const batchNo = `MB-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-5)}`;
   const status = (batchData.closing_photos && batchData.closing_photos.length > 0) ? 'Completed' :
     (batchData.molding_photos && batchData.molding_photos.length > 0) ? 'In Progress' : 'Pending';
 
   const { data, error } = await supabase.from('molding_batches').insert({
     batch_no: batchNo,
+    work_order_item_id: batchData.work_order_item_id || null,
     work_order_id: batchData.work_order_id,
     order_no: batchData.order_no,
     customer: batchData.customer,
@@ -422,6 +428,7 @@ export async function sbDeleteMoldingBatch(id: string): Promise<void> {
 
 function mapMoldingBatch(row: Record<string, unknown>): MoldingBatch {
   return {
+    work_order_item_id: (row.work_order_item_id as string) || undefined,
     id: row.id as string,
     batch_no: (row.batch_no as string) || '',
     work_order_id: (row.work_order_id as string) || '',
@@ -1326,6 +1333,7 @@ export async function sbGetShipmentOrders(): Promise<ShipmentOrder[]> {
   return (data || []).map((row: Record<string, unknown>) => ({
     id: row.id as string,
     shipment_no: (row.shipment_no as string) || '',
+    work_order_item_id: (row.work_order_item_id as string) || undefined,
     work_order_id: (row.work_order_id as string) || '',
     order_no: (row.order_no as string) || '',
     customer: (row.customer as string) || '',
@@ -1336,7 +1344,7 @@ export async function sbGetShipmentOrders(): Promise<ShipmentOrder[]> {
   }));
 }
 
-export async function sbCreateShipmentOrder(orderData: { work_order_id: string; order_no: string; customer: string; quantity: number; ship_date: string }): Promise<ShipmentOrder> {
+export async function sbCreateShipmentOrder(orderData: { work_order_item_id?: string; work_order_id: string; order_no: string; customer: string; quantity: number; ship_date: string }): Promise<ShipmentOrder> {
   const shipmentNo = `SH-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-5)}`;
   const { data, error } = await supabase.from('shipment_orders').insert({
     ...orderData,
@@ -1347,6 +1355,7 @@ export async function sbCreateShipmentOrder(orderData: { work_order_id: string; 
   return {
     id: data.id as string,
     shipment_no: (data.shipment_no as string) || '',
+    work_order_item_id: (data.work_order_item_id as string) || undefined,
     work_order_id: (data.work_order_id as string) || '',
     order_no: (data.order_no as string) || '',
     customer: (data.customer as string) || '',
@@ -1364,6 +1373,7 @@ export async function sbUpdateShipmentOrder(id: string, updates: Partial<Shipmen
   return {
     id: data.id as string,
     shipment_no: (data.shipment_no as string) || '',
+    work_order_item_id: (data.work_order_item_id as string) || undefined,
     work_order_id: (data.work_order_id as string) || '',
     order_no: (data.order_no as string) || '',
     customer: (data.customer as string) || '',
@@ -1508,12 +1518,11 @@ export async function sbCreatePatternHistory(data: Omit<PatternHistory, 'id' | '
   const { data: result, error } = await supabase.from('pattern_histories').insert(data).select().single();
   if (error) throw error;
   // Increment usage count
-  await supabase.rpc('increment_pattern_usage', { pattern_id_input: data.pattern_id }).catch(() => {
-    // Fallback: manual increment
-    supabase.from('patterns').select('usage_count').eq('id', data.pattern_id).single().then(({ data: p }) => {
-      if (p) supabase.from('patterns').update({ usage_count: ((p.usage_count as number) || 0) + 1 }).eq('id', data.pattern_id);
-    });
-  });
+  const { error: incrementError } = await supabase.rpc('increment_pattern_usage', { pattern_id_input: data.pattern_id });
+  if (incrementError) {
+    const { data: pattern } = await supabase.from('patterns').select('usage_count').eq('id', data.pattern_id).single();
+    if (pattern) await supabase.from('patterns').update({ usage_count: ((pattern.usage_count as number) || 0) + 1 }).eq('id', data.pattern_id);
+  }
   return {
     id: result.id as string,
     pattern_id: (result.pattern_id as string) || '',

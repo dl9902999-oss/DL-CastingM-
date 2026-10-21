@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
+import WorkOrderImportDialog from '@/components/WorkOrderImportDialog';
+import { orderItems, itemMatches } from '@/lib/workOrderItems';
 import { useSyncTrigger } from '@/hooks/useSyncedData';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -268,6 +270,7 @@ function CustomerAutocomplete({ value, onChange, customers, onAddCustomer }: {
 
 export default function WorkOrders() {
   const navigate = useNavigate();
+  const [itemDialog, setItemDialog] = useState<{ mode: 'pdf' | 'manual' | 'edit'; order?: WorkOrder } | null>(null);
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -608,9 +611,11 @@ export default function WorkOrders() {
 
   return (
     <AppLayout>
+      {itemDialog && <WorkOrderImportDialog {...itemDialog} onClose={() => setItemDialog(null)} onSaved={loadWorkOrders} />}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">工單管理</h1>
+          <div className="flex flex-wrap gap-2"><Button className="bg-zinc-700 text-zinc-100" onClick={() => setItemDialog({ mode: 'pdf' })}>批量匯入 PDF</Button><Button className="bg-amber-500 text-zinc-900" onClick={() => setItemDialog({ mode: 'manual' })}>新增多品項工單</Button></div>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
               <Button className="bg-amber-500 hover:bg-amber-600 text-zinc-900">
@@ -830,11 +835,17 @@ export default function WorkOrders() {
                         <span>餘剩數量: <span className={`${order.quantity - getStartedQty(order.id) <= 0 ? 'text-green-400' : 'text-amber-300'}`}>{order.quantity - getStartedQty(order.id)}</span></span>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400 mt-1">
-                        {order.estimated_weight > 0 && <span>預估重量: <span className="text-zinc-200">{order.estimated_weight}kg</span></span>}
-                        {order.mold_supply && <span>模具供給: <span className="text-zinc-200">{order.mold_supply}</span></span>}
-                        {order.mold_type && <span>模具型式: <span className="text-zinc-200">{order.mold_type}</span></span>}
-                        {order.heat_treatment && <span>熱處理: <span className="text-zinc-200">{order.heat_treatment}</span></span>}
+                        {!order.items?.length && order.estimated_weight > 0 && <span>預估重量: <span className="text-zinc-200">{order.estimated_weight}kg</span></span>}
+                        {!order.items?.length && order.mold_supply && <span>模具供給: <span className="text-zinc-200">{order.mold_supply}</span></span>}
+                        {!order.items?.length && order.mold_type && <span>模具型式: <span className="text-zinc-200">{order.mold_type}</span></span>}
+                        {!order.items?.length && order.heat_treatment && <span>熱處理: <span className="text-zinc-200">{order.heat_treatment}</span></span>}
                       </div>
+                      {!!order.items?.length && <div className="mt-3 space-y-2">{orderItems(order).map(item => {
+                        const related = batches.filter(batch => batch.work_order_id === order.id && itemMatches(order, item, batch.work_order_item_id));
+                        const started = related.reduce((sum,batch) => sum + batch.quantity_planned, 0);
+                        const completed = related.reduce((sum,batch) => sum + batch.quantity_completed, 0);
+                        return <div key={item.id} className="rounded border border-zinc-600 p-2 text-xs text-zinc-300"><p className="text-amber-300">項次 {item.line_no} · {item.product_name} · {item.material}</p><p className="mt-1">{item.quantity} 件 × {item.estimated_weight} kg／件 · 總重 {(item.quantity * item.estimated_weight).toLocaleString('zh-TW')} kg</p><p>可開工 {Math.max(0,item.quantity-started)} 件 · 未完成 {Math.max(0,item.quantity-completed)} 件</p><p>{item.mold_supply} · {item.mold_type} · {item.heat_treatment} · 組別 {item.group || '—'}</p>{item.remarks && <p>{item.remarks}</p>}</div>;
+                      })}<p className="text-xs text-zinc-400">訂貨日期 {order.order_date || '—'} · 送貨地址 {order.delivery_address || '—'}</p>{order.remarks && <p className="text-xs text-zinc-400 whitespace-pre-wrap">交貨備註：{order.remarks}</p>}</div>}
                       {order.due_date && <p className="text-xs text-zinc-500 mt-1">交期: {order.due_date}</p>}
                       {/* Photo indicators */}
                       <div className="flex items-center gap-3 mt-2">
@@ -857,7 +868,7 @@ export default function WorkOrders() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => setEditOrder({ ...order, mold_photos: order.mold_photos || [], drawing_photos: order.drawing_photos || [] })} className="text-zinc-400 hover:text-zinc-100">
+                      <Button variant="ghost" size="icon" onClick={() => order.items?.length ? setItemDialog({ mode: 'edit', order }) : setEditOrder({ ...order, mold_photos: order.mold_photos || [], drawing_photos: order.drawing_photos || [] })} className="text-zinc-400 hover:text-zinc-100">
                         <Edit className="w-4 h-4" />
                       </Button>
                       <Button variant="ghost" size="icon" onClick={() => handleDelete(order)} className="text-zinc-400 hover:text-red-400">

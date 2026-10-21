@@ -1,4 +1,5 @@
 import type { WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder } from './types';
+import { orderItems, resolveOrderItem } from './workOrderItems';
 import type { MeltPouring } from './supabaseStore';
 
 export interface OverviewData {
@@ -90,31 +91,44 @@ export function calculateOverview(data: OverviewData, now = new Date()) {
     const quantity = count || (positive(record.pouring_weight) > 0 ? positive(batchMap.get(id)?.quantity_completed) : 0);
     legacyByBatch.set(id, (legacyByBatch.get(id) || 0) + quantity);
   }
-  const pouredByOrder = new Map<string, number>();
+  const itemKey = (orderId: string, itemId: string) => `${orderId}:${itemId}`;
+  const pouredByItem = new Map<string, number>();
   const moldedOrders = new Set<string>();
   for (const batch of batches) {
     const orderId = batchOrder(batch.id);
     if (positive(batch.quantity_completed) > 0 || batch.status === 'Completed') moldedOrders.add(orderId);
     // 新舊模組可能記錄同一批澆注，取較大值而不重複加總。
     const poured = Math.min(positive(batch.quantity_planned), Math.max(pouredByBatch.get(batch.id) || 0, legacyByBatch.get(batch.id) || 0));
-    pouredByOrder.set(orderId, (pouredByOrder.get(orderId) || 0) + poured);
+    const item = resolveOrderItem(orderMap.get(orderId), batch.work_order_item_id);
+    if (item) { const key = itemKey(orderId,item.id); pouredByItem.set(key,(pouredByItem.get(key) || 0)+poured); }
   }
-  const pouredQuantity = (order: WorkOrder) => Math.min(positive(order.quantity), pouredByOrder.get(order.id) || 0);
+  const itemPoured = (order: WorkOrder, item: ReturnType<typeof orderItems>[number]) => Math.min(positive(item.quantity), pouredByItem.get(itemKey(order.id,item.id)) || 0);
+  const pouredQuantity = (order: WorkOrder) => sum(orderItems(order), item => itemPoured(order,item));
   const shipped = new Map<string, number>();
   const pending = new Set<string>();
   for (const shipment of shipments) {
     const id = orderMap.has(shipment.work_order_id) ? shipment.work_order_id : orderNumbers.get(shipment.order_no) || '';
-    if (shipment.status === 'Shipped') shipped.set(id, (shipped.get(id) || 0) + positive(shipment.quantity));
-    else pending.add(id);
+    const item = resolveOrderItem(orderMap.get(id),shipment.work_order_item_id);
+    if (!item) continue;
+    const key = itemKey(id,item.id);
+    if (shipment.status === 'Shipped') shipped.set(key, (shipped.get(key) || 0) + positive(shipment.quantity));
+    else pending.add(key);
   }
   const inspectedOrders = new Set(inspections.map(inspectionOrder));
-  const stockByOrder = new Map<string, number>();
+  const stockByItem = new Map<string, number>();
   for (const entry of warehouse) {
     const id = batchOrder(entry.batch_id, entry.batch_no);
-    stockByOrder.set(id, (stockByOrder.get(id) || 0) + positive(entry.quantity));
+    const batch = batchMap.get(batchId(entry.batch_id,entry.batch_no));
+    const item = resolveOrderItem(orderMap.get(id),batch?.work_order_item_id);
+    if (!item) continue;
+    const key = itemKey(id,item.id);
+    stockByItem.set(key, (stockByItem.get(key) || 0) + positive(entry.quantity));
   }
-  const pendingShipment = (order: WorkOrder) => positive(order.quantity) > (shipped.get(order.id) || 0)
-    && (pending.has(order.id) || (stockByOrder.get(order.id) || 0) > (shipped.get(order.id) || 0));
+  const unshipped = (order: WorkOrder) => orderItems(order).some(item => positive(item.quantity) > (shipped.get(itemKey(order.id,item.id)) || 0));
+  const pendingShipment = (order: WorkOrder) => orderItems(order).some(item => {
+    const key = itemKey(order.id,item.id);
+    return positive(item.quantity) > (shipped.get(key) || 0) && (pending.has(key) || (stockByItem.get(key) || 0) > (shipped.get(key) || 0));
+  });
 
   const month = localDate(now).slice(0, 7);
   const monthlyMelts = melts.filter(melt => melt.melt_date?.slice(0, 7) === month);
@@ -129,8 +143,10 @@ export function calculateOverview(data: OverviewData, now = new Date()) {
   const monthlyWarehouseWeight = sum(warehouse.filter(entry => recordDay(entry.created_at).slice(0, 7) === month
     && approvedBatches.has(batchId(entry.batch_id, entry.batch_no))), entry => {
     const order = orderMap.get(batchOrder(entry.batch_id, entry.batch_no));
-    if (!order || positive(order.estimated_weight) === 0) missingWarehouseWeights++;
-    return positive(entry.quantity) * positive(order?.estimated_weight);
+    const batch = batchMap.get(batchId(entry.batch_id,entry.batch_no));
+    const item = resolveOrderItem(order,batch?.work_order_item_id);
+    if (!item || positive(item.estimated_weight) === 0) missingWarehouseWeights++;
+    return positive(entry.quantity) * positive(item?.estimated_weight);
   });
 
   const inspectionMap = new Map(inspections.map(inspection => [inspection.id, inspection]));
@@ -149,12 +165,12 @@ export function calculateOverview(data: OverviewData, now = new Date()) {
   return {
     month, today: localDate(now),
     monthlyCharge: sum(monthlyMelts, melt => charges.get(melt.id) || 0),
-    unpouredWeight: sum(active, order => Math.max(0, positive(order.quantity) - pouredQuantity(order)) * positive(order.estimated_weight)),
-    pouredWeight: sum(active, order => pouredQuantity(order) * positive(order.estimated_weight)),
+    unpouredWeight: sum(active, order => sum(orderItems(order), item => Math.max(0,positive(item.quantity)-itemPoured(order,item))*positive(item.estimated_weight))),
+    pouredWeight: sum(active, order => sum(orderItems(order), item => itemPoured(order,item)*positive(item.estimated_weight))),
     monthlyWarehouseWeight, missingWarehouseWeights,
     averageEnergy: energy.length ? sum(energy, value => value) / energy.length : null, energyCount: energy.length, missingEnergy,
     urgentProduction: active.filter(order => within(order, 21) && pouredQuantity(order) < positive(order.quantity)).sort(creationOrder),
-    urgentShipment: active.filter(order => within(order, 14) && (shipped.get(order.id) || 0) < positive(order.quantity)).sort(creationOrder),
+    urgentShipment: active.filter(order => within(order, 14) && unshipped(order)).sort(creationOrder),
     exceptions,
     summary: [
       { label: '總工單數', count: orders.length },

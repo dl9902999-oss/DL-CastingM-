@@ -1,3 +1,4 @@
+import { batchItem } from '@/lib/workOrderItems';
 import { useState, useEffect } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import { useSyncTrigger } from '@/hooks/useSyncedData';
@@ -7,16 +8,17 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { WarehouseEntry, MoldingBatch } from '@/lib/types';
+import { WarehouseEntry, MoldingBatch, WorkOrder } from '@/lib/types';
 import {
   dsGetWarehouseEntries, dsCreateWarehouseEntry, dsUpdateWarehouseEntry, dsDeleteWarehouseEntry,
-  dsGetMoldingBatches,
+  dsGetMoldingBatches, dsGetWorkOrders,
 } from '@/lib/dataService';
 import { Plus, Package, Pencil, Trash2, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 export default function WarehousePage() {
   const [entries, setEntries] = useState<WarehouseEntry[]>([]);
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   // 非空字串代表正在編輯既有入庫紀錄，null 代表新增
@@ -29,7 +31,8 @@ export default function WarehousePage() {
   const syncTrigger = useSyncTrigger();
 
   const loadData = async () => {
-    const [e, b] = await Promise.all([dsGetWarehouseEntries(), dsGetMoldingBatches()]);
+    const [e, b, orders] = await Promise.all([dsGetWarehouseEntries(), dsGetMoldingBatches(), dsGetWorkOrders()]);
+    setWorkOrders(orders);
     setEntries(e);
     setBatches(b);
   };
@@ -38,8 +41,8 @@ export default function WarehousePage() {
     let cancelled = false;
     (async () => {
       try {
-        const [e, b] = await Promise.all([dsGetWarehouseEntries(), dsGetMoldingBatches()]);
-        if (!cancelled) { setEntries(e); setBatches(b); }
+        const [e, b, orders] = await Promise.all([dsGetWarehouseEntries(), dsGetMoldingBatches(), dsGetWorkOrders()]);
+        if (!cancelled) { setEntries(e); setBatches(b); setWorkOrders(orders); }
       } catch { /* handled */ }
     })();
     return () => { cancelled = true; };
@@ -142,6 +145,7 @@ export default function WarehousePage() {
                       <Package className="w-5 h-5 text-blue-400 shrink-0" />
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-zinc-200 truncate">{entry.batch_no || '-'}</p>
+                        {(() => { const batch = batches.find(row => row.id === entry.batch_id); const item = batch ? batchItem(workOrders.find(order => order.id === batch.work_order_id), batch) : undefined; return <p className="text-xs text-zinc-300">{item?.product_name || batch?.product_name || '未關聯品項'} · 推估重量 {item ? `${(entry.quantity * item.estimated_weight).toLocaleString('zh-TW')} kg` : '無法計算'}</p>; })()}
                         <p className="text-xs text-zinc-400">
                           庫位: {entry.location || '-'}
                           {entry.created_at && (
@@ -200,7 +204,7 @@ export default function WarehousePage() {
                   </SelectTrigger>
                   <SelectContent className="bg-zinc-700 border-zinc-600">
                     {batches.map(b => (
-                      <SelectItem key={b.id} value={b.id}>{b.batch_no}</SelectItem>
+                      <SelectItem key={b.id} value={b.id}>{b.batch_no} · {b.product_name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

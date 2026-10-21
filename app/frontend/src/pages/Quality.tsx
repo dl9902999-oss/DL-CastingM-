@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { batchItem } from '@/lib/workOrderItems';
 import { useSyncTrigger } from '@/hooks/useSyncedData';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -442,6 +443,7 @@ export default function Quality() {
     const batch = batches.find(b => b.id === batchId);
     if (!batch) return;
     const wo = workOrders.find(w => w.id === batch.work_order_id);
+    const item = batchItem(wo, batch);
     const melting = meltingRecords.find(m => m.batch_id === batchId);
     setInspForm(prev => ({
       ...prev,
@@ -450,8 +452,8 @@ export default function Quality() {
       work_order_id: wo?.id || '',
       order_no: wo?.order_no || '',
       customer: wo?.customer || '',
-      product_name: wo?.product_name || '',
-      material: wo?.material || '',
+      product_name: item?.product_name || batch.product_name || '',
+      material: item?.material || batch.material || '',
       heat_no: melting?.heat_no || '',
       inspected_quantity: batch.quantity_completed || batch.quantity_planned || batch.quantity || 0,
       pass_quantity: batch.quantity_completed || batch.quantity_planned || batch.quantity || 0,
@@ -626,6 +628,7 @@ export default function Quality() {
         toast({ title: '入庫紀錄已建立', description: `批次 ${releaseInspection.batch_no}｜${releaseForm.quantity} 件` });
       } else {
         await dsCreateShipmentOrder({
+          work_order_item_id: batchItem(workOrders.find(order => order.id === releaseInspection.work_order_id), batches.find(batch => batch.id === releaseInspection.batch_id) || {})?.id,
           work_order_id: releaseInspection.work_order_id || '',
           order_no: releaseInspection.order_no || '',
           customer: releaseInspection.customer || '',
@@ -1026,7 +1029,7 @@ export default function Quality() {
               <CardContent>
                 <div className="space-y-2">
                   {(() => {
-                    const grouped = defectRecords.reduce((acc, d) => {
+                    const grouped: Record<string, number> = defectRecords.reduce((acc, d) => {
                       acc[d.defect_code] = (acc[d.defect_code] || 0) + d.quantity;
                       return acc;
                     }, {} as Record<string, number>);

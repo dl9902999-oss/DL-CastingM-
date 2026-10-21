@@ -1,3 +1,4 @@
+import { orderItems, resolveOrderItem, itemMatches } from '@/lib/workOrderItems';
 import { useState, useEffect } from 'react';
 import { useSyncTrigger } from '@/hooks/useSyncedData';
 import AppLayout from '@/components/layout/AppLayout';
@@ -26,6 +27,7 @@ export default function Shipment() {
 
   const [form, setForm] = useState({
     work_order_id: '',
+    work_order_item_id: '',
     quantity: 0,
     ship_date: '',
     status: 'Pending' as ShipmentOrder['status'],
@@ -52,7 +54,7 @@ export default function Shipment() {
 
   const openCreate = () => {
     setEditingId(null);
-    setForm({ work_order_id: '', quantity: 0, ship_date: '', status: 'Pending' });
+    setForm({ work_order_id: '', work_order_item_id: '', quantity: 0, ship_date: '', status: 'Pending' });
     setIsDialogOpen(true);
   };
 
@@ -61,6 +63,7 @@ export default function Shipment() {
     setEditingId(shipment.id);
     setForm({
       work_order_id: shipment.work_order_id || '',
+      work_order_item_id: resolveOrderItem(workOrders.find(order => order.id === shipment.work_order_id), shipment.work_order_item_id)?.id || '',
       quantity: shipment.quantity || 0,
       ship_date: (shipment.ship_date || '').slice(0, 10),
       status: shipment.status || 'Pending',
@@ -86,11 +89,16 @@ export default function Shipment() {
       return;
     }
     const wo = workOrders.find(o => o.id === form.work_order_id);
+    const item = resolveOrderItem(wo, form.work_order_item_id);
+    if (!wo || !item || !Number.isInteger(form.quantity)) { toast({ title: '請選擇工單品項並輸入整數數量', variant: 'destructive' }); return; }
+    const reserved = shipments.filter(row => row.id !== editingId && row.work_order_id === wo.id && itemMatches(wo,item,row.work_order_item_id)).reduce((sum,row)=>sum+row.quantity,0);
+    if (reserved + form.quantity > item.quantity) { toast({ title: `超過此品項尚未建立出貨單的數量（${Math.max(0,item.quantity-reserved)} 件）`, variant: 'destructive' }); return; }
     setSubmitting(true);
     try {
       if (editingId) {
         // 編輯既有出貨單：出貨單號與建立時間保持不變
         await dsUpdateShipmentOrder(editingId, {
+          work_order_item_id: item.id,
           work_order_id: form.work_order_id,
           order_no: wo?.order_no || '',
           customer: wo?.customer || '',
@@ -101,6 +109,7 @@ export default function Shipment() {
         toast({ title: '出貨單已更新' });
       } else {
         await dsCreateShipmentOrder({
+          work_order_item_id: item.id,
           work_order_id: form.work_order_id,
           order_no: wo?.order_no || '',
           customer: wo?.customer || '',
@@ -112,7 +121,7 @@ export default function Shipment() {
       await loadData();
       setIsDialogOpen(false);
       setEditingId(null);
-      setForm({ work_order_id: '', quantity: 0, ship_date: '', status: 'Pending' });
+      setForm({ work_order_id: '', work_order_item_id: '', quantity: 0, ship_date: '', status: 'Pending' });
     } catch (err: unknown) {
       handleError(err, editingId ? '更新失敗，請稍後再試' : '建立失敗，請稍後再試');
     } finally {
@@ -171,7 +180,7 @@ export default function Shipment() {
                           }`}>{shipment.status === 'Pending' ? '待出貨' : '已出貨'}</span>
                         </div>
                         <div className="grid grid-cols-2 gap-2 text-xs text-zinc-400 mt-1">
-                          <span>工單: <span className="text-zinc-200">{shipment.order_no || '-'}</span></span>
+                          <span>工單: <span className="text-zinc-200">{shipment.order_no || '-'} · {resolveOrderItem(workOrders.find(order => order.id === shipment.work_order_id), shipment.work_order_item_id)?.product_name || '品項未關聯'}</span></span>
                           <span>客戶: <span className="text-zinc-200">{shipment.customer || '-'}</span></span>
                           <span>數量: <span className="text-zinc-200">{shipment.quantity}</span></span>
                           <span>日期: <span className="text-zinc-200">{shipment.ship_date || '-'}</span></span>
@@ -221,7 +230,7 @@ export default function Shipment() {
             <div className="space-y-3">
               <div>
                 <Label className="text-zinc-300">工單</Label>
-                <Select value={form.work_order_id} onValueChange={val => setForm({ ...form, work_order_id: val })}>
+                <Select value={form.work_order_id} onValueChange={val => { const order = workOrders.find(row => row.id === val); setForm({ ...form, work_order_id: val, work_order_item_id: order && orderItems(order).length === 1 ? orderItems(order)[0].id : '', quantity: 0 }); }}>
                   <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100">
                     <SelectValue placeholder="選擇工單" />
                   </SelectTrigger>
@@ -232,6 +241,11 @@ export default function Shipment() {
                   </SelectContent>
                 </Select>
               </div>
+              <label className="block text-sm text-zinc-300">品項
+                <select aria-label="出貨品項" className="w-full bg-zinc-700 border border-zinc-600 rounded h-10 px-2" value={form.work_order_item_id} onChange={event => setForm({ ...form, work_order_item_id: event.target.value, quantity: 0 })}>
+                  <option value="">請選擇品項</option>{workOrders.filter(order => order.id === form.work_order_id).flatMap(order => orderItems(order).map(item => <option key={item.id} value={item.id}>項次 {item.line_no} · {item.product_name} · {item.quantity} 件</option>))}
+                </select>
+              </label>
               <div>
                 <Label className="text-zinc-300">出貨數量</Label>
                 <Input
