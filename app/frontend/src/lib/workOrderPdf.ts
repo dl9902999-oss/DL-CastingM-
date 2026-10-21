@@ -40,14 +40,19 @@ export function parseOrderPage(words: PdfWord[], filename: string): PdfOrderDraf
     const cells = h.map((_,column) => text(tokens.filter(word => word.y <= upper && word.y > lower && word.x + word.width/2 >= (column ? limits[column-1] : -Infinity) && word.x + word.width/2 < (limits[column] ?? Infinity))));
     if (cells.slice(1).every(cell => !cell)) continue;
     const numeric = (value: string, suffix: RegExp) => { const raw = value.replace(suffix,'').replace(/,/g,'').trim(); return /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : NaN; };
+    const quantity = numeric(cells[3], /\s*PC\s*$/i);
+    const estimatedWeight = numeric(cells[4], /\s*kg\s*$/i);
+    const sourceNotes: string[] = [];
+    if (!Number.isFinite(quantity)) sourceNotes.push(`PDF原始數量：${cells[3] || '空白'}；需人工確認件數，不自動換算單位。`);
+    if (!Number.isFinite(estimatedWeight)) sourceNotes.push(`PDF原始預估單重：${cells[4] || '空白'}；需人工確認，未自動填入0。`);
     const supply = cells[5] === '客戶自備' ? '客戶提供' : cells[5];
     if (!['','客戶提供','公司自有','代客製作'].includes(supply) || !['','上下模','單面模','現板模','保模','中板模','砂心模','其他'].includes(cells[6]) || !['','退火','淬火','回火','正常化','調質','其他'].includes(cells[7])) throw new Error(`項次 ${cells[0]} 的模具或熱處理內容不在支援選項，請確認原文件。`);
-    items.push({ ...emptyOrderItem(), line_no: cells[0], product_name: cells[1], material: cells[2], quantity: numeric(cells[3], /\s*PC\s*$/i), estimated_weight: numeric(cells[4], /\s*kg\s*$/i), mold_supply: supply as WorkOrderItem['mold_supply'], mold_type: cells[6] as WorkOrderItem['mold_type'], heat_treatment: cells[7] as WorkOrderItem['heat_treatment'], group: cells[8], remarks: cells[9] });
+    items.push({ ...emptyOrderItem(), line_no: cells[0], product_name: cells[1], material: cells[2], quantity, estimated_weight: estimatedWeight, mold_supply: supply as WorkOrderItem['mold_supply'], mold_type: cells[6] as WorkOrderItem['mold_type'], heat_treatment: cells[7] as WorkOrderItem['heat_treatment'], group: cells[8], remarks: [cells[9], ...sourceNotes].filter(Boolean).join('\n') });
   }
   const note = find('交貨備註'); const handler = find('承辦人');
   const remarks = note ? text(tokens.filter(word => word.y <= note.y+4 && word.y > (handler?.y ?? 0)+5 && word.x > note.x+note.width)) : '';
   const draft: PdfOrderDraft = { order_no: after('廠內訂單編號'), customer, order_date: dateValue(after('訂貨日期',find('預交日期')!.x)), due_date: dateValue(after('預交日期',find('廠內訂單編號')!.x)), delivery_address: after('送貨地址',find('聯絡人')?.x), remarks, source_filename: filename, items };
   if (!items.length) throw new Error('未辨識到任何品項，未建立工單。');
-  if (items.some(item => !Number.isFinite(item.quantity) || !Number.isFinite(item.estimated_weight))) throw new Error('數量或重量辨識不完整，請確認PDF文字及PC／kg單位。');
+  // 數值缺漏保留為未確認的草稿，由編輯預覽補齊；保存前仍須通過驗證。
   return draft;
 }

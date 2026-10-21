@@ -40,7 +40,7 @@ export function validateOrderItems(items: WorkOrderItem[]): string | null {
     const prefix = `品項 ${index + 1}：`;
     if (!item.product_name.trim() || !item.material.trim()) return prefix + '請填寫品名與材質';
     if (!Number.isInteger(item.quantity) || item.quantity <= 0 || item.quantity > 99999) return prefix + '數量須為1～99,999的整數';
-    if (!Number.isFinite(item.estimated_weight) || item.estimated_weight < 0 || item.estimated_weight > 999999) return prefix + '預估單重無效';
+    if (!Number.isFinite(item.estimated_weight) || item.estimated_weight < 0 || item.estimated_weight > 999999) return prefix + '請確認並填寫預估單重（若確認不計重量，請明確填入0）';
   }
   return null;
 }
