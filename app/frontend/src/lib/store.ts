@@ -424,26 +424,10 @@ export function getWorkOrders(): WorkOrder[] {
   return getItems<WorkOrder>(STORAGE_KEYS.WORK_ORDERS);
 }
 
-export function createWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' | 'status' | 'created_at' | 'updated_at'>): WorkOrder {
+export function createWorkOrder(data: Omit<WorkOrder, 'id' | 'status' | 'created_at' | 'updated_at'>): WorkOrder {
   const orders = getWorkOrders();
-  const customers = getCustomers();
-  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-
-  // Find customer_no from customer name
-  const matchedCustomer = customers.find(c => c.name === data.customer || c.short_name === data.customer);
-  const customerCode = matchedCustomer && matchedCustomer.customer_no
-    ? matchedCustomer.customer_no.replace(/-/g, '')
-    : 'X00';
-
-  // Count all orders for this customer to determine cumulative sequence (0001~)
-  const customerOrders = orders.filter(o => {
-    // Match orders that contain this customer code in the order_no
-    return o.order_no.includes(`-${customerCode}-`);
-  });
-  const seq = customerOrders.length + 1;
-  const seqStr = String(seq).padStart(4, '0');
-
-  const orderNo = `WO-${today}-${customerCode}-${seqStr}`;
+  const orderNo = data.order_no;
+  if (!orderNo || orders.some(order => order.order_no === orderNo)) throw new Error('工單編號空白或重複，未建立工單。');
 
   const newOrder: WorkOrder = {
     ...data,

@@ -5,6 +5,7 @@
  * - 連接失敗：降級到 localStorage（離線模式）
  */
 
+import { buildWorkOrderNumber, matchNumberingCustomer } from './workOrderNumber';
 import * as localStore from './store';
 import * as sbStore from './supabaseStore';
 import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, MeltChemistry, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder, UserProfile, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
@@ -973,10 +974,15 @@ export async function dsGetWorkOrders(): Promise<WorkOrder[]> {
   );
 }
 
-export async function dsCreateWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' | 'status' | 'created_at' | 'updated_at'>): Promise<WorkOrder> {
+export async function dsCreateWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' | 'status' | 'created_at' | 'updated_at'> & { internal_order_no: string }): Promise<WorkOrder> {
+  const { internal_order_no, ...fields } = data;
+  const customer = matchNumberingCustomer(await dsGetCustomers(), fields.customer);
+  const numbered = { ...fields, customer: customer.name, order_no: buildWorkOrderNumber(customer.customer_no, internal_order_no) };
+  const existing = await dsGetWorkOrders();
+  if (existing.some(order => order.order_no === numbered.order_no)) throw new Error('工單編號重複，請核對廠內訂單編號。');
   return withRLSFallback(
-    () => sbStore.sbCreateWorkOrder(data),
-    () => localStore.createWorkOrder(data),
+    () => sbStore.sbCreateWorkOrder(numbered),
+    () => localStore.createWorkOrder(numbered),
     'dsCreateWorkOrder',
     { table: 'work_orders', action: 'create' }
   );

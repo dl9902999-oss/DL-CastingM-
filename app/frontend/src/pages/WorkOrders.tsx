@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
 import WorkOrderImportDialog from '@/components/WorkOrderImportDialog';
+import { buildWorkOrderNumber, matchNumberingCustomer } from '@/lib/workOrderNumber';
 import { orderItems, itemMatches } from '@/lib/workOrderItems';
 import { useSyncTrigger } from '@/hooks/useSyncedData';
 import { Button } from '@/components/ui/button';
@@ -271,6 +272,8 @@ function CustomerAutocomplete({ value, onChange, customers, onAddCustomer }: {
 export default function WorkOrders() {
   const navigate = useNavigate();
   const [itemDialog, setItemDialog] = useState<{ mode: 'pdf' | 'manual' | 'edit'; order?: WorkOrder } | null>(null);
+  const [internalOrderNo, setInternalOrderNo] = useState('');
+  const [collapsedOrders, setCollapsedOrders] = useState<Set<string>>(new Set());
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -440,6 +443,7 @@ export default function WorkOrders() {
   });
 
   const validateWorkOrderForm = (): string | null => {
+    if (!internalOrderNo.trim()) return '請填寫廠內訂單編號';
     // 必填欄位檢查
     if (!form.customer.trim()) return '請選擇或輸入客戶名稱';
     if (!form.product_name.trim()) return '請輸入產品名稱';
@@ -506,11 +510,12 @@ export default function WorkOrders() {
         estimated_weight: form.estimated_weight || 0,
       };
 
-      const result = await dsCreateWorkOrder(cleanedData);
+      const result = await dsCreateWorkOrder({ ...cleanedData, internal_order_no: internalOrderNo });
       if (result) {
         await loadWorkOrders();
         setIsCreateOpen(false);
         resetForm();
+        setInternalOrderNo('');
         toast({ title: '✅ 工單已新增' });
       } else {
         toast({ title: '新增失敗，請重試', variant: 'destructive' });
@@ -581,6 +586,8 @@ export default function WorkOrders() {
     }
   };
 
+  let creationNumberPreview = '請選擇客戶並填寫廠內訂單編號';
+  try { creationNumberPreview = buildWorkOrderNumber(matchNumberingCustomer(customers, form.customer).customer_no, internalOrderNo); } catch { /* 表單尚未填齊時顯示提示。 */ }
   const filtered = orders.filter(o => {
     // Text search
     if (searchTerm.trim()) {
@@ -611,7 +618,7 @@ export default function WorkOrders() {
 
   return (
     <AppLayout>
-      {itemDialog && <WorkOrderImportDialog {...itemDialog} onClose={() => setItemDialog(null)} onSaved={loadWorkOrders} />}
+      {itemDialog && <WorkOrderImportDialog {...itemDialog} customers={customers} onClose={() => setItemDialog(null)} onSaved={loadWorkOrders} />}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">工單管理</h1>
@@ -627,6 +634,9 @@ export default function WorkOrders() {
                 <DialogTitle className="text-zinc-100">新增工單</DialogTitle>
               </DialogHeader>
               <div className="space-y-3">
+                <label className="text-sm text-zinc-300 block">廠內訂單編號<Input aria-label="廠內訂單編號" value={internalOrderNo} onChange={event => setInternalOrderNo(event.target.value)} className="bg-zinc-700 border-zinc-600 text-zinc-100" /></label>
+                <p className="text-sm text-amber-300 break-all">工單編號：{creationNumberPreview}</p>
+                <p className="text-xs text-zinc-400">WO-建立日期（台灣 YYYYMMDD）-客戶編號-廠內訂單編號</p>
                 <div>
                   <Label className="text-zinc-300">客戶</Label>
                   <CustomerAutocomplete
@@ -820,8 +830,9 @@ export default function WorkOrders() {
                 <CardContent className="p-4">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                     <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-mono text-sm font-semibold text-amber-400">{order.order_no}</span>
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <Button type="button" size="sm" className="bg-zinc-700 text-zinc-100 hover:bg-zinc-600" aria-expanded={!collapsedOrders.has(order.id)} aria-controls={`order-details-${order.id}`} aria-label={`${collapsedOrders.has(order.id) ? '展開' : '收折'}工單 ${order.order_no}`} onClick={() => setCollapsedOrders(previous => { const next = new Set(previous); if (next.has(order.id)) next.delete(order.id); else next.add(order.id); return next; })}>{collapsedOrders.has(order.id) ? '展開' : '收折'}</Button>
+                        <span className="font-mono text-sm font-semibold text-amber-400 break-all">{order.order_no}</span>
                         <span className={`text-xs px-2 py-0.5 rounded-full ${getDisplayStatus(order).cls}`}>{getDisplayStatus(order).label}</span>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400">
@@ -830,6 +841,7 @@ export default function WorkOrders() {
                         <span>材質: <span className="text-zinc-200">{order.material}</span></span>
                         <span>訂單數量: <span className="text-zinc-200">{order.quantity}</span></span>
                       </div>
+                      <div id={`order-details-${order.id}`} hidden={collapsedOrders.has(order.id)}>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400 mt-1">
                         <span>已開工數量: <span className="text-zinc-200">{getStartedQty(order.id)}</span></span>
                         <span>餘剩數量: <span className={`${order.quantity - getStartedQty(order.id) <= 0 ? 'text-green-400' : 'text-amber-300'}`}>{order.quantity - getStartedQty(order.id)}</span></span>
@@ -865,6 +877,7 @@ export default function WorkOrders() {
                             <FileImage className="w-3 h-3" />圖面 ({order.drawing_photos.length})
                           </button>
                         )}
+                      </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-1">

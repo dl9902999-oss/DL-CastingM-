@@ -290,37 +290,9 @@ export async function sbGetWorkOrders(): Promise<WorkOrder[]> {
   return (data || []).map(mapWorkOrder);
 }
 
-export async function sbCreateWorkOrder(orderData: Omit<WorkOrder, 'id' | 'order_no' | 'status' | 'created_at' | 'updated_at'>): Promise<WorkOrder> {
-  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  
-  // Find customer code - use fallback if SELECT is blocked by RLS
-  // Use a short 3-second timeout so this optional lookup doesn't block the INSERT
-  let customerCode = 'X00';
-  try {
-    const customerQuery = supabase.from('customers').select('customer_no, name, short_name');
-    const result = await Promise.race([
-      customerQuery,
-      new Promise<{ data: null; error: { message: string } }>((resolve) =>
-        setTimeout(() => resolve({ data: null, error: { message: 'customer lookup timeout' } }), 3000)
-      ),
-    ]);
-    const { data: customers, error: custErr } = result;
-    if (!custErr && customers && customers.length > 0) {
-      const matched = customers.find((c: Record<string, unknown>) => c.name === orderData.customer || c.short_name === orderData.customer);
-      if (matched?.customer_no) {
-        customerCode = (matched.customer_no as string).replace(/-/g, '');
-      }
-    }
-  } catch (e) {
-    console.warn('[sbCreateWorkOrder] Failed to query customers for code, using fallback:', e);
-  }
-
-  // Generate a unique order_no using timestamp + random suffix to avoid UNIQUE constraint violations.
-  // Previously we counted existing orders with a SELECT, but if RLS blocks that SELECT,
-  // it returns empty → seq always = 1 → duplicate order_no on second insert.
-  const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
-  const timestamp = Date.now().toString(36).toUpperCase().slice(-4);
-  const orderNo = `WO-${today}-${customerCode}-${timestamp}${randomSuffix}`;
+export async function sbCreateWorkOrder(orderData: Omit<WorkOrder, 'id' | 'status' | 'created_at' | 'updated_at'>): Promise<WorkOrder> {
+  const orderNo = orderData.order_no;
+  if (!orderNo) throw new Error('缺少工單編號，未建立工單。');
 
   const insertPayload = {
     ...buildWorkOrderPayload(orderData as unknown as Record<string, unknown>),
