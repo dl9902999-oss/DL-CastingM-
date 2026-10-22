@@ -5,6 +5,7 @@
  * - 連接失敗：降級到 localStorage（離線模式）
  */
 
+import { DuplicateCustomerError, findDuplicateCustomers } from './customerDuplicates';
 import { buildWorkOrderNumber, matchNumberingCustomer } from './workOrderNumber';
 import * as localStore from './store';
 import * as sbStore from './supabaseStore';
@@ -936,13 +937,22 @@ export async function dsGetCustomers(): Promise<Customer[]> {
   );
 }
 
+let customerCreationQueue: Promise<unknown> = Promise.resolve();
+
 export async function dsCreateCustomer(data: Omit<Customer, 'id' | 'customer_no' | 'created_at' | 'updated_at'>): Promise<Customer> {
-  return withRLSFallback(
-    () => sbStore.sbCreateCustomer(data),
-    () => localStore.createCustomer(data),
-    'dsCreateCustomer',
-    { table: 'customers', action: 'create' }
-  );
+  const create = async () => {
+    let customers: Customer[];
+    try { customers = await sbStore.sbGetCustomers(); }
+    catch { throw new Error('無法讀取最新客戶資料以確認重複，尚未新增；請確認連線後再試。'); }
+    const duplicates = findDuplicateCustomers([...customers, ...localStore.getCustomers().filter(local => !customers.some(remote => remote.id === local.id))], data);
+    if (duplicates.length) throw new DuplicateCustomerError(duplicates);
+    const customer = await sbStore.sbCreateCustomer({ ...data, name: data.name.trim(), short_name: data.short_name.trim() });
+    markRecentWrite('customers');
+    return customer;
+  };
+  const pending = customerCreationQueue.then(create);
+  customerCreationQueue = pending.catch(() => undefined);
+  return pending;
 }
 
 export async function dsUpdateCustomer(id: string, data: Partial<Customer>): Promise<Customer | null> {

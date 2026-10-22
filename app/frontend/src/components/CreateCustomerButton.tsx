@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DuplicateCustomerError } from '@/lib/customerDuplicates';
 import { dsCreateCustomer } from '@/lib/dataService';
 import type { Customer, CustomerType } from '@/lib/types';
 
@@ -24,6 +25,7 @@ export default function CreateCustomerButton({ initialName, onCreated, disabled 
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<CustomerDraft>(() => emptyDraft(initialName));
   const [error, setError] = useState('');
+  const [duplicates, setDuplicates] = useState<Customer[]>([]);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const submit = async (event: React.FormEvent) => {
@@ -31,7 +33,7 @@ export default function CreateCustomerButton({ initialName, onCreated, disabled 
     if (savingRef.current) return;
     const required = fields.find(field => field.required && !draft[field.key].trim());
     if (required || !draft.type) { setError(required ? `請填寫${required.label}` : '請選擇客戶類別'); return; }
-    savingRef.current = true; setSaving(true); setError('');
+    savingRef.current = true; setSaving(true); setError(''); setDuplicates([]);
     try {
       const cleaned = { ...draft };
       for (const field of fields) cleaned[field.key] = draft[field.key].trim();
@@ -42,11 +44,12 @@ export default function CreateCustomerButton({ initialName, onCreated, disabled 
       onCreated(customer);
       setOpen(false);
     } catch (failure) {
+      if (failure instanceof DuplicateCustomerError) setDuplicates(failure.customers);
       setError(failure instanceof Error ? failure.message : '客戶新增失敗，請重試；已填資料仍保留。');
     } finally { savingRef.current = false; setSaving(false); }
   };
   return <Dialog open={open} onOpenChange={value => { if (!savingRef.current) setOpen(value); }}>
-    <Button type="button" disabled={disabled} className="bg-zinc-700 text-amber-300 hover:bg-zinc-600" onClick={() => { setDraft(emptyDraft(initialName)); setError(''); setOpen(true); }}>新增客戶</Button>
+    <Button type="button" disabled={disabled} className="bg-zinc-700 text-amber-300 hover:bg-zinc-600" onClick={() => { setDraft(emptyDraft(initialName)); setError(''); setDuplicates([]); setOpen(true); }}>新增客戶</Button>
     <DialogContent className="bg-zinc-800 border-zinc-600 text-zinc-100 max-w-xl max-h-[90vh] overflow-y-auto">
       <DialogHeader><DialogTitle>新增客戶並選入工單</DialogTitle><DialogDescription className="text-zinc-400">客戶編號由系統產生；保存後自動選入目前工單，不清除已填寫的工單內容。</DialogDescription></DialogHeader>
       <form onSubmit={submit} className="space-y-4">
@@ -57,6 +60,7 @@ export default function CreateCustomerButton({ initialName, onCreated, disabled 
           <Button type="button" className="bg-zinc-700 text-zinc-100" onClick={() => setDraft({ ...draft, delivery_addresses: [...draft.delivery_addresses, ''] })}>新增送貨地址</Button>
           <label className="block text-sm">備註<textarea value={draft.remarks} onChange={event => setDraft({ ...draft, remarks: event.target.value })} className="mt-1 w-full rounded border border-zinc-600 bg-zinc-700 p-2" /></label>
         </fieldset>
+        {duplicates.length > 0 && <div className="space-y-2 rounded border border-amber-500/50 p-3"><p className="text-sm text-amber-300">找到既有客戶，可直接選入工單，不另行新增：</p>{duplicates.map(customer => <div key={customer.id} className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>{customer.customer_no} · {customer.name} · {customer.status}</span><Button type="button" disabled={saving} className="bg-zinc-700 text-amber-300" onClick={() => { onCreated(customer); setOpen(false); }}>選用此客戶</Button></div>)}</div>}
         {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
         <div className="flex justify-end gap-2"><Button type="button" disabled={saving} className="bg-zinc-700 text-zinc-100" onClick={() => setOpen(false)}>取消</Button><Button type="submit" disabled={saving} className="bg-amber-500 text-zinc-900 hover:bg-amber-600">{saving ? '儲存中…' : '保存並選入工單'}</Button></div>
       </form>

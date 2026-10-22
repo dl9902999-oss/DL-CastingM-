@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { dsGetCustomers, dsCreateCustomer, dsUpdateCustomer, dsDeleteCustomer } from '@/lib/dataService';
+import { DuplicateCustomerError } from '@/lib/customerDuplicates';
 import { Customer, CustomerType, CustomerStatus } from '@/lib/types';
 import { Plus, Search, Edit, Trash2, Users, X, Upload, RefreshCw } from 'lucide-react';
 import BatchImportDialog from '@/components/BatchImportDialog';
@@ -153,15 +154,19 @@ export default function Customers() {
       }
     } catch (err: unknown) {
       console.error('[Customers] Create failed:', err);
+      if (err instanceof DuplicateCustomerError) {
+        toast({ title: '客戶已存在，未新增', description: err.message, variant: 'destructive' });
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
         toast({ title: '資料庫權限不足，請聯繫管理員執行 RLS 修正腳本', variant: 'destructive' });
       } else if (msg.includes('duplicate') || msg.includes('unique')) {
         toast({ title: '客戶編號重複，請重試', variant: 'destructive' });
       } else if (msg.includes('timeout')) {
-        toast({ title: '連線逾時，已儲存至本地', variant: 'destructive' });
+        toast({ title: '連線逾時，請確認客戶清單後再試', variant: 'destructive' });
       } else {
-        toast({ title: '新增失敗，請重試', variant: 'destructive' });
+        toast({ title: '新增失敗', description: msg, variant: 'destructive' });
       }
     } finally {
       setIsSaving(false);
