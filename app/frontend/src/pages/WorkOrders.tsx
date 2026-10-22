@@ -812,7 +812,7 @@ export default function WorkOrders() {
         </div>
 
         {/* Orders List */}
-        <div className="space-y-3">
+        <div className="space-y-2">
           {filtered.length === 0 ? (
             <Card className="bg-zinc-800 border-zinc-700">
               <CardContent className="p-8 text-center text-zinc-400">尚無工單資料</CardContent>
@@ -823,7 +823,7 @@ export default function WorkOrders() {
               const selectedItem = items.find(item => item.id === selectedItems[order.id]) || items[0];
               return (
               <Card key={order.id} className="bg-zinc-800 border-zinc-700">
-                <CardContent className="p-4">
+                <CardContent className="p-3">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2 mb-1">
@@ -831,10 +831,10 @@ export default function WorkOrders() {
                         <span className="font-mono text-sm font-semibold text-amber-400 break-all">{order.order_no}</span>
                         <span className={`text-xs px-2 py-0.5 rounded-full ${getDisplayStatus(order).cls}`}>{getDisplayStatus(order).label}</span>
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400">
-                        <span>客戶: <span className="text-zinc-200">{order.customer}</span></span>
-                        <label className="min-w-0 col-span-2 sm:col-span-1">品名（{items.length} 項）:
-                          <select aria-label={`工單 ${order.order_no} 品名`} value={selectedItem.id} onChange={event => setSelectedItems(previous => ({ ...previous, [order.id]: event.target.value }))} className="mt-1 w-full min-w-0 rounded border border-zinc-600 bg-zinc-700 px-2 py-1.5 text-zinc-100" title={selectedItem.product_name}>
+                      <div className="grid grid-cols-2 md:grid-cols-5 items-center gap-x-3 gap-y-1 text-xs text-zinc-400">
+                        <span className="min-w-0 break-words">客戶: <span className="text-zinc-200">{order.customer}</span></span>
+                        <label className="min-w-0 flex items-center gap-1 col-span-2 md:col-span-1"><span className="shrink-0">品名（{items.length}）</span>
+                          <select aria-label={`工單 ${order.order_no} 品名`} value={selectedItem.id} onChange={event => setSelectedItems(previous => ({ ...previous, [order.id]: event.target.value }))} className="w-full min-w-0 rounded border border-zinc-600 bg-zinc-700 px-1 py-1 text-zinc-100" title={selectedItem.product_name}>
                             {items.map((item, index) => <option key={item.id} value={item.id}>{item.line_no || index + 1} · {item.product_name}</option>)}
                           </select>
                         </label>
@@ -843,24 +843,38 @@ export default function WorkOrders() {
                         <span>交期: <span className="text-amber-300 font-medium">{order.due_date || '未設定'}</span></span>
                       </div>
                       <div id={`order-details-${order.id}`} hidden={collapsedOrders.has(order.id)}>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400 mt-1">
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-zinc-400 mt-1">
                         <span>已開工數量: <span className="text-zinc-200">{getStartedQty(order.id)}</span></span>
                         <span>餘剩數量: <span className={`${order.quantity - getStartedQty(order.id) <= 0 ? 'text-green-400' : 'text-amber-300'}`}>{order.quantity - getStartedQty(order.id)}</span></span>
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400 mt-1">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1 text-xs text-zinc-400 empty:hidden mt-1">
                         {!order.items?.length && order.estimated_weight > 0 && <span>預估重量: <span className="text-zinc-200">{order.estimated_weight}kg</span></span>}
                         {!order.items?.length && order.mold_supply && <span>模具供給: <span className="text-zinc-200">{order.mold_supply}</span></span>}
                         {!order.items?.length && order.mold_type && <span>模具型式: <span className="text-zinc-200">{order.mold_type}</span></span>}
                         {!order.items?.length && order.heat_treatment && <span>熱處理: <span className="text-zinc-200">{order.heat_treatment}</span></span>}
                       </div>
-                      {!!order.items?.length && <div className="mt-3 space-y-2">{[selectedItem].map(item => {
+                      {!!order.items?.length && <div className="mt-1 space-y-1">{[selectedItem].map(item => {
                         const related = batches.filter(batch => batch.work_order_id === order.id && itemMatches(order, item, batch.work_order_item_id));
                         const started = related.reduce((sum,batch) => sum + batch.quantity_planned, 0);
                         const completed = related.reduce((sum,batch) => sum + batch.quantity_completed, 0);
-                        return <div key={item.id} className="rounded border border-zinc-600 p-2 text-xs text-zinc-300"><p className="text-amber-300">項次 {item.line_no} · {item.product_name} · {item.material}</p><p className="mt-1">{item.quantity} 件 × {item.estimated_weight} kg／件 · 總重 {(item.quantity * item.estimated_weight).toLocaleString('zh-TW')} kg</p><p>可開工 {Math.max(0,item.quantity-started)} 件 · 未完成 {Math.max(0,item.quantity-completed)} 件</p><p>{item.mold_supply} · {item.mold_type} · {item.heat_treatment} · 組別 {item.group || '—'}</p>{item.remarks && <p>{item.remarks}</p>}</div>;
-                      })}<p className="text-xs text-zinc-400">訂貨日期 {order.order_date || '—'} · 送貨地址 {order.delivery_address || '—'}</p>{order.remarks && <p className="text-xs text-zinc-400 whitespace-pre-wrap">交貨備註：{order.remarks}</p>}</div>}
+                        return <div key={item.id} className="rounded border border-zinc-600 px-2 py-1.5 text-xs text-zinc-300">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-3 gap-y-1 [&>span]:min-w-0 [&>span]:break-words">
+                            <span className="text-amber-300">項次：{item.line_no || '—'}</span>
+                            <span>品項數量：{item.quantity} 件</span>
+                            <span>單重：{item.estimated_weight} kg／件</span>
+                            <span>總重：{(item.quantity * item.estimated_weight).toLocaleString('zh-TW')} kg</span>
+                            <span>可開工：{Math.max(0,item.quantity-started)} 件</span>
+                            <span>未完成：{Math.max(0,item.quantity-completed)} 件</span>
+                            <span>模具供給：{item.mold_supply || '—'}</span>
+                            <span>模具型式：{item.mold_type || '—'}</span>
+                            <span>熱處理：{item.heat_treatment || '—'}</span>
+                            <span>組別：{item.group || '—'}</span>
+                          </div>
+                          {item.remarks && <p className="mt-1 whitespace-pre-wrap break-words">鑄件備註：{item.remarks}</p>}
+                        </div>;
+                      })}<div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-zinc-400"><span>訂貨日期：{order.order_date || '—'}</span><span className="min-w-0 break-words">送貨地址：{order.delivery_address || '—'}</span></div>{order.remarks && <p className="text-xs text-zinc-400 whitespace-pre-wrap">交貨備註：{order.remarks}</p>}</div>}
                       {/* Photo indicators */}
-                      <div className="flex items-center gap-3 mt-2">
+                      <div className="flex items-center gap-3 mt-1 empty:hidden">
                         {order.mold_photos && order.mold_photos.length > 0 && (
                           <button
                             onClick={() => setViewImages({ title: '模具照片', images: order.mold_photos })}
