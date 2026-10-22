@@ -265,6 +265,7 @@ export default function WorkOrders() {
   const navigate = useNavigate();
   const [itemDialog, setItemDialog] = useState<{ mode: 'pdf' | 'manual' | 'edit'; order?: WorkOrder } | null>(null);
   const [internalOrderNo, setInternalOrderNo] = useState('');
+  const [selectedItems, setSelectedItems] = useState<Record<string, string>>({});
   const [collapsedOrders, setCollapsedOrders] = useState<Set<string>>(new Set());
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
@@ -817,11 +818,14 @@ export default function WorkOrders() {
               <CardContent className="p-8 text-center text-zinc-400">尚無工單資料</CardContent>
             </Card>
           ) : (
-            filtered.map(order => (
+            filtered.map(order => {
+              const items = orderItems(order);
+              const selectedItem = items.find(item => item.id === selectedItems[order.id]) || items[0];
+              return (
               <Card key={order.id} className="bg-zinc-800 border-zinc-700">
                 <CardContent className="p-4">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2 mb-1">
                         <Button type="button" size="sm" className="bg-zinc-700 text-zinc-100 hover:bg-zinc-600" aria-expanded={!collapsedOrders.has(order.id)} aria-controls={`order-details-${order.id}`} aria-label={`${collapsedOrders.has(order.id) ? '展開' : '收折'}工單 ${order.order_no}`} onClick={() => setCollapsedOrders(previous => { const next = new Set(previous); if (next.has(order.id)) next.delete(order.id); else next.add(order.id); return next; })}>{collapsedOrders.has(order.id) ? '展開' : '收折'}</Button>
                         <span className="font-mono text-sm font-semibold text-amber-400 break-all">{order.order_no}</span>
@@ -829,9 +833,14 @@ export default function WorkOrders() {
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400">
                         <span>客戶: <span className="text-zinc-200">{order.customer}</span></span>
-                        <span>品名: <span className="text-zinc-200">{order.product_name}</span></span>
-                        <span>材質: <span className="text-zinc-200">{order.material}</span></span>
-                        <span>訂單數量: <span className="text-zinc-200">{order.quantity}</span></span>
+                        <label className="min-w-0 col-span-2 sm:col-span-1">品名（{items.length} 項）:
+                          <select aria-label={`工單 ${order.order_no} 品名`} value={selectedItem.id} onChange={event => setSelectedItems(previous => ({ ...previous, [order.id]: event.target.value }))} className="mt-1 w-full min-w-0 rounded border border-zinc-600 bg-zinc-700 px-2 py-1.5 text-zinc-100" title={selectedItem.product_name}>
+                            {items.map((item, index) => <option key={item.id} value={item.id}>{item.line_no || index + 1} · {item.product_name}</option>)}
+                          </select>
+                        </label>
+                        <span>所選材質: <span className="text-zinc-200">{selectedItem.material || '—'}</span></span>
+                        <span>訂單總數量: <span className="text-zinc-200">{order.quantity}</span></span>
+                        <span>交期: <span className="text-amber-300 font-medium">{order.due_date || '未設定'}</span></span>
                       </div>
                       <div id={`order-details-${order.id}`} hidden={collapsedOrders.has(order.id)}>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-zinc-400 mt-1">
@@ -844,13 +853,12 @@ export default function WorkOrders() {
                         {!order.items?.length && order.mold_type && <span>模具型式: <span className="text-zinc-200">{order.mold_type}</span></span>}
                         {!order.items?.length && order.heat_treatment && <span>熱處理: <span className="text-zinc-200">{order.heat_treatment}</span></span>}
                       </div>
-                      {!!order.items?.length && <div className="mt-3 space-y-2">{orderItems(order).map(item => {
+                      {!!order.items?.length && <div className="mt-3 space-y-2">{[selectedItem].map(item => {
                         const related = batches.filter(batch => batch.work_order_id === order.id && itemMatches(order, item, batch.work_order_item_id));
                         const started = related.reduce((sum,batch) => sum + batch.quantity_planned, 0);
                         const completed = related.reduce((sum,batch) => sum + batch.quantity_completed, 0);
                         return <div key={item.id} className="rounded border border-zinc-600 p-2 text-xs text-zinc-300"><p className="text-amber-300">項次 {item.line_no} · {item.product_name} · {item.material}</p><p className="mt-1">{item.quantity} 件 × {item.estimated_weight} kg／件 · 總重 {(item.quantity * item.estimated_weight).toLocaleString('zh-TW')} kg</p><p>可開工 {Math.max(0,item.quantity-started)} 件 · 未完成 {Math.max(0,item.quantity-completed)} 件</p><p>{item.mold_supply} · {item.mold_type} · {item.heat_treatment} · 組別 {item.group || '—'}</p>{item.remarks && <p>{item.remarks}</p>}</div>;
                       })}<p className="text-xs text-zinc-400">訂貨日期 {order.order_date || '—'} · 送貨地址 {order.delivery_address || '—'}</p>{order.remarks && <p className="text-xs text-zinc-400 whitespace-pre-wrap">交貨備註：{order.remarks}</p>}</div>}
-                      {order.due_date && <p className="text-xs text-zinc-500 mt-1">交期: {order.due_date}</p>}
                       {/* Photo indicators */}
                       <div className="flex items-center gap-3 mt-2">
                         {order.mold_photos && order.mold_photos.length > 0 && (
@@ -883,7 +891,8 @@ export default function WorkOrders() {
                   </div>
                 </CardContent>
               </Card>
-            ))
+              );
+            })
           )}
         </div>
 
