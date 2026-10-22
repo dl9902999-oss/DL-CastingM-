@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
+import CreateCustomerButton from '@/components/CreateCustomerButton';
 import WorkOrderImportDialog from '@/components/WorkOrderImportDialog';
 import { buildWorkOrderNumber, matchNumberingCustomer } from '@/lib/workOrderNumber';
 import { orderItems, itemMatches } from '@/lib/workOrderItems';
@@ -14,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment, Pattern, Customer } from '@/lib/types';
 import { dsGetCustomers, dsGetWorkOrders, dsCreateWorkOrder, dsUpdateWorkOrder, dsDeleteWorkOrder, dsGetMoldingBatches, dsGetPatterns, dsGetMeltRecords } from '@/lib/dataService';
-import { Plus, Search, Edit, Image, FileImage, X, Trash2, UserPlus } from 'lucide-react';
+import { Plus, Search, Edit, Image, FileImage, X, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { onWorkOrderChange, WorkOrderChangeEvent } from '@/lib/realtimeSync';
 
@@ -189,11 +190,11 @@ function PatternAutocomplete({ value, onChange, patterns, onAddPattern }: {
   );
 }
 
-function CustomerAutocomplete({ value, onChange, customers, onAddCustomer }: {
+function CustomerAutocomplete({ value, onChange, customers, onCustomerCreated }: {
   value: string;
   onChange: (val: string) => void;
   customers: Customer[];
-  onAddCustomer: () => void;
+  onCustomerCreated: (customer: Customer) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [inputValue, setInputValue] = useState(value);
@@ -253,18 +254,9 @@ function CustomerAutocomplete({ value, onChange, customers, onAddCustomer }: {
           ) : (
             <div className="px-3 py-2 text-sm text-zinc-400">找不到符合的客戶</div>
           )}
-          <button
-            type="button"
-            className="w-full text-left px-3 py-2 text-sm text-amber-400 hover:bg-zinc-700 flex items-center gap-1.5 border-t border-zinc-700"
-            onClick={() => {
-              setOpen(false);
-              onAddCustomer();
-            }}
-          >
-            <UserPlus className="w-3.5 h-3.5" />新增客戶
-          </button>
         </div>
       )}
+      <div className="mt-2"><CreateCustomerButton initialName={inputValue} onCreated={customer => { onCustomerCreated(customer); onChange(customer.name); setInputValue(customer.name); setOpen(false); }} /></div>
     </div>
   );
 }
@@ -618,7 +610,7 @@ export default function WorkOrders() {
 
   return (
     <AppLayout>
-      {itemDialog && <WorkOrderImportDialog {...itemDialog} customers={customers} onClose={() => setItemDialog(null)} onSaved={loadWorkOrders} />}
+      {itemDialog && <WorkOrderImportDialog {...itemDialog} customers={customers} onCustomerCreated={customer => setCustomers(previous => [...previous.filter(row => row.id !== customer.id), customer])} onClose={() => setItemDialog(null)} onSaved={loadWorkOrders} />}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">工單管理</h1>
@@ -643,7 +635,7 @@ export default function WorkOrders() {
                     value={form.customer}
                     onChange={(val) => setForm({ ...form, customer: val })}
                     customers={customers}
-                    onAddCustomer={() => navigate('/customers')}
+                    onCustomerCreated={customer => setCustomers(previous => [...previous.filter(row => row.id !== customer.id), customer])}
                   />
                 </div>
                 <div>
@@ -909,7 +901,7 @@ export default function WorkOrders() {
                     value={editOrder.customer}
                     onChange={(val) => setEditOrder({ ...editOrder, customer: val })}
                     customers={customers}
-                    onAddCustomer={() => navigate('/customers')}
+                    onCustomerCreated={customer => setCustomers(previous => [...previous.filter(row => row.id !== customer.id), customer])}
                   />
                 </div>
                 <div>

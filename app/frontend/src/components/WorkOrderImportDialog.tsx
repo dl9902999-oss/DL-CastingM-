@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import CreateCustomerButton from './CreateCustomerButton';
 import WorkOrderItemsEditor from './WorkOrderItemsEditor';
 import { readWorkOrderPdf } from '@/lib/readWorkOrderPdf';
 import { type PdfOrderDraft, validatePdfDraft } from '@/lib/workOrderPdf';
@@ -15,7 +16,7 @@ import type { WorkOrder, Customer } from '@/lib/types';
 
 interface DraftRow { key: string; customerId?: string; draft: PdfOrderDraft; status: 'ready' | 'saved'; error: string; }
 function blank(): PdfOrderDraft { return { order_no: '', customer: '', order_date: localDate(new Date()), due_date: '', delivery_address: '', remarks: '', source_filename: '', items: [emptyOrderItem()] }; }
-export default function WorkOrderImportDialog({ mode, order, customers, onClose, onSaved }: { mode: 'pdf' | 'manual' | 'edit'; order?: WorkOrder; customers: Customer[]; onClose: () => void; onSaved: () => Promise<void> }) {
+export default function WorkOrderImportDialog({ mode, order, customers, onCustomerCreated, onClose, onSaved }: { mode: 'pdf' | 'manual' | 'edit'; order?: WorkOrder; customers: Customer[]; onCustomerCreated: (customer: Customer) => void; onClose: () => void; onSaved: () => Promise<void> }) {
   const [rows, setRows] = useState<DraftRow[]>(() => mode === 'pdf' ? [] : [{ key: crypto.randomUUID(), draft: order ? { ...blank(), ...order, order_date: order.order_date || order.created_at.slice(0,10), delivery_address: order.delivery_address || '', source_filename: order.source_filename || '', items: orderItems(order) } : blank(), status: 'ready', error: '' }]);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
@@ -96,7 +97,11 @@ export default function WorkOrderImportDialog({ mode, order, customers, onClose,
     {rows.length > 0 && <div className="flex flex-wrap items-center gap-3"><label className="text-sm">工單預覽 <select disabled={busy} className="bg-zinc-700 rounded p-2 max-w-full" value={index} onChange={e => setIndex(Number(e.target.value))}>{rows.map((row,i) => <option key={row.key} value={i}>{i+1}. {row.draft.order_no || '未填單號'} · {row.status === 'saved' ? '已保存' : row.error ? '需修正' : '待確認'}</option>)}</select></label><span className="text-sm text-zinc-400">共 {rows.length} 單，已保存 {rows.filter(row=>row.status==='saved').length} 單</span></div>}
     {current && <fieldset disabled={busy || current.status === 'saved'} className="space-y-4 min-w-0">
       <p className="text-xs text-zinc-400 break-all">{current.draft.source_filename || '手動建立'} · 請核對全部品項後再確認保存，重量均為每件重量。</p>
-      {!order && <div className="space-y-2"><label className="text-sm text-zinc-300 block">編號用客戶主檔<select aria-label="編號用客戶主檔" className="w-full bg-zinc-700 border border-zinc-600 rounded p-2" value={current.customerId || ''} onChange={event => { const selected = customers.find(customer => customer.id === event.target.value); setRows(previous => previous.map((row, i) => i === index ? { ...row, customerId: selected?.id, draft: { ...row.draft, customer: selected?.name || row.draft.customer }, error: '' } : row)); }}><option value="">依客戶全名／簡稱自動對應，無法對應請選擇</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.customer_no} · {customer.name}</option>)}</select></label><p className="text-sm text-amber-300 break-all">工單編號：{numberPreview(current)}</p><p className="text-xs text-zinc-400">日期採保存當天的台灣日期 YYYYMMDD；不使用 PDF 訂貨日期。無客戶編號時請先至客戶管理建立資料。</p></div>}
+      {!order && <div className="space-y-2"><label className="text-sm text-zinc-300 block">編號用客戶主檔<select aria-label="編號用客戶主檔" className="w-full bg-zinc-700 border border-zinc-600 rounded p-2" value={current.customerId || ''} onChange={event => { const selected = customers.find(customer => customer.id === event.target.value); setRows(previous => previous.map((row, i) => i === index ? { ...row, customerId: selected?.id, draft: { ...row.draft, customer: selected?.name || row.draft.customer }, error: '' } : row)); }}><option value="">依客戶全名／簡稱自動對應，無法對應請選擇</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.customer_no} · {customer.name}</option>)}</select></label><p className="text-sm text-amber-300 break-all">工單編號：{numberPreview(current)}</p><p className="text-xs text-zinc-400">日期採保存當天的台灣日期 YYYYMMDD；不使用 PDF 訂貨日期。無客戶資料時，可按「新增客戶」，保存後自動選入並保留工單內容。</p></div>}
+      <CreateCustomerButton initialName={current.draft.customer} disabled={busy || current.status === 'saved'} onCreated={customer => {
+        onCustomerCreated(customer);
+        setRows(previous => previous.map(row => row.key === current.key ? { ...row, customerId: customer.id, draft: { ...row.draft, customer: customer.name }, error: '' } : row));
+      }} />
       {current.error && <p role="alert" className="text-red-300">{current.error}</p>}
       <div className="grid grid-cols-2 gap-3">{(['order_no','customer','order_date','due_date','delivery_address'] as const).map((key,i) => <label key={key} className="text-sm text-zinc-300">{[order || current.status === 'saved' ? '工單編號（保留既有）' : '廠內訂單編號','客戶','訂貨日期','交期','送貨地址'][i]}<Input disabled={key === 'order_no' && !!order} type={key.endsWith('date') ? 'date' : 'text'} value={current.draft[key]} onChange={e => change({ ...current.draft, [key]: e.target.value })} className="bg-zinc-700 border-zinc-600" /></label>)}</div>
       <label className="text-sm text-zinc-300 block">交貨備註<textarea className="w-full bg-zinc-700 border border-zinc-600 rounded p-2" value={current.draft.remarks} onChange={e => change({ ...current.draft, remarks: e.target.value })} /></label>
