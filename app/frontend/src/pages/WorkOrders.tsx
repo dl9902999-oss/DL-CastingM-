@@ -265,6 +265,7 @@ export default function WorkOrders() {
   const navigate = useNavigate();
   const [itemDialog, setItemDialog] = useState<{ mode: 'pdf' | 'manual' | 'edit'; order?: WorkOrder } | null>(null);
   const [internalOrderNo, setInternalOrderNo] = useState('');
+  const [manualOrderNo, setManualOrderNo] = useState<string | undefined>(undefined);
   const [selectedItems, setSelectedItems] = useState<Record<string, string>>({});
   const [collapsedOrders, setCollapsedOrders] = useState<Set<string>>(new Set());
   const [orders, setOrders] = useState<WorkOrder[]>([]);
@@ -436,7 +437,8 @@ export default function WorkOrders() {
   });
 
   const validateWorkOrderForm = (): string | null => {
-    if (!internalOrderNo.trim()) return '請填寫廠內訂單編號';
+    if (manualOrderNo !== undefined && !manualOrderNo.trim()) return '請填寫工單編號';
+    if (manualOrderNo === undefined && !internalOrderNo.trim()) return '請填寫廠內訂單編號';
     // 必填欄位檢查
     if (!form.customer.trim()) return '請選擇或輸入客戶名稱';
     if (!form.product_name.trim()) return '請輸入產品名稱';
@@ -503,12 +505,13 @@ export default function WorkOrders() {
         estimated_weight: form.estimated_weight || 0,
       };
 
-      const result = await dsCreateWorkOrder({ ...cleanedData, internal_order_no: internalOrderNo });
+      const result = await dsCreateWorkOrder({ ...cleanedData, internal_order_no: internalOrderNo, order_no: manualOrderNo });
       if (result) {
         await loadWorkOrders();
         setIsCreateOpen(false);
         resetForm();
         setInternalOrderNo('');
+        setManualOrderNo(undefined);
         toast({ title: '✅ 工單已新增' });
       } else {
         toast({ title: '新增失敗，請重試', variant: 'destructive' });
@@ -519,7 +522,7 @@ export default function WorkOrders() {
       if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
         toast({ title: '資料庫權限不足，請聯繫管理員執行 RLS 修正腳本', variant: 'destructive' });
       } else if (msg.includes('duplicate') || msg.includes('unique')) {
-        toast({ title: '工單編號重複，請稍後再試', variant: 'destructive' });
+        toast({ title: '工單編號重複，請修正後再保存', variant: 'destructive' });
       } else if (msg.includes('timeout')) {
         toast({ title: '連線逾時，已儲存至本地', variant: 'destructive' });
       } else {
@@ -579,7 +582,7 @@ export default function WorkOrders() {
     }
   };
 
-  let creationNumberPreview = '請選擇客戶並填寫廠內訂單編號';
+  let creationNumberPreview = '';
   try { creationNumberPreview = buildWorkOrderNumber(matchNumberingCustomer(customers, form.customer).customer_no, internalOrderNo); } catch { /* 表單尚未填齊時顯示提示。 */ }
   const filtered = orders.filter(o => {
     // Text search
@@ -628,8 +631,9 @@ export default function WorkOrders() {
               </DialogHeader>
               <div className="space-y-3">
                 <label className="text-sm text-zinc-300 block">廠內訂單編號<Input aria-label="廠內訂單編號" value={internalOrderNo} onChange={event => setInternalOrderNo(event.target.value)} className="bg-zinc-700 border-zinc-600 text-zinc-100" /></label>
-                <p className="text-sm text-amber-300 break-all">工單編號：{creationNumberPreview}</p>
-                <p className="text-xs text-zinc-400">WO-建立日期（台灣 YYYYMMDD）-客戶編號-廠內訂單編號</p>
+                <label className="text-sm text-zinc-300 block">工單編號（可手動修正）<Input aria-label="工單編號" value={manualOrderNo ?? creationNumberPreview} placeholder="請選擇客戶並填寫廠內訂單編號，或手動輸入" onChange={event => setManualOrderNo(event.target.value)} className="bg-zinc-700 border-zinc-600 text-zinc-100" /></label>
+                <Button type="button" className="bg-zinc-700 text-zinc-100" onClick={() => setManualOrderNo(undefined)}>恢復自動編號</Button>
+                <p className="text-xs text-zinc-400">預設 WO-建立日期（台灣 YYYYMMDD）-客戶編號-廠內訂單編號；手動修正後以輸入內容保存，不再自動覆蓋。</p>
                 <div>
                   <Label className="text-zinc-300">客戶</Label>
                   <CustomerAutocomplete
@@ -918,6 +922,7 @@ export default function WorkOrders() {
             </DialogHeader>
             {editOrder && (
               <div className="space-y-3">
+                <label className="text-sm text-zinc-300 block">工單編號（可手動修正）<Input aria-label="工單編號" value={editOrder.order_no} onChange={event => setEditOrder({ ...editOrder, order_no: event.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100" /></label>
                 <div>
                   <Label className="text-zinc-300">客戶</Label>
                   <CustomerAutocomplete

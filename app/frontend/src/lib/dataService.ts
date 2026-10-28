@@ -6,7 +6,7 @@
  */
 
 import { DuplicateCustomerError, findDuplicateCustomers } from './customerDuplicates';
-import { buildWorkOrderNumber, matchNumberingCustomer } from './workOrderNumber';
+import { resolveWorkOrderNumber, validateWorkOrderNumber, matchNumberingCustomer } from './workOrderNumber';
 import * as localStore from './store';
 import * as sbStore from './supabaseStore';
 import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, MeltChemistry, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder, UserProfile, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
@@ -984,12 +984,12 @@ export async function dsGetWorkOrders(): Promise<WorkOrder[]> {
   );
 }
 
-export async function dsCreateWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' | 'status' | 'created_at' | 'updated_at'> & { internal_order_no: string }): Promise<WorkOrder> {
-  const { internal_order_no, ...fields } = data;
+export async function dsCreateWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' | 'status' | 'created_at' | 'updated_at'> & { internal_order_no: string; order_no?: string }): Promise<WorkOrder> {
+  const { internal_order_no, order_no, ...fields } = data;
   const customer = matchNumberingCustomer(await dsGetCustomers(), fields.customer);
-  const numbered = { ...fields, customer: customer.name, order_no: buildWorkOrderNumber(customer.customer_no, internal_order_no) };
+  const numbered = { ...fields, customer: customer.name, order_no: resolveWorkOrderNumber(customer.customer_no, internal_order_no, order_no) };
   const existing = await dsGetWorkOrders();
-  if (existing.some(order => order.order_no === numbered.order_no)) throw new Error('工單編號重複，請核對廠內訂單編號。');
+  if (existing.some(order => order.order_no.trim() === numbered.order_no)) throw new Error('工單編號重複，請修正後再保存。');
   return withRLSFallback(
     () => sbStore.sbCreateWorkOrder(numbered),
     () => localStore.createWorkOrder(numbered),
@@ -999,9 +999,17 @@ export async function dsCreateWorkOrder(data: Omit<WorkOrder, 'id' | 'order_no' 
 }
 
 export async function dsUpdateWorkOrder(id: string, data: Partial<WorkOrder>): Promise<WorkOrder | null> {
+  const updates = { ...data };
+  if (updates.order_no !== undefined) {
+    updates.order_no = validateWorkOrderNumber(updates.order_no);
+    const existing = await dsGetWorkOrders();
+    if (existing.some(order => order.id !== id && order.order_no.trim() === updates.order_no)) {
+      throw new Error('工單編號重複，請修正後再保存。');
+    }
+  }
   return withRLSFallback(
-    () => sbStore.sbUpdateWorkOrder(id, data),
-    () => localStore.updateWorkOrder(id, data),
+    () => sbStore.sbUpdateWorkOrder(id, updates),
+    () => localStore.updateWorkOrder(id, updates),
     'dsUpdateWorkOrder',
     { table: 'work_orders', action: 'update' }
   );

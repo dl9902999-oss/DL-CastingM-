@@ -11,10 +11,10 @@ import { localDate } from '@/lib/dashboardOverview';
 import { supabase } from '@/lib/supabase';
 import { dsGetMoldingBatches, dsGetShipmentOrders, dsGetWorkOrders, dsUpdateWorkOrder } from '@/lib/dataService';
 import { markRecentWrite } from '@/lib/realtimeSync';
-import { buildWorkOrderNumber, matchNumberingCustomer } from '@/lib/workOrderNumber';
+import { resolveWorkOrderNumber, validateWorkOrderNumber, matchNumberingCustomer } from '@/lib/workOrderNumber';
 import type { WorkOrder, Customer } from '@/lib/types';
 
-interface DraftRow { key: string; customerId?: string; draft: PdfOrderDraft; status: 'ready' | 'saved'; error: string; }
+interface DraftRow { key: string; customerId?: string; manualOrderNo?: string; draft: PdfOrderDraft; status: 'ready' | 'saved'; error: string; }
 function blank(): PdfOrderDraft { return { order_no: '', customer: '', order_date: localDate(new Date()), due_date: '', delivery_address: '', remarks: '', source_filename: '', items: [emptyOrderItem()] }; }
 export default function WorkOrderImportDialog({ mode, order, customers, onCustomerCreated, onClose, onSaved }: { mode: 'pdf' | 'manual' | 'edit'; order?: WorkOrder; customers: Customer[]; onCustomerCreated: (customer: Customer) => void; onClose: () => void; onSaved: () => Promise<void> }) {
   const [rows, setRows] = useState<DraftRow[]>(() => mode === 'pdf' ? [] : [{ key: crypto.randomUUID(), draft: order ? { ...blank(), ...order, order_date: order.order_date || order.created_at.slice(0,10), delivery_address: order.delivery_address || '', source_filename: order.source_filename || '', items: orderItems(order) } : blank(), status: 'ready', error: '' }]);
@@ -22,13 +22,13 @@ export default function WorkOrderImportDialog({ mode, order, customers, onCustom
   const [errors, setErrors] = useState<string[]>([]);
   const [index, setIndex] = useState(0);
   const numberedDraft = (row: DraftRow): PdfOrderDraft => {
-    if (order || row.status === 'saved') return row.draft;
+    if (order || row.status === 'saved') return { ...row.draft, order_no: validateWorkOrderNumber(row.draft.order_no) };
     const customer = matchNumberingCustomer(customers, row.draft.customer, row.customerId);
-    return { ...row.draft, customer: customer.name, order_no: buildWorkOrderNumber(customer.customer_no, row.draft.order_no) };
+    return { ...row.draft, customer: customer.name, order_no: resolveWorkOrderNumber(customer.customer_no, row.draft.order_no, row.manualOrderNo) };
   };
   const numberPreview = (row: DraftRow) => {
     try { return numberedDraft(row).order_no; }
-    catch (error) { return error instanceof Error ? error.message : '請確認編號資料'; }
+    catch { return ''; }
   };
   const current = rows[index];
   const change = (draft: PdfOrderDraft) => setRows(previous => previous.map((row,i) => i === index ? { ...row, draft, customerId: draft.customer !== row.draft.customer ? undefined : row.customerId, error: '' } : row));
@@ -46,7 +46,7 @@ export default function WorkOrderImportDialog({ mode, order, customers, onCustom
     setBusy(true); setErrors([]);
     try {
       const [existing, batches, shipments] = await Promise.all([dsGetWorkOrders(), dsGetMoldingBatches(), dsGetShipmentOrders()]);
-      const seen = new Set(existing.filter(record => record.id !== order?.id).map(record => record.order_no));
+      const seen = new Set(existing.filter(record => record.id !== order?.id).map(record => record.order_no.trim()));
       const next = [...rows];
       for (let i = 0; i < next.length; i++) {
         const row = next[i]; if (row.status === 'saved') continue;
@@ -97,13 +97,13 @@ export default function WorkOrderImportDialog({ mode, order, customers, onCustom
     {rows.length > 0 && <div className="flex flex-wrap items-center gap-3"><label className="text-sm">工單預覽 <select disabled={busy} className="bg-zinc-700 rounded p-2 max-w-full" value={index} onChange={e => setIndex(Number(e.target.value))}>{rows.map((row,i) => <option key={row.key} value={i}>{i+1}. {row.draft.order_no || '未填單號'} · {row.status === 'saved' ? '已保存' : row.error ? '需修正' : '待確認'}</option>)}</select></label><span className="text-sm text-zinc-400">共 {rows.length} 單，已保存 {rows.filter(row=>row.status==='saved').length} 單</span></div>}
     {current && <fieldset disabled={busy || current.status === 'saved'} className="space-y-4 min-w-0">
       <p className="text-xs text-zinc-400 break-all">{current.draft.source_filename || '手動建立'} · 請核對全部品項後再確認保存，重量均為每件重量。</p>
-      {!order && <div className="space-y-2"><label className="text-sm text-zinc-300 block">編號用客戶主檔<select aria-label="編號用客戶主檔" className="w-full bg-zinc-700 border border-zinc-600 rounded p-2" value={current.customerId || ''} onChange={event => { const selected = customers.find(customer => customer.id === event.target.value); setRows(previous => previous.map((row, i) => i === index ? { ...row, customerId: selected?.id, draft: { ...row.draft, customer: selected?.name || row.draft.customer }, error: '' } : row)); }}><option value="">依客戶全名／簡稱自動對應，無法對應請選擇</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.customer_no} · {customer.name}</option>)}</select></label><p className="text-sm text-amber-300 break-all">工單編號：{numberPreview(current)}</p><p className="text-xs text-zinc-400">日期採保存當天的台灣日期 YYYYMMDD；不使用 PDF 訂貨日期。無客戶資料時，可按「新增客戶」，保存後自動選入並保留工單內容。</p></div>}
+      {!order && <div className="space-y-2"><label className="text-sm text-zinc-300 block">編號用客戶主檔<select aria-label="編號用客戶主檔" className="w-full bg-zinc-700 border border-zinc-600 rounded p-2" value={current.customerId || ''} onChange={event => { const selected = customers.find(customer => customer.id === event.target.value); setRows(previous => previous.map((row, i) => i === index ? { ...row, customerId: selected?.id, draft: { ...row.draft, customer: selected?.name || row.draft.customer }, error: '' } : row)); }}><option value="">依客戶全名／簡稱自動對應，無法對應請選擇</option>{customers.map(customer => <option key={customer.id} value={customer.id}>{customer.customer_no} · {customer.name}</option>)}</select></label><label className="text-sm text-zinc-300 block">工單編號（可手動修正）<Input aria-label="工單編號" value={current.manualOrderNo ?? numberPreview(current)} placeholder="請選擇客戶並填寫廠內訂單編號，或手動輸入" onChange={event => setRows(previous => previous.map((row, i) => i === index ? { ...row, manualOrderNo: event.target.value, error: '' } : row))} className="bg-zinc-700 border-zinc-600" /></label><Button type="button" className="bg-zinc-700 text-zinc-100" onClick={() => setRows(previous => previous.map((row, i) => i === index ? { ...row, manualOrderNo: undefined, error: '' } : row))}>恢復自動編號</Button><p className="text-xs text-zinc-400">手動修正後以輸入內容保存，不再自動覆蓋。自動編號日期採保存當天的台灣日期 YYYYMMDD；不使用 PDF 訂貨日期。無客戶資料時，可按「新增客戶」，保存後自動選入並保留工單內容。</p></div>}
       <CreateCustomerButton initialName={current.draft.customer} disabled={busy || current.status === 'saved'} onCreated={customer => {
         onCustomerCreated(customer);
         setRows(previous => previous.map(row => row.key === current.key ? { ...row, customerId: customer.id, draft: { ...row.draft, customer: customer.name }, error: '' } : row));
       }} />
       {current.error && <p role="alert" className="text-red-300">{current.error}</p>}
-      <div className="grid grid-cols-2 gap-3">{(['order_no','customer','order_date','due_date','delivery_address'] as const).map((key,i) => <label key={key} className="text-sm text-zinc-300">{[order || current.status === 'saved' ? '工單編號（保留既有）' : '廠內訂單編號','客戶','訂貨日期','交期','送貨地址'][i]}<Input disabled={key === 'order_no' && !!order} type={key.endsWith('date') ? 'date' : 'text'} value={current.draft[key]} onChange={e => change({ ...current.draft, [key]: e.target.value })} className="bg-zinc-700 border-zinc-600" /></label>)}</div>
+      <div className="grid grid-cols-2 gap-3">{(['order_no','customer','order_date','due_date','delivery_address'] as const).map((key,i) => <label key={key} className="text-sm text-zinc-300">{[order || current.status === 'saved' ? '工單編號（可手動修正）' : '廠內訂單編號','客戶','訂貨日期','交期','送貨地址'][i]}<Input type={key.endsWith('date') ? 'date' : 'text'} value={current.draft[key]} onChange={e => change({ ...current.draft, [key]: e.target.value })} className="bg-zinc-700 border-zinc-600" /></label>)}</div>
       <label className="text-sm text-zinc-300 block">交貨備註<textarea className="w-full bg-zinc-700 border border-zinc-600 rounded p-2" value={current.draft.remarks} onChange={e => change({ ...current.draft, remarks: e.target.value })} /></label>
       <WorkOrderItemsEditor items={current.draft.items} onChange={items => change({ ...current.draft, items })} disabled={busy || current.status==='saved'} />
     </fieldset>}

@@ -21,6 +21,18 @@ export function matchNumberingCustomer(customers: NumberingCustomer[], name: str
   return matches[0];
 }
 
+export function validateWorkOrderNumber(value: string): string {
+  const number = value.trim();
+  if (!number) throw new Error('請填寫工單編號。');
+  return number;
+}
+
+export function resolveWorkOrderNumber(customerNo: string, internalOrderNo: string, manualNumber?: string, now = new Date()): string {
+  return manualNumber === undefined
+    ? buildWorkOrderNumber(customerNo, internalOrderNo, now)
+    : validateWorkOrderNumber(manualNumber);
+}
+
 export function buildWorkOrderNumber(customerNo: string, internalOrderNo: string, now = new Date()): string {
   const customer = customerNo.trim();
   const internal = internalOrderNo.trim();

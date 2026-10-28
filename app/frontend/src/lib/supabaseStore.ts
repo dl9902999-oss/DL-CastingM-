@@ -309,9 +309,9 @@ export async function sbCreateWorkOrder(orderData: Omit<WorkOrder, 'id' | 'statu
 }
 
 export async function sbUpdateWorkOrder(id: string, updates: Partial<WorkOrder>): Promise<WorkOrder | null> {
-  // Strip non-column keys (id / order_no / created_at / updated_at) and normalize
-  // empty date strings to NULL, otherwise Postgres rejects the whole UPDATE.
+  // 保留可更新的工單編號，其餘欄位沿用既有型別與日期清理。
   const updatePayload = buildWorkOrderPayload(updates as unknown as Record<string, unknown>);
+  if (updates.order_no !== undefined) updatePayload.order_no = updates.order_no;
 
   const { data, error } = await supabase.from('work_orders').update(updatePayload).eq('id', id).select().single();
   if (error) {
