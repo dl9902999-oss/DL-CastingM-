@@ -49,7 +49,7 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [lastSyncTime, retry]);
   const metrics = data ? [
-    { label: '本月投料總重', value: number(data.monthlyCharge), unit: 'kg', icon: Flame, color: 'text-orange-400', note: '當月熔解投料明細：首次＋二次投料' },
+    { label: '本月投料總重', value: number(data.monthlyCharge), unit: 'kg', icon: Flame, color: 'text-orange-400', note: `已扣除前爐殘湯投料：${number(data.monthlyResidualCharge)} kg（含首次及二次投料）` },
     { label: '待排產工單預估重', value: number(data.unpouredWeight), unit: 'kg', icon: Package, color: 'text-blue-400', note: '未澆注件數 × 工單預估單重' },
     { label: '已澆鑄待處理重', value: number(data.pouredWeight), unit: 'kg', icon: Activity, color: 'text-amber-400', note: '已澆注件數 × 工單預估單重' },
     { label: '本月入庫重量', value: number(data.monthlyWarehouseWeight), unit: 'kg', icon: Truck, color: 'text-emerald-400', note: `推估重量：品檢放行批次入庫件數 × 預估單重${data.missingWarehouseWeights ? `；${data.missingWarehouseWeights} 筆缺少單重／工單` : ''}` },

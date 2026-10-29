@@ -6,7 +6,9 @@ const module = { exports: {} };
 const itemExports = {};
 const itemCode = ts.transpileModule(readFileSync('src/lib/workOrderItems.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 new Function('exports', itemCode)(itemExports);
-new Function('exports', 'require', compiled)(module.exports, () => itemExports);
+const residualExports = {};
+new Function('exports', ts.transpileModule(readFileSync('src/lib/residualStatistics.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(residualExports);
+new Function('exports', 'require', compiled)(module.exports, name => name === './residualStatistics' ? residualExports : itemExports);
 const { calculateOverview, emptyOverviewData, latestRecordTime, mergeLocalPourings } = module.exports;
 const now = new Date(2026, 9, 19, 12);
 const order = (id, quantity = 10, date = '2026-10-21', created = '2026-01-01T00:00:00Z') => ({ id, order_no: id, status: 'Open', quantity, estimated_weight: 20, due_date: date, created_at: created });
@@ -49,3 +51,15 @@ assert.deepEqual(bad, data.pourings);
 const capped = calculateOverview({ ...data, pourings: [{ batch_id: 'b1', pouring_weights: Array(20).fill(1) }] }, now);
 assert.equal(capped.pouredWeight, 200);
 console.log('通過：月份邊界、明細投料、算術平均能耗、部分澆注重量、取消排除、品檢入庫推估、交期含邊界與逾期、建立順序、階段去重、CAPA分類、時間及本機澆注合併。');
+
+const withResidual = calculateOverview({...data, materials: [...data.materials,
+ {melt_id:'m1',raw_material:'前爐殘湯',charge_weight:40,secondary_weight:10},
+ {melt_id:'old',raw_material:'前爐殘湯',charge_weight:999,secondary_weight:0},
+ {melt_id:'m2',raw_material:'回爐料',charge_weight:20,secondary_weight:0}],
+ melts: data.melts.map(m => ({...m,residual_weight:777}))}, now);
+assert.equal(withResidual.monthlyCharge,520);
+assert.equal(withResidual.monthlyResidualCharge,50);
+assert.equal(result.monthlyResidualCharge,0);
+assert.equal(empty.monthlyResidualCharge,0);
+assert.equal(withResidual.averageEnergy,(100/250+600/320)/2);
+console.log('PASS: monthly charge excludes previous residual in both charge stages; prior month and current furnace remainder excluded from deduction; return material retained; energy uses original charge.');

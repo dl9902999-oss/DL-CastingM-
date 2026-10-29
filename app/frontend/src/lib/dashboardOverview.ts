@@ -1,3 +1,4 @@
+import { isResidualMaterial } from './residualStatistics';
 import type { WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder } from './types';
 import { orderItems, resolveOrderItem } from './workOrderItems';
 import type { MeltPouring } from './supabaseStore';
@@ -133,7 +134,14 @@ export function calculateOverview(data: OverviewData, now = new Date()) {
   const month = localDate(now).slice(0, 7);
   const monthlyMelts = melts.filter(melt => melt.melt_date?.slice(0, 7) === month);
   const charges = new Map<string, number>();
-  for (const material of materials) charges.set(material.melt_id, (charges.get(material.melt_id) || 0) + positive(material.charge_weight) + positive(material.secondary_weight));
+  const residualCharges = new Map<string, number>();
+  for (const material of materials) {
+    const weight = positive(material.charge_weight) + positive(material.secondary_weight);
+    charges.set(material.melt_id, (charges.get(material.melt_id) || 0) + weight);
+    if (isResidualMaterial(material.raw_material)) {
+      residualCharges.set(material.melt_id, (residualCharges.get(material.melt_id) || 0) + weight);
+    }
+  }
   const energy = monthlyMelts.filter(melt => (charges.get(melt.id) || 0) > 0 && positive(melt.power_kwh) > 0)
     .map(melt => positive(melt.power_kwh) / charges.get(melt.id)!);
   const missingEnergy = monthlyMelts.length - energy.length;
@@ -164,7 +172,8 @@ export function calculateOverview(data: OverviewData, now = new Date()) {
   const creationOrder = (a: WorkOrder, b: WorkOrder) => a.created_at.localeCompare(b.created_at) || a.order_no.localeCompare(b.order_no, 'zh-TW', { numeric: true });
   return {
     month, today: localDate(now),
-    monthlyCharge: sum(monthlyMelts, melt => charges.get(melt.id) || 0),
+    monthlyCharge: sum(monthlyMelts, melt => (charges.get(melt.id) || 0) - (residualCharges.get(melt.id) || 0)),
+    monthlyResidualCharge: sum(monthlyMelts, melt => residualCharges.get(melt.id) || 0),
     unpouredWeight: sum(active, order => sum(orderItems(order), item => Math.max(0,positive(item.quantity)-itemPoured(order,item))*positive(item.estimated_weight))),
     pouredWeight: sum(active, order => sum(orderItems(order), item => itemPoured(order,item)*positive(item.estimated_weight))),
     monthlyWarehouseWeight, missingWarehouseWeights,
