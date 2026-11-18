@@ -1978,658 +1978,511 @@ function MeltFormDialog({
                     className="bg-zinc-700 border-zinc-600 text-amber-400 font-mono h-8"
                     placeholder="例：ML-20260915-1-1"
                   />
-       …10217 tokens truncated… phone: '', contact1_name: '', status: '' };
-const TABLE_COLUMNS = [...FILTER_COLUMNS, { key: 'actions', label: '操作' }] as const;
-const DEFAULT_WIDTHS = [140, 240, 150, 150, 170, 150, 130, 110];
-const WIDTHS_STORAGE_KEY = 'suppliers.columnWidths.v1';
-const MIN_COLUMN_WIDTH = 100;
-const MAX_COLUMN_WIDTH = 800;
-
-function readColumnWidths(): number[] {
-  try {
-    const saved: unknown = JSON.parse(localStorage.getItem(WIDTHS_STORAGE_KEY) || 'null');
-    if (Array.isArray(saved) && saved.length === DEFAULT_WIDTHS.length &&
-      saved.every(value => typeof value === 'number' && Number.isFinite(value) && value >= MIN_COLUMN_WIDTH && value <= MAX_COLUMN_WIDTH)) return saved;
-  } catch { /* Browser storage may be unavailable. */ }
-  return [...DEFAULT_WIDTHS];
-}
-
-interface FormState {
-  name: string;
-  short_name: string;
-  type: SupplierType | '';
-  address: string;
-  delivery_addresses: string[];
-  phone: string;
-  email: string;
-  contact1_name: string;
-  contact1_phone: string;
-  contact2_name: string;
-  contact2_phone: string;
-  status: SupplierStatus;
-  remarks: string;
-}
-
-const emptyForm: FormState = {
-  name: '',
-  short_name: '',
-  type: '',
-  address: '',
-  delivery_addresses: [''],
-  phone: '',
-  email: '',
-  contact1_name: '',
-  contact1_phone: '',
-  contact2_name: '',
-  contact2_phone: '',
-  status: '啟用',
-  remarks: '',
-};
-
-export default function Suppliers() {
-  const { toast } = useToast();
-  const { lastSyncTime } = useDataConnection();
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [columnFilters, setColumnFilters] = useState(EMPTY_FILTERS);
-  const [columnWidths, setColumnWidths] = useState(readColumnWidths);
-  const columnDrag = useRef<{ index: number; x: number; width: number } | null>(null);
-  useEffect(() => {
-    try { localStorage.setItem(WIDTHS_STORAGE_KEY, JSON.stringify(columnWidths)); }
-    catch { /* Resizing still works when browser storage is unavailable. */ }
-  }, [columnWidths]);
-  const resizeColumn = (index: number, width: number) => {
-    setColumnWidths(previous => previous.map((value, i) => i === index ? Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, width)) : value));
-  };
-  const hasFilters = Boolean(searchQuery.trim()) || Object.values(columnFilters).some(value => value.trim());
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [editSupplier, setEditSupplier] = useState<Supplier | null>(null);
-  const [form, setForm] = useState<FormState>(emptyForm);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-
-  const possibleDuplicates = useMemo(() => findPossibleDuplicateSuppliers(suppliers, form, editSupplier?.id), [suppliers, form, editSupplier]);
-  const duplicateNotice = <div className="space-y-2 rounded border border-amber-500/40 p-3 text-sm" aria-live="polite">
-    <p className="text-amber-300">可能重複廠商（依目前已載入清單比對）</p>
-    {possibleDuplicates.length ? <div className="max-h-40 overflow-y-auto space-y-2">{possibleDuplicates.map(({supplier, reasons}) => <div key={supplier.id} className="border-t border-zinc-700 pt-2">
-      <p>{supplier.supplier_no} · {supplier.name} {supplier.short_name && `（${supplier.short_name}）`} · {supplier.status}</p>
-      <p className="text-amber-300">{reasons.join('、')}</p>
-      <p className="text-zinc-400">{[supplier.phone, supplier.contact1_phone, supplier.address].filter(Boolean).join(' · ')}</p>
-    </div>)}</div> : <p className="text-zinc-400">目前沒有符合的候選；不代表一定沒有重複。</p>}
-    <p className="text-xs text-zinc-400">請核對既有資料；相似名稱或共用電話不一定是同一家公司。新增儲存時仍會檢查最新雲端的全名與簡稱。</p>
-  </div>;
-
-  // Load suppliers from dataService (routes to Supabase when connected)
-  const loadSuppliers = useCallback(async () => {
-    try {
-      const data = await dsGetSuppliers();
-      setSuppliers(data);
-      setLoadError('');
-      return true;
-    } catch (err) {
-      console.error('[Suppliers] Failed to load:', err);
-      setLoadError(err instanceof Error ? err.message : '無法讀取廠商資料，請重試');
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  // Initial load
-  useEffect(() => {
-    loadSuppliers();
-  }, [loadSuppliers]);
-
-  // Re-load when sync event occurs (another device changed data)
-  useEffect(() => {
-    if (lastSyncTime > 0) {
-      loadSuppliers();
-    }
-  }, [lastSyncTime, loadSuppliers]);
-
-  useEffect(() => {
-    const refresh = () => { if (document.visibilityState === 'visible') void loadSuppliers(); };
-    const timer = window.setInterval(refresh, 30000);
-    window.addEventListener('focus', refresh);
-    return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); };
-  }, [loadSuppliers]);
-
-  // Manual refresh
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      if (await loadSuppliers()) toast({ title: '資料已刷新' });
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  // Batch import state
-  const [isBatchImportOpen, setIsBatchImportOpen] = useState(false);
-
-  const filteredSuppliers = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return suppliers.filter(c =>
-      (!q || c.name.toLowerCase().includes(q) ||
-      c.short_name.toLowerCase().includes(q) ||
-      c.supplier_no.toLowerCase().includes(q)) &&
-      FILTER_COLUMNS.every(({ key }) => {
-        const value = columnFilters[key].trim().toLowerCase();
-        const actual = (c[key] || '').toLowerCase();
-        if (!value) return true;
-        if (key === 'type' || key === 'status') return actual === value;
-        return actual.includes(value);
-      })
-    ).sort((a, b) => a.supplier_no.localeCompare(b.supplier_no, 'en', {
-      numeric: true,
-      sensitivity: 'base',
-    }));
-  }, [suppliers, searchQuery, columnFilters]);
-
-  const handleCreate = async () => {
-    if (!form.name.trim()) {
-      toast({ title: '請輸入廠商名稱', variant: 'destructive' });
-      return;
-    }
-    if (!form.type) {
-      toast({ title: '請選擇廠商類型', variant: 'destructive' });
-      return;
-    }
-    if (!form.contact1_name.trim()) {
-      toast({ title: '請輸入聯絡人1姓名', variant: 'destructive' });
-      return;
-    }
-    if (!form.contact1_phone.trim()) {
-      toast({ title: '請輸入聯絡人1手機', variant: 'destructive' });
-      return;
-    }
-    if (isSaving) return;
-    setIsSaving(true);
-    try {
-      const result = await dsCreateSupplier({
-        name: form.name,
-        short_name: form.short_name,
-        type: form.type,
-        address: form.address,
-        delivery_addresses: form.delivery_addresses.filter(a => a.trim() !== ''),
-        phone: form.phone,
-        email: form.email,
-        contact1_name: form.contact1_name,
-        contact1_phone: form.contact1_phone,
-        contact2_name: form.contact2_name,
-        contact2_phone: form.contact2_phone,
-        status: form.status,
-        remarks: form.remarks,
-      });
-      if (result) {
-        await loadSuppliers();
-        setIsCreateOpen(false);
-        setForm(emptyForm);
-        toast({ title: '廠商已新增' });
-      } else {
-        toast({ title: '新增失敗，請重試', variant: 'destructive' });
-      }
-    } catch (err: unknown) {
-      console.error('[Suppliers] Create failed:', err);
-      if (err instanceof DuplicateSupplierError) {
-        toast({ title: '廠商已存在，未新增', description: err.message, variant: 'destructive' });
-        return;
-      }
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
-        toast({ title: '資料庫權限不足，請聯繫管理員執行 RLS 修正腳本', variant: 'destructive' });
-      } else if (msg.includes('duplicate') || msg.includes('unique')) {
-        toast({ title: '廠商編號重複，請重試', variant: 'destructive' });
-      } else if (msg.includes('timeout')) {
-        toast({ title: '連線逾時，請確認廠商清單後再試', variant: 'destructive' });
-      } else {
-        toast({ title: '新增失敗', description: msg, variant: 'destructive' });
-      }
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleEditOpen = (supplier: Supplier) => {
-    setEditSupplier(supplier);
-    const addresses = supplier.delivery_addresses && supplier.delivery_addresses.length > 0
-      ? supplier.delivery_addresses
-      : [''];
-    setForm({
-      name: supplier.name,
-      short_name: supplier.short_name,
-      type: supplier.type,
-      address: supplier.address,
-      delivery_addresses: addresses,
-      phone: supplier.phone,
-      email: supplier.email,
-      contact1_name: supplier.contact1_name,
-      contact1_phone: supplier.contact1_phone,
-      contact2_name: supplier.contact2_name,
-      contact2_phone: supplier.contact2_phone,
-      status: supplier.status,
-      remarks: supplier.remarks,
-    });
-  };
-
-  const handleEditSave = async () => {
-    if (!editSupplier) return;
-    if (!form.name.trim()) {
-      toast({ title: '請輸入廠商名稱', variant: 'destructive' });
-      return;
-    }
-    if (!form.type) {
-      toast({ title: '請選擇廠商類型', variant: 'destructive' });
-      return;
-    }
-    if (!form.contact1_name.trim()) {
-      toast({ title: '請輸入聯絡人1姓名', variant: 'destructive' });
-      return;
-    }
-    if (!form.contact1_phone.trim()) {
-      toast({ title: '請輸入聯絡人1手機', variant: 'destructive' });
-      return;
-    }
-    if (isSaving) return;
-    setIsSaving(true);
-    try {
-      const result = await dsUpdateSupplier(editSupplier.id, {
-        name: form.name,
-        short_name: form.short_name,
-        type: form.type,
-        address: form.address,
-        delivery_addresses: form.delivery_addresses.filter(a => a.trim() !== ''),
-        phone: form.phone,
-        email: form.email,
-        contact1_name: form.contact1_name,
-        contact1_phone: form.contact1_phone,
-        contact2_name: form.contact2_name,
-        contact2_phone: form.contact2_phone,
-        status: form.status,
-        remarks: form.remarks,
-      });
-      if (result) {
-        await loadSuppliers();
-        setEditSupplier(null);
-        setForm(emptyForm);
-        toast({ title: '✅ 廠商資料已更新' });
-      } else {
-        toast({ title: '更新失敗，請重試', variant: 'destructive' });
-      }
-    } catch (err: unknown) {
-      console.error('[Suppliers] Update failed:', err);
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
-        toast({ title: '資料庫權限不足，請聯繫管理員執行 RLS 修正腳本', variant: 'destructive' });
-      } else if (msg.includes('timeout')) {
-        toast({ title: '連線逾時，請刷新確認是否已儲存', variant: 'destructive' });
-      } else if (msg.includes('not found') || msg.includes('404')) {
-        toast({ title: '找不到此廠商資料，可能已被其他裝置刪除', variant: 'destructive' });
-        await loadSuppliers();
-        setEditSupplier(null);
-        setForm(emptyForm);
-      } else if (msg.includes('network') || msg.includes('fetch')) {
-        toast({ title: '網路連線異常，請刷新確認是否已儲存', variant: 'destructive' });
-      } else {
-        toast({ title: '更新失敗，請重試', description: msg, variant: 'destructive' });
-      }
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('確定要刪除此廠商？此操作無法復原。')) return;
-    try {
-      await dsDeleteSupplier(id);
-      await loadSuppliers();
-      toast({ title: '✅ 廠商已刪除' });
-    } catch (err: unknown) {
-      console.error('[Suppliers] Delete failed:', err);
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
-        toast({ title: '權限不足，無法刪除此廠商', variant: 'destructive' });
-      } else if (msg.includes('timeout')) {
-        toast({ title: '連線逾時，請重試', variant: 'destructive' });
-      } else if (msg.includes('foreign') || msg.includes('constraint') || msg.includes('referenced')) {
-        toast({ title: '此廠商有關聯的工單或其他資料，無法刪除', description: '請先刪除相關工單後再試', variant: 'destructive' });
-      } else {
-        toast({ title: '刪除失敗，請重試', description: msg, variant: 'destructive' });
-      }
-    }
-  };
-
-  // Handle OCR result from business card recognition
-  const handleOCRResult = (data: { company_name: string; short_name: string; contact_name: string; contact_title: string; phone: string; mobile: string; fax: string; email: string; address: string; website: string; tax_id?: string }) => {
-    setForm(prev => ({
-      ...prev,
-      name: data.company_name || prev.name,
-      short_name: data.short_name || prev.short_name,
-      phone: data.phone || prev.phone,
-      email: data.email || prev.email,
-      address: data.address || prev.address,
-      contact1_name: data.contact_name || prev.contact1_name,
-      contact1_phone: data.mobile || prev.contact1_phone,
-      remarks: [
-        prev.remarks,
-        data.contact_title ? `職稱: ${data.contact_title}` : '',
-        data.tax_id ? `統一編號: ${data.tax_id}` : '',
-        data.fax ? `傳真: ${data.fax}` : '',
-        data.website ? `網站: ${data.website}` : '',
-      ].filter(Boolean).join('\n'),
-    }));
-    // Open create dialog if not already open
-    if (!isCreateOpen && !editSupplier) {
-      setIsCreateOpen(true);
-    }
-  };
-
-  const addDeliveryAddress = () => {
-    setForm({ ...form, delivery_addresses: [...form.delivery_addresses, ''] });
-  };
-
-  const updateDeliveryAddress = (index: number, value: string) => {
-    const updated = [...form.delivery_addresses];
-    updated[index] = value;
-    setForm({ ...form, delivery_addresses: updated });
-  };
-
-  const removeDeliveryAddress = (index: number) => {
-    if (form.delivery_addresses.length <= 1) return;
-    const updated = form.delivery_addresses.filter((_, i) => i !== index);
-    setForm({ ...form, delivery_addresses: updated });
-  };
-
-  const formContent = (
-    <div className="grid gap-3 max-h-[60vh] overflow-y-auto pr-2">
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <Label>廠商名稱 <span className="text-red-400">*</span></Label>
-          <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="bg-zinc-800 border-zinc-600" />
-        </div>
-        <div>
-          <Label>廠商簡稱</Label>
-          <Input value={form.short_name} onChange={e => setForm({ ...form, short_name: e.target.value })} className="bg-zinc-800 border-zinc-600" />
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <Label>廠商類型 <span className="text-red-400">*</span></Label>
-          <Select value={form.type} onValueChange={v => setForm({ ...form, type: v as SupplierType })}>
-            <SelectTrigger className="bg-zinc-800 border-zinc-600"><SelectValue placeholder="選擇類型" /></SelectTrigger>
-            <SelectContent>
-              {SUPPLIER_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label>狀態</Label>
-          <Select value={form.status} onValueChange={v => setForm({ ...form, status: v as SupplierStatus })}>
-            <SelectTrigger className="bg-zinc-800 border-zinc-600"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {SUPPLIER_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-      <div>
-        <Label>公司地址</Label>
-        <Input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} className="bg-zinc-800 border-zinc-600" />
-      </div>
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <Label>送貨地址</Label>
-          <Button type="button" size="sm" variant="ghost" onClick={addDeliveryAddress} className="h-6 px-2 text-xs text-amber-400 hover:text-amber-300">
-            <Plus className="w-3 h-3 mr-1" /> 新增地址
-          </Button>
-        </div>
-        <div className="space-y-2">
-          {form.delivery_addresses.map((addr, idx) => (
-            <div key={idx} className="flex gap-2">
-              <Input
-                value={addr}
-                onChange={e => updateDeliveryAddress(idx, e.target.value)}
-                placeholder={`送貨地址 ${idx + 1}`}
-                className="bg-zinc-800 border-zinc-600 flex-1"
-              />
-              {form.delivery_addresses.length > 1 && (
-                <Button type="button" size="sm" variant="ghost" onClick={() => removeDeliveryAddress(idx)} className="h-9 px-2 text-red-400 hover:text-red-300">
-                  <X className="w-4 h-4" />
-                </Button>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <Label>公司電話</Label>
-          <Input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} className="bg-zinc-800 border-zinc-600" />
-        </div>
-        <div>
-          <Label>Email</Label>
-          <Input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className="bg-zinc-800 border-zinc-600" />
-        </div>
-      </div>
-      <div className="border-t border-zinc-700 pt-3">
-        <Label className="text-amber-400 font-semibold">聯絡人 1 <span className="text-red-400">*</span></Label>
-        <div className="grid grid-cols-2 gap-3 mt-2">
-          <div>
-            <Label>姓名 <span className="text-red-400">*</span></Label>
-            <Input value={form.contact1_name} onChange={e => setForm({ ...form, contact1_name: e.target.value })} className="bg-zinc-800 border-zinc-600" />
-          </div>
-          <div>
-            <Label>手機 <span className="text-red-400">*</span></Label>
-            <Input value={form.contact1_phone} onChange={e => setForm({ ...form, contact1_phone: e.target.value })} className="bg-zinc-800 border-zinc-600" />
-          </div>
-        </div>
-      </div>
-      <div className="border-t border-zinc-700 pt-3">
-        <Label className="text-amber-400 font-semibold">聯絡人 2</Label>
-        <div className="grid grid-cols-2 gap-3 mt-2">
-          <div>
-            <Label>姓名</Label>
-            <Input value={form.contact2_name} onChange={e => setForm({ ...form, contact2_name: e.target.value })} className="bg-zinc-800 border-zinc-600" />
-          </div>
-          <div>
-            <Label>手機</Label>
-            <Input value={form.contact2_phone} onChange={e => setForm({ ...form, contact2_phone: e.target.value })} className="bg-zinc-800 border-zinc-600" />
-          </div>
-        </div>
-      </div>
-      <div>
-        <Label>備註</Label>
-        <Input value={form.remarks} onChange={e => setForm({ ...form, remarks: e.target.value })} className="bg-zinc-800 border-zinc-600" />
-      </div>
-    </div>
-  );
-
-  return (
-    <AppLayout>
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-zinc-100 flex items-center gap-2">
-            <Users className="w-6 h-6 text-amber-500" />
-            廠商資料
-          </h1>
-          <div className="flex gap-2">
-            <Button
-              onClick={handleRefresh}
-              variant="outline"
-              size="icon"
-              className="border-zinc-600 text-zinc-300 hover:bg-zinc-700"
-              disabled={isRefreshing}
-              title="重新刷新資料"
-            >
-              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            </Button>
-            <BusinessCardOCR onResult={handleOCRResult} />
-            <Button onClick={() => setIsBatchImportOpen(true)} variant="outline" className="border-amber-600 text-amber-400 hover:bg-amber-600/10">
-              <Upload className="w-4 h-4 mr-1" /> 批次匯入
-            </Button>
-            <Button onClick={() => { setForm(emptyForm); setIsCreateOpen(true); }} className="bg-amber-600 hover:bg-amber-700">
-              <Plus className="w-4 h-4 mr-1" /> 新增廠商
-            </Button>
-          </div>
-        </div>
-
-        {/* Search */}
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-          <Input
-            placeholder="搜尋廠商名稱、簡稱或編號..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="pl-10 bg-zinc-800 border-zinc-600"
-          />
-        </div>
-
-        <div className="flex items-center gap-3 text-sm text-zinc-400">
-          <span aria-live="polite">{isLoading ? '載入中...' : `顯示 ${filteredSuppliers.length} / ${suppliers.length} 筆廠商`}</span>
-          <span>拖曳欄位標題右側可調整寬度</span>
-          <Button variant="ghost" size="sm" onClick={() => setColumnWidths([...DEFAULT_WIDTHS])}>重設欄寬</Button>
-          {hasFilters && <Button variant="ghost" size="sm" onClick={() => { setSearchQuery(''); setColumnFilters(EMPTY_FILTERS); }}>
-            <X className="w-4 h-4 mr-1" />清除篩選
-          </Button>}
-        </div>
-
-        {loadError && <div role="alert" className="rounded border border-red-500/40 p-3 text-red-300">{loadError}</div>}
-        {/* Loading state */}
-        {isLoading ? (
-          <div className="text-center py-8 text-zinc-400">載入中...</div>
-        ) : (
-          /* Supplier List */
-          <div className="overflow-x-auto rounded-lg border border-zinc-700">
-            <table className="table-fixed text-sm [&_td]:break-words" style={{ width: columnWidths.reduce((sum, width) => sum + width, 0) }}>
-              <colgroup>{TABLE_COLUMNS.map((column, index) => <col key={column.key} style={{ width: columnWidths[index] }} />)}</colgroup>
-              <thead className="bg-zinc-800">
-                <tr>
-                  {TABLE_COLUMNS.map((column, index) => <th key={column.key} scope="col" className="relative px-3 py-2 text-left text-zinc-300">
-                    {column.label}
-                    <div role="separator" aria-label={`調整${column.label}欄寬`} aria-orientation="vertical"
-                      aria-valuemin={MIN_COLUMN_WIDTH} aria-valuemax={MAX_COLUMN_WIDTH} aria-valuenow={columnWidths[index]} tabIndex={0}
-                      title="拖曳調整欄寬；方向鍵微調，雙擊還原"
-                      className="absolute right-0 top-0 h-full w-2 cursor-col-resize touch-none select-none border-r border-zinc-600 hover:bg-amber-500/40 focus:bg-amber-500/40 focus:outline-none"
-                      onPointerDown={event => {
-                        if (event.button !== 0) return;
-                        event.preventDefault();
-                        event.currentTarget.setPointerCapture(event.pointerId);
-                        columnDrag.current = { index, x: event.clientX, width: columnWidths[index] };
-                      }}
-                      onPointerMove={event => {
-                        const drag = columnDrag.current;
-                        if (drag && drag.index === index) resizeColumn(index, drag.width + event.clientX - drag.x);
-                      }}
-                      onPointerUp={event => {
-                        columnDrag.current = null;
-                        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-                      }}
-                      onPointerCancel={() => { columnDrag.current = null; }}
-                      onLostPointerCapture={() => { columnDrag.current = null; }}
-                      onDoubleClick={() => resizeColumn(index, DEFAULT_WIDTHS[index])}
-                      onKeyDown={event => {
-                        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-                          event.preventDefault();
-                          resizeColumn(index, columnWidths[index] + (event.key === 'ArrowRight' ? 10 : -10));
-                        }
-                      }} />
-                  </th>)}
-                </tr>
-                <tr>
-                  {FILTER_COLUMNS.map(({ key, label }) => (
-                    <th key={key} className="px-3 pb-3 font-normal">
-                      {key === 'type' || key === 'status' ? (
-                        <Select value={columnFilters[key] || 'all'} onValueChange={value => setColumnFilters(prev => ({ ...prev, [key]: value === 'all' ? '' : value }))}>
-                          <SelectTrigger aria-label={`篩選${label}`} className="h-8 w-full min-w-0 bg-zinc-900 border-zinc-600"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">全部{label}</SelectItem>
-                            {(key === 'type' ? SUPPLIER_TYPES : SUPPLIER_STATUSES).map(value => <SelectItem key={value} value={value}>{value}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <Input aria-label={`篩選${label}`} placeholder={`篩選${label}`} value={columnFilters[key]}
-                          onChange={event => setColumnFilters(prev => ({ ...prev, [key]: event.target.value }))}
-                          className="h-8 w-full min-w-0 bg-zinc-900 border-zinc-600" />
+                  <p className="text-[11px] text-zinc-500 mt-1">
+                    {isEdit
+                      ? '可直接改寫此爐的熔解編號，儲存後清單與追溯查詢會同步更新（不可與其他爐重複）。'
+                      : '留空時自動依「ML-日期-爐號」規則產生；亦可自行輸入自訂編號。'}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-zinc-400 text-xs">日期 *</Label>
+                  <Input type="date" value={form.melt_date} onChange={e => setForm({ ...form, melt_date: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
+                </div>
+                <div>
+                  <Label className="text-zinc-400 text-xs">材質 *（來自材質規範）</Label>
+                  <Select value={form.material_grade} onValueChange={handleMaterialGradeChange}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8"><SelectValue placeholder="選擇材質規範" /></SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">
+                      {materialGradeOptions.length === 0 && (
+                        <SelectItem value="__none__" disabled className="text-zinc-400">尚無材質規範</SelectItem>
                       )}
-                    </th>
-                  ))}
-                  <th><span className="sr-only">操作欄無篩選</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredSuppliers.length === 0 ? (
-                  <tr><td colSpan={8} className="px-3 py-8 text-center text-zinc-500">{loadError ? '廠商資料尚未載入' : hasFilters ? '沒有符合篩選條件的廠商' : '無廠商資料'}</td></tr>
-                ) : (
-                  filteredSuppliers.map(c => (
-                    <tr key={c.id} className="border-t border-zinc-700 hover:bg-zinc-800/50">
-                      <td className="px-3 py-2 text-zinc-300 font-mono text-xs">{c.supplier_no}</td>
-                      <td className="px-3 py-2 text-zinc-100">{c.name}</td>
-                      <td className="px-3 py-2 text-zinc-300">{c.short_name}</td>
-                      <td className="px-3 py-2 text-zinc-300">{c.type || '-'}</td>
-                      <td className="px-3 py-2 text-zinc-300">{c.phone || '-'}</td>
-                      <td className="px-3 py-2 text-zinc-300">{c.contact1_name || '-'}</td>
-                      <td className="px-3 py-2">
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${c.status === '啟用' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                          {c.status}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex gap-1">
-                          <Button size="sm" variant="ghost" onClick={() => handleEditOpen(c)}>
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleDelete(c.id)} className="text-red-400 hover:text-red-300">
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                      {materialGradeOptions.map(name => (
+                        <SelectItem key={name} value={name} className="text-zinc-100">
+                          {name}{materialSpecs.some(s => s.name === name) ? '' : '（無規範）'}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value={ADD_SPEC_OPTION} className="text-purple-300">＋ 新增材質規範</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {selectedSpec ? (
+                    <p className="text-[11px] text-purple-300 mt-1">
+                      已套用「{selectedSpec.name}」規範，成份紀錄目標值已自動代入
+                    </p>
+                  ) : form.material_grade ? (
+                    <p className="text-[11px] text-zinc-500 mt-1">此材質尚無成分規範，目標值請手動輸入</p>
+                  ) : null}
+                </div>
+                <div>
+                  <Label className="text-zinc-400 text-xs">爐號 *</Label>
+                  <Select value={form.furnace_no} onValueChange={v => { unsaved.markDirty();setForm({ ...form, furnace_no: v }); setBody(furnaceFromNumber(v)); }}>
+                    <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8"><SelectValue placeholder="選擇爐號" /></SelectTrigger>
+                    <SelectContent className="bg-zinc-700 border-zinc-600">{FURNACE_OPTIONS.map(f => (<SelectItem key={f} value={f} className="text-zinc-100">{f}</SelectItem>))}</SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-zinc-400 text-xs">出爐溫度 (℃)</Label>
+                  <Input type="number" value={form.tap_temp || ''} onChange={e => setForm({ ...form, tap_temp: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" placeholder="1600" />
+                </div>
+                <div>
+                  <Label className="text-zinc-400 text-xs">開始送電時間 * (24小時制)</Label>
+                  <Input type="time" value={form.power_start_time} onChange={e => { setForm({ ...form, power_start_time: e.target.value }); validateTime(e.target.value, form.tap_time); }} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
+                </div>
+                <div>
+                  <Label className="text-zinc-400 text-xs">出湯時間（早於開始視為隔日） * (24小時制)</Label>
+                  <Input type="time" value={form.tap_time} onChange={e => { setForm({ ...form, tap_time: e.target.value }); validateTime(form.power_start_time, e.target.value); }} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
+                </div>
+              </div>
+              <fieldset disabled={saving} className="mt-3 rounded border border-zinc-600 p-3 space-y-3">
+                <legend className="px-1 text-sm text-zinc-200">爐體與累計爐次</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label htmlFor="furnace-body" className="text-zinc-300">爐體</Label>
+                    <select id="furnace-body" data-testid="furnace-body" value={body} disabled aria-label="爐體（由爐號自動帶入）" className="w-full rounded border border-zinc-600 bg-zinc-700 p-2 text-zinc-100">
+                      {[1,2,3].map(n => <option key={n} value={n}>{n} 號爐體</option>)}
+                    </select>
+                  </div>
+                  <div><Label htmlFor="heat-sequence" className="text-zinc-300">累計爐次（可校正）</Label>
+                    <Input id="heat-sequence" data-testid="heat-sequence" type="number" min={1} step={1} disabled={rebuild} value={rebuild ? '1' : heatChanged ? heatInput : String(sequencePreview.current.heat_sequence || '')} placeholder={String(sequencePreview.current.heat_sequence || 1)} onChange={e => { setHeatInput(e.target.value); setHeatChanged(true); }} className="bg-zinc-700 border-zinc-600 text-zinc-100" />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-sm text-zinc-200"><input data-testid="heat-rebuild" type="checkbox" checked={rebuild} onChange={e => setRebuild(e.target.checked)} />本批為重新築爐後第一批（001）</label>
+                <p className="text-xs text-zinc-300">依日期及熔解編號數字順序校正（ML-2 → ML-9 → ML-10），僅調整同爐體、同築爐週期。每日第一批另行判定。</p>
+                <p data-testid="heat-preview" className="text-sm text-amber-300">預計爐次 {formatHeat(sequencePreview.current.heat_sequence)} · {sequencePreview.current.cycle_number ? `築爐週期 ${sequencePreview.current.cycle_number}` : '既有週期（未標記築爐）'} · 每日第 {sequencePreview.current.daily_sequence} 批</p>
+                {(sequenceError || sequencePreview.invalid) && <p role="alert" className="text-sm text-red-300">{sequenceError || '校正後不得出現零或負爐次；已築爐週期必須由001連續累計。'}</p>}
+                <details className="text-xs text-zinc-300"><summary className="cursor-pointer">查看同週期校正預覽（{sequencePreview.affected.length} 批）</summary><div className="max-h-40 overflow-y-auto mt-2">{sequencePreview.affected.map(r => <div key={r.id} className="flex justify-between gap-2 py-1"><span>{r.melt_date} · {r.melt_no}</span><span>{formatHeat(sequenceRecords.find(old => old.id === r.id)?.heat_sequence)} → {formatHeat(r.heat_sequence)}</span></div>)}</div></details>
+              </fieldset>
+              {timeError && <p className="text-xs text-red-400 mt-2">⚠️ {timeError}</p>}
+
+              {/* Auto-calculated fields */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                <div>
+                  <Label className="text-zinc-400 text-xs">熔解時間（自動）</Label>
+                  <div className="h-8 flex items-center px-3 bg-zinc-900/50 border border-zinc-600 rounded-md text-amber-400 font-bold text-sm">
+                    {meltMinutes > 0 ? formatMeltMinutes(meltMinutes) : '--:--'}
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-zinc-400 text-xs">耗電度數 (kWh)</Label>
+                  <Input type="number" value={form.power_kwh || ''} onChange={e => setForm({ ...form, power_kwh: Number(e.target.value) })} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" placeholder="1850" />
+                </div>
+                <div>
+                  <Label className="text-zinc-400 text-xs">總投料重量（自動）</Label>
+                  <div className="h-8 flex items-center px-3 bg-zinc-900/50 border border-zinc-600 rounded-md text-amber-400 font-bold text-sm">
+                    {totalChargeWeight} kg
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-zinc-400 text-xs">能耗（自動）</Label>
+                  <div className="h-8 flex items-center px-3 bg-zinc-900/50 border border-zinc-600 rounded-md text-amber-400 font-bold text-sm">
+                    {specificEnergy > 0 ? `${specificEnergy} kWh/kg` : '-- kWh/kg'}
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-zinc-400 text-xs">建立人</Label>
+                  <Input value={form.created_by} onChange={e => setForm({ ...form, created_by: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" placeholder="操作員姓名" />
+                </div>
+                <div>
+                  <Label className="text-zinc-400 text-xs">備註</Label>
+                  <Input value={form.remark} onChange={e => setForm({ ...form, remark: e.target.value })} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-8" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 區塊二：投料明細 (Collapsible) */}
+          <Collapsible open={materialsOpen} onOpenChange={setMaterialsOpen}>
+            <Card className="bg-zinc-700/20 border-zinc-700">
+              <CollapsibleTrigger asChild>
+                <CardHeader className="p-3 pb-2 cursor-pointer hover:bg-zinc-700/30 rounded-t-lg">
+                  <CardTitle className="text-sm text-zinc-300 flex items-center justify-between">
+                    <span className="flex items-center gap-2"><Layers className="w-4 h-4 text-blue-400" />投料明細</span>
+                    {materialsOpen ? <ChevronUp className="w-4 h-4 text-zinc-500" /> : <ChevronDown className="w-4 h-4 text-zinc-500" />}
+                  </CardTitle>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="p-3 pt-0 space-y-2">
+                  {/* Load preset recipe */}
+                  {presetRecipes.length > 0 && (
+                    <div className="flex items-center gap-2 mb-2">
+                      <Label className="text-zinc-400 text-xs whitespace-nowrap">載入配比：</Label>
+                      <Select onValueChange={loadPresetRecipe}>
+                        <SelectTrigger className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs flex-1"><SelectValue placeholder="選擇預設配比" /></SelectTrigger>
+                        <SelectContent className="bg-zinc-700 border-zinc-600">
+                          {presetRecipes.map(r => (<SelectItem key={r.id} value={r.id} className="text-zinc-100">{r.name} ({r.materials.length}項)</SelectItem>))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {/* Materials table */}
+                  {materials.length > 0 && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs" data-testid="dlg-materials-table">
+                        <thead>
+                          <tr className="text-zinc-500 border-b border-zinc-700">
+                            <th className="text-left py-1.5 pr-2">原料</th>
+                            <th className="text-right py-1.5 pr-2 w-24">首次投料(kg)</th>
+                            <th className="text-right py-1.5 pr-2 w-24">二次添加(kg)</th>
+                            <th className="text-right py-1.5 pr-2 w-16">小計</th>
+                            <th className="w-8"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {materials.map((m, idx) => (
+                            <tr key={idx} className="text-zinc-300 border-b border-zinc-700/50" data-testid="dlg-material-row" data-material={m.raw_material}>
+                              <td className="py-1 pr-2">{m.raw_material}</td>
+                              <td className="text-right py-1 pr-2">
+                                <Input type="number" min="0" disabled={loadingRecord} value={m.charge_weight || ''} onChange={e => updateMaterialRow(idx, 'charge_weight', Math.max(0, Number(e.target.value)))} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-6 text-xs w-20 ml-auto" />
+                              </td>
+                              <td className="text-right py-1 pr-2">
+                                <Input type="number" min="0" disabled={loadingRecord} value={m.secondary_weight || ''} onChange={e => updateMaterialRow(idx, 'secondary_weight', Math.max(0, Number(e.target.value)))} className="bg-zinc-700 border-zinc-600 text-zinc-100 h-6 text-xs w-20 ml-auto" />
+                              </td>
+                              <td className="text-right py-1 pr-2 font-medium text-zinc-200">{m.charge_weight + m.secondary_weight}</td>
+                              <td className="py-1">
+                                <Button size="sm" variant="ghost" data-testid="dlg-material-remove" disabled={loadingRecord} onClick={() => removeMaterialRow(idx)} className="text-zinc-400 hover:text-red-400 h-5 w-5 p-0 disabled:opacity-40"><Trash2 className="w-3 h-3" /></Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Total */}
+                  <div className="flex justify-end text-xs font-medium text-amber-400 pr-10" data-testid="dlg-total-charge">
+                    總投料重量：{totalChargeWeight} kg
+                  </div>
+
+                  {/* Add row */}
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                    <div className="flex-1 min-w-0">
+                      <MaterialCombobox
+                        value={newMaterialRow.raw_material}
+                        onChange={v => setNewMaterialRow({ ...newMaterialRow, raw_material: v })}
+                        options={materialOptionNames}
+                        onCreate={onCreateMaterialOption}
+                        onDelete={onDeleteMaterialOption}
+                        usedOptions={materials.map(m => m.raw_material.trim())}
+                        className="h-7 text-xs"
+                        testId="dlg-new-material-combobox"
+                      />
+                    </div>
+                    <Input type="number" min="0" disabled={loadingRecord} value={newMaterialRow.charge_weight || ''} onChange={e => setNewMaterialRow({ ...newMaterialRow, charge_weight: Math.max(0, Number(e.target.value)) })} placeholder="首次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
+                    <Input type="number" min="0" disabled={loadingRecord} value={newMaterialRow.secondary_weight || ''} onChange={e => setNewMaterialRow({ ...newMaterialRow, secondary_weight: Math.max(0, Number(e.target.value)) })} placeholder="二次(kg)" className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs w-full sm:w-24" />
+                    <Button size="sm" data-testid="dlg-add-material" disabled={loadingRecord} onClick={addMaterialRow} className="bg-blue-500 hover:bg-blue-600 text-white h-7 text-xs whitespace-nowrap shrink-0 disabled:opacity-50">
+                      <Plus className="w-3 h-3 mr-1" />新增
+                    </Button>
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+
+          {/* 區塊二之一：澆注殘湯重量 (Collapsible) — 位於投料明細下方獨立呈現 */}
+          <Collapsible open={residualOpen} onOpenChange={setResidualOpen}>
+            <Card className="bg-zinc-700/20 border-zinc-700">
+              <CollapsibleTrigger asChild>
+                <CardHeader className="p-3 pb-2 cursor-pointer hover:bg-zinc-700/30 rounded-t-lg">
+                  <CardTitle className="text-sm text-zinc-300 flex items-center justify-between">
+                    <span className="flex items-center gap-2"><Droplets className="w-4 h-4 text-violet-400" />澆注殘湯重量</span>
+                    {residualOpen ? <ChevronUp className="w-4 h-4 text-zinc-500" /> : <ChevronDown className="w-4 h-4 text-zinc-500" />}
+                  </CardTitle>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="p-3 pt-0 space-y-2">
+                  <div>
+                    <Label className="text-zinc-400 text-xs">本爐殘湯重量 (kg)</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={residualWeight}
+                      onChange={e => setResidualWeight(e.target.value)}
+                      className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs mt-1"
+                      placeholder="澆注結束後爐內剩餘鐵水，可不填"
+                    />
+                    {Number(residualWeight) > 0 && totalChargeWeight > 0 && (
+                      <p className="text-xs text-zinc-400 mt-1">
+                        殘湯率: <span className="text-violet-300 font-bold">{((Number(residualWeight) / totalChargeWeight) * 100).toFixed(1)}%</span>
+                        （殘湯 {Number(residualWeight)} kg ÷ 當爐投料總重 {totalChargeWeight} kg × 100%）
+                      </p>
+                    )}
+                    {Number(residualWeight) > 0 && totalChargeWeight <= 0 && (
+                      <p className="text-xs text-zinc-500 mt-1">提示：填寫投料重量後，即可試算當爐殘湯率。</p>
+                    )}
+                    <p className="text-[11px] text-zinc-500 mt-1">殘湯重量隨熔解紀錄儲存並同步至雲端；殘湯率 = 當爐殘湯重量 ÷ 當爐投料總重（含前爐殘湯） × 100%。</p>
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+
+          {/* 區塊三：澆注紀錄 (Collapsible) - Select completed batches */}
+          <Collapsible open={pouringOpen} onOpenChange={setPouringOpen}>
+            <Card className="bg-zinc-700/20 border-zinc-700">
+              <CollapsibleTrigger asChild>
+                <CardHeader className="p-3 pb-2 cursor-pointer hover:bg-zinc-700/30 rounded-t-lg">
+                  <CardTitle className="text-sm text-zinc-300 flex items-center justify-between">
+                    <span className="flex items-center gap-2"><Flame className="w-4 h-4 text-orange-400" />澆注紀錄（已完成造模批次）</span>
+                    {pouringOpen ? <ChevronUp className="w-4 h-4 text-zinc-500" /> : <ChevronDown className="w-4 h-4 text-zinc-500" />}
+                  </CardTitle>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="p-3 pt-0 space-y-3">
+                  {/* Search completed batches */}
+                  <div className="space-y-2">
+                    <Label className="text-zinc-400 text-xs">搜尋已完成造模批次（客戶、材質、品名）</Label>
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1.5 w-3.5 h-3.5 text-zinc-500" />
+                      <Input
+                        value={pouringBatchSearch}
+                        onChange={e => setPouringBatchSearch(e.target.value)}
+                        placeholder="輸入客戶、材質或品名搜尋..."
+                        className="bg-zinc-700 border-zinc-600 text-zinc-100 h-7 text-xs pl-7"
+                      />
+                    </div>
+                    {pouringBatchSearch && (() => {
+                      const keyword = pouringBatchSearch.toLowerCase();
+                      const completedBatches = allBatches.filter(b =>
+                        b.status === 'Completed' &&
+                        !selectedPouringBatches.some(sp => sp.batch_id === b.id) &&
+                        (
+                          (b.customer || '').toLowerCase().includes(keyword) ||
+                          (b.material || '').toLowerCase().includes(keyword) ||
+                          (b.product_name || '').toLowerCase().includes(keyword) ||
+                          b.batch_no.toLowerCase().includes(keyword)
+                        )
+                      );
+                      return completedBatches.length > 0 ? (
+                        <div className="max-h-32 overflow-y-auto border border-zinc-600 rounded-md p-1 space-y-0.5">
+                          {completedBatches.map(b => {
+                            const wo = allWorkOrders.find(w => w.id === b.work_order_id);
+                            const estWeight = batchItem(wo, b)?.estimated_weight || 0;
+                            return (
+                              <button
+                                key={b.id}
+                                onClick={() => {
+                                  setSelectedPouringBatches([...selectedPouringBatches, {
+                                    batch_id: b.id,
+                                    batch_no: b.batch_no,
+                                    customer: b.customer || '',
+                                    product_name: b.product_name || '',
+                                    material: b.material || '',
+                                    quantity: b.quantity_planned,
+                                    estimated_weight: estWeight,
+                                    estimated_pouring_weight: b.estimated_pouring_weight || 0,
+                                    pouring_weights: new Array(b.quantity_planned).fill(0),
+                                  }]);
+                                  setPouringBatchSearch('');
+                                }}
+                                className="w-full text-left p-1.5 rounded hover:bg-zinc-600 text-xs"
+                              >
+                                <span className="font-mono text-amber-400">{b.batch_no}</span>
+                                <span className="text-zinc-400 ml-2">客戶: {b.customer || '-'} | 品名: {b.product_name || '-'} | 材質: {b.material || '-'} | 數量: {b.quantity_planned} | 預估成品重量: {estWeight}kg | 預計澆注: {b.estimated_pouring_weight || 0}kg</span>
+                              </button>
+                            );
+                          })}
                         </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                      ) : (
+                        <p className="text-xs text-zinc-500 p-2 text-center border border-zinc-600 rounded-md">無符合的已完成批次</p>
+                      );
+                    })()}
+                  </div>
 
-      {/* Create Dialog */}
-      <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg max-h-[90vh] overflow-y-auto" onPointerDownOutside={e => e.preventDefault()}>
-          <DialogHeader><DialogTitle>新增廠商</DialogTitle></DialogHeader>
-          {duplicateNotice}
-          {formContent}
-          <div className="flex justify-end gap-2 mt-4">
-            <Button variant="outline" onClick={() => setIsCreateOpen(false)}>取消</Button>
-            <Button onClick={handleCreate} disabled={isSaving} className="bg-amber-600 hover:bg-amber-700">
-              {isSaving ? '儲存中...' : '新增'}
+                  {/* Selected batches with pouring weight inputs */}
+                  {selectedPouringBatches.length > 0 && (
+                    <div className="space-y-3">
+                      {selectedPouringBatches.map((sp, spIdx) => (
+                        <Card key={sp.batch_id} className="bg-zinc-700/30 border-zinc-600">
+                          <CardContent className="p-2 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs">
+                                <span className="font-mono text-amber-400">{sp.batch_no}</span>
+                                <span className="text-zinc-400 ml-2">客戶: {sp.customer} | 品名: {sp.product_name} | 材質: {sp.material}</span>
+                              </div>
+                              <Button size="sm" variant="ghost" onClick={() => setSelectedPouringBatches(selectedPouringBatches.filter((_, i) => i !== spIdx))} className="text-zinc-400 hover:text-red-400 h-5 w-5 p-0">
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                            <div className="text-xs text-zinc-400">
+                              數量: <span className="text-zinc-200">{sp.quantity}</span> | 預估成品重量: <span className="text-zinc-200">{sp.estimated_weight} kg</span> | 預計澆注重量: <span className="text-zinc-200">{sp.estimated_pouring_weight} kg</span>
+                            </div>
+                            <div className="space-y-1">
+                              {sp.pouring_weights.map((w, wIdx) => {
+                                const yieldRate = w > 0 && sp.estimated_weight > 0 ? ((sp.estimated_weight / w) * 100).toFixed(1) : '0.0';
+                                return (
+                                  <div key={wIdx} className="flex items-center gap-2">
+                                    <span className="text-[10px] text-zinc-400 w-12">第{wIdx + 1}件</span>
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="0.1"
+                                      value={w || ''}
+                                      onChange={e => {
+                                        const updated = [...selectedPouringBatches];
+                                        updated[spIdx].pouring_weights[wIdx] = Math.max(0, Number(e.target.value));
+                                        setSelectedPouringBatches(updated);
+                                      }}
+                                      placeholder="實際澆注(kg)"
+                                      className="bg-zinc-700 border-zinc-600 text-zinc-100 h-6 text-xs w-24"
+                                    />
+                                    <span className={`text-[10px] font-bold ${Number(yieldRate) >= 80 ? 'text-green-400' : Number(yieldRate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>
+                                      成品率: {yieldRate}%
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {/* Summary for this batch */}
+                            {(() => {
+                              const totalPouring = sp.pouring_weights.reduce((s, w) => s + w, 0);
+                              const avgRate = totalPouring > 0 && sp.estimated_weight > 0
+                                ? ((sp.estimated_weight * sp.quantity / totalPouring) * 100).toFixed(1)
+                                : '0.0';
+                              return (
+                                <div className="flex gap-3 text-[10px] text-zinc-400 pt-1 border-t border-zinc-600/50">
+                                  <span>總澆注重量: <span className="text-zinc-200 font-medium">{totalPouring} kg</span></span>
+                                  <span>平均成品率: <span className={`font-bold ${Number(avgRate) >= 80 ? 'text-green-400' : Number(avgRate) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{avgRate}%</span></span>
+                                </div>
+                              );
+                            })()}
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+
+                  {selectedPouringBatches.length === 0 && (
+                    <p className="text-xs text-zinc-500 text-center py-2">尚未選取批次，請搜尋並選取已完成的造模批次</p>
+                  )}
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+
+          {/* 區塊四：成份紀錄 (Collapsible) */}
+          <Collapsible open={chemistryOpen} onOpenChange={setChemistryOpen}>
+            <Card className="bg-zinc-700/20 border-zinc-700">
+              <CollapsibleTrigger asChild>
+                <CardHeader className="p-3 pb-2 cursor-pointer hover:bg-zinc-700/30 rounded-t-lg">
+                  <CardTitle className="text-sm text-zinc-300 flex items-center justify-between">
+                    <span className="flex items-center gap-2"><FlaskConical className="w-4 h-4 text-purple-400" />成份紀錄</span>
+                    {chemistryOpen ? <ChevronUp className="w-4 h-4 text-zinc-500" /> : <ChevronDown className="w-4 h-4 text-zinc-500" />}
+                  </CardTitle>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="p-3 pt-0 space-y-2">
+                  <div className="flex items-center gap-2 mb-1">
+                    <label className="flex items-center gap-1.5 text-xs text-zinc-400 cursor-pointer">
+                      <input type="checkbox" checked={autoCalcFe} onChange={e => setAutoCalcFe(e.target.checked)} className="rounded border-zinc-600" />
+                      Fe 自動計算 (100 - 其他元素總和)
+                    </label>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs" data-testid="dlg-chemistry-table">
+                      <thead>
+                        <tr className="text-zinc-500 border-b border-zinc-700">
+                          <th className="text-left py-1.5 pr-2 w-12">階段</th>
+                          {CHEMISTRY_ELEMENTS.map(el => (
+                            <th key={el} className="text-center py-1.5 px-0.5 w-14">{el}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {/* TARGET row - range inputs (min~max) */}
+                        <tr className="border-b border-zinc-700/50">
+                          <td className="py-1.5 pr-2 text-amber-400 font-medium whitespace-nowrap">目標</td>
+                          {CHEMISTRY_ELEMENTS.map(el => (
+                            <td key={el} className="py-1 px-0.5">
+                              {el === 'Fe' ? (
+                                <div className="h-10 flex items-center justify-center text-zinc-500 text-xs bg-zinc-900/30 rounded border border-zinc-700">
+                                  Bal
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-0.5">
+                                  <Input
+                                    type="number"
+                                    step="0.001"
+                                    min="0"
+                                    data-testid={`dlg-chem-TARGET-${el}-min`}
+                                    disabled={loadingRecord}
+                                    value={targetRange[`${el}_min`] || ''}
+                                    onChange={e => setTargetRange({ ...targetRange, [`${el}_min`]: Number(e.target.value) })}
+                                    placeholder="min"
+                                    className="bg-zinc-700 border-zinc-600 text-zinc-100 h-5 text-[10px] text-center w-full px-0.5"
+                                  />
+                                  <Input
+                                    type="number"
+                                    step="0.001"
+                                    min="0"
+                                    data-testid={`dlg-chem-TARGET-${el}-max`}
+                                    disabled={loadingRecord}
+                                    value={targetRange[`${el}_max`] || ''}
+                                    onChange={e => setTargetRange({ ...targetRange, [`${el}_max`]: Number(e.target.value) })}
+                                    placeholder="max"
+                                    className="bg-zinc-700 border-zinc-600 text-zinc-100 h-5 text-[10px] text-center w-full px-0.5"
+                                  />
+                                </div>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                        {/* IN_FURNACE and AFTER_FURNACE rows - single value */}
+                        {(['IN_FURNACE', 'AFTER_FURNACE'] as const).map(stage => (
+                          <tr key={stage} className="border-b border-zinc-700/50" data-testid={`dlg-chem-row-${stage}`}>
+                            <td className="py-1.5 pr-2 text-amber-400 font-medium whitespace-nowrap">{SAMPLE_STAGE_LABELS[stage]}</td>
+                            {CHEMISTRY_ELEMENTS.map(el => (
+                              <td key={el} className="py-1 px-0.5">
+                                {el === 'Fe' ? (
+                                  <div className="h-6 flex items-center justify-center text-zinc-500 text-xs bg-zinc-900/30 rounded border border-zinc-700">
+                                    {autoCalcFe ? calcFe(chemRows[stage]).toFixed(3) : 'Bal'}
+                                  </div>
+                                ) : (
+                                  <Input
+                                    type="number"
+                                    step="0.001"
+                                    min="0"
+                                    data-testid={`dlg-chem-${stage}-${el}`}
+                                    disabled={loadingRecord}
+                                    value={chemRows[stage][el] || ''}
+                                    onChange={e => {
+                                      const newRows = { ...chemRows };
+                                      newRows[stage] = { ...newRows[stage], [el]: Number(e.target.value) };
+                                      setChemRows(newRows);
+                                    }}
+                                    className="bg-zinc-700 border-zinc-600 text-zinc-100 h-6 text-xs text-center w-full px-1"
+                                  />
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+        </div>
+
+        {/* Fixed bottom action bar */}
+        <div className="sticky bottom-0 p-4 pt-3 border-t border-zinc-700 bg-zinc-800 flex flex-col sm:flex-row gap-2 justify-end">
+          <Button variant="ghost" data-testid="dlg-cancel" onClick={() => requestClose(false)} className="text-zinc-400 hover:text-zinc-200">
+            取消
+          </Button>
+          <Button data-testid="dlg-save" onClick={() => handleSave(false)} disabled={!!timeError || loadingRecord || saving || !!sequenceError || sequencePreview.invalid || pouringSnapshot === null || !!pouringLoadError} className="bg-amber-500 hover:bg-amber-600 text-zinc-900 disabled:opacity-50">
+            儲存
+          </Button>
+          {!isEdit && (
+            <Button onClick={() => handleSave(true)} disabled={!!timeError || loadingRecord || saving || !!sequenceError || sequencePreview.invalid || pouringSnapshot === null || !!pouringLoadError} className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
+              儲存並新增下一爐
             </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Dialog */}
-      <Dialog open={!!editSupplier} onOpenChange={open => { if (!open) { setEditSupplier(null); setForm(emptyForm); } }}>
-        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg max-h-[90vh] overflow-y-auto" onPointerDownOutside={e => e.preventDefault()}>
-          <DialogHeader><DialogTitle>編輯廠商</DialogTitle></DialogHeader>
-          {duplicateNotice}
-          {formContent}
-          <div className="flex justify-end gap-2 mt-4">
-            <Button variant="outline" onClick={() => { setEditSupplier(null); setForm(emptyForm); }}>取消</Button>
-            <Button onClick={handleEditSave} disabled={isSaving} className="bg-amber-600 hover:bg-amber-700">
-              {isSaving ? '儲存中...' : '儲存'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Batch Import Dialog */}
-      <SupplierBatchImportDialog
-        open={isBatchImportOpen}
-        onOpenChange={setIsBatchImportOpen}
-        onImportComplete={() => loadSuppliers()}
-      />
-    </AppLayout>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
