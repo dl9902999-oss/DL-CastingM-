@@ -24,6 +24,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
 const PERMISSION_ITEMS = [
   { path: '/dashboard', label: '總覽' },
   { path: '/customers', label: '客戶資料' },
+  { path: '/suppliers', label: '廠商資料' },
   { path: '/work-orders', label: '工單管理' },
   { path: '/molding', label: '開工造模' },
   { path: '/melting-management', label: '熔解管理' },

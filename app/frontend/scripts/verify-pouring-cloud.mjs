@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+const compile=name=>ts.transpileModule(readFileSync(`src/lib/${name}.ts`,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+const rules={};new Function('exports',compile('pouringData'))(rules);
+const draft={batch_id:'b1',batch_no:'B1',customer:'C',product_name:'P',material:'M',quantity:3,estimated_weight:820,estimated_pouring_weight:1150,pouring_weights:[1180,1190,1200]};
+const normalized=rules.preparePourings('m1',[draft]);assert.equal(normalized[0].total_pouring_weight,3570);assert.equal(normalized[0].avg_pouring_weight,1190);assert.deepEqual(draft.pouring_weights,[1180,1190,1200]);
+assert.equal(rules.preparePourings('m1',[{...draft,pouring_weights:[10,0,20]}])[0].avg_pouring_weight,15);
+assert.throws(()=>rules.preparePourings('m1',[{...draft,pouring_weights:[1,-2,3]}]));assert.throws(()=>rules.preparePourings('m1',[{...draft,quantity:2}]));assert.throws(()=>rules.preparePourings('m1',[{...draft,estimated_weight:NaN}]));
+assert.equal(rules.batchPouringStatus([{batch_id:'b1',pouring_weights:[10,0]},{batch_id:'b1',pouring_weights:[20]}],'b1',3),'partial');
+assert.equal(rules.batchPouringStatus([{batch_id:'b1',pouring_weights:[10]},{batch_id:'b1',pouring_weights:[20,30]}],'b1',3),'full');
+let rpcResponse={data:[],error:null},rpcCalls=0;
+const storage=new Map([['melt_pouring_m1','LEGACY_UNCHANGED']]);
+const localStorage={setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)};
+let pages=[],ranges=[];
+const query={select(){return this},order(){return this},eq(){return this},async range(a,b){ranges.push([a,b]);return pages.shift()}};
+const supabase={from:()=>query,rpc:async()=>{rpcCalls++;return rpcResponse}};
+const api={};new Function('exports','require','localStorage',compile('pouringService'))(api,name=>name==='./supabase'?{supabase}:rules,localStorage);
+// Reads cannot substitute a stale local record or an empty list for a failed server request.
+pages=[{data:Array(500).fill(normalized[0]),error:null},{data:[normalized[0]],error:null}];assert.equal((await api.readCloudPourings()).length,501);assert.deepEqual(ranges,[[0,499],[500,999]]);
+pages=[{data:null,error:{message:'offline'}}];await assert.rejects(()=>api.readCloudPourings());
+rpcResponse={data:null,error:{message:'missing function'}};await assert.rejects(()=>api.checkPouringSaveReady());assert.equal(storage.size,1);
+await assert.rejects(()=>api.saveCloudPourings('m1',[],[draft]));assert(storage.has('foundry_pouring_draft_m1'));
+rpcResponse={data:null,error:{message:'POURING_CONFLICT'}};await assert.rejects(()=>api.saveCloudPourings('m1',[],[draft]),/其他人/);assert(storage.has('foundry_pouring_draft_m1'));
+rpcResponse={data:null,error:null};await assert.rejects(()=>api.saveCloudPourings('m1',[],[draft]),/回應不完整/);
+rpcResponse={data:normalized,error:null};assert.equal((await api.saveCloudPourings('m1',[],[draft])).length,1);assert(!storage.has('foundry_pouring_draft_m1'));assert.equal(storage.get('melt_pouring_m1'),'LEGACY_UNCHANGED');
+assert(rpcCalls>0);console.log('PASS: weight validation, partial batches, paging, read failure, readiness failure, conflict/recovery draft, malformed response, success, legacy preservation. Mock transport only.');

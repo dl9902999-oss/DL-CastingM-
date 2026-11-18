@@ -1,4 +1,12 @@
-import { Fragment, useState, useEffect, useMemo, useCallback } from 'react';
+import { useUnsavedChanges } from '@/hooks/useUnsavedChanges';
+import { saveReceipt } from '@/lib/receiptService';
+import { hasPendingSyncForTable } from '@/lib/pendingSyncGuard';
+import { sbGetRawMaterialReceipts, sbGetMeltRecords, sbGetMeltMaterials, sbGetMeltingRecords } from '@/lib/supabaseStore';
+import InventoryAdjustments from './InventoryAdjustments';
+import { dsGetSuppliers } from '@/lib/supplierService';
+import type { Supplier } from '@/lib/types';
+import { localDate } from '@/lib/meltingUtils';
+import { Fragment, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -187,6 +195,7 @@ interface ReceiptFormState {
   weight: string;
   unit_price: string;
   supplier: string;
+  supplier_id: string;
   lot_no: string;
   remark: string;
   created_by: string;
@@ -197,11 +206,12 @@ function emptyForm(materialOptions: string[]): ReceiptFormState {
   const spec: Record<string, string> = {};
   SPEC_ELEMENTS.forEach(el => { spec[el] = ''; });
   return {
-    receipt_date: new Date().toISOString().slice(0, 10),
+    receipt_date: localDate(),
     raw_material: materialOptions[0] || '',
     weight: '',
     unit_price: '',
     supplier: '',
+    supplier_id: '',
     lot_no: '',
     remark: '',
     created_by: '',
@@ -212,7 +222,7 @@ function emptyForm(materialOptions: string[]): ReceiptFormState {
 /** 取得本月第一天，作為日期區間預設起始 */
 function defaultStartDate(): string {
   const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+  return localDate(new Date(now.getFullYear(), now.getMonth(), 1));
 }
 
 function round(n: number, digits = 2): number {
@@ -386,34 +396,47 @@ export default function InventoryManager({
 }) {
   const { toast } = useToast();
   const [startDate, setStartDate] = useState(defaultStartDate());
-  const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState(localDate());
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [supplierError, setSupplierError] = useState('');
+  useEffect(() => { if (!open) return; let active = true; dsGetSuppliers().then(rows => { if(active) {setSuppliers(rows);setSupplierError('');} }).catch(() => {if(active) setSupplierError('廠商資料讀取失敗，請關閉後重新開啟。');}); return () => {active=false;}; },[open,syncTrigger]);
   const [receipts, setReceipts] = useState<RawMaterialReceipt[]>([]);
   const [meltRecords, setMeltRecords] = useState<MeltRecord[]>([]);
   const [meltMaterials, setMeltMaterials] = useState<MeltMaterial[]>([]);
   /** 澆注紀錄（含各爐殘湯重量），用於爐次殘湯統計 */
   const [pourRecords, setPourRecords] = useState<MeltingRecord[]>([]);
+  const [dataError, setDataError] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showReceiptForm, setShowReceiptForm] = useState(false);
+  const receiptUnsaved=useUnsavedChanges(showReceiptForm);
+  const receiptDraftId = useRef<string>(crypto.randomUUID());
+  const receiptSnapshot = useRef<RawMaterialReceipt | null>(null);
+  const submitting = useRef(false);
+  const [receiptStatus, setReceiptStatus] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ReceiptFormState>(() => emptyForm(materialOptions));
-  const [tab, setTab] = useState<'consumption' | 'receipts' | 'residual'>('consumption');
+  const [countDirty,setCountDirty]=useState(false);
+  const countGuard=useUnsavedChanges(false);
+  const confirmCount=async()=>!countDirty||await countGuard.confirmLeave(true);
+  const [tab, setTab] = useState<'consumption' | 'receipts' | 'residual' | 'adjustments'>('consumption');
   const [materialFilter, setMaterialFilter] = useState('');
 
   const loadData = useCallback(async () => {
-    setLoading(true);
+    setLoading(true); setDataError('');
     try {
       const [rs, records, mats, pours] = await Promise.all([
-        dsGetRawMaterialReceipts(),
-        dsGetMeltRecords(),
-        dsGetMeltMaterials(),
-        dsGetMeltingRecords(),
+        sbGetRawMaterialReceipts(),
+        sbGetMeltRecords(),
+        sbGetMeltMaterials(),
+        sbGetMeltingRecords(),
       ]);
       setReceipts(rs);
       setMeltRecords(records);
       setMeltMaterials(mats);
       setPourRecords(pours);
     } catch (err) {
+      setDataError('雲端資料未完整載入，已停止庫存計算，請重新讀取。');
       console.error('[InventoryManager] load failed:', err);
       toast({ title: '載入庫存資料失敗', description: '請確認網路連線後重試', variant: 'destructive' });
     } finally {
@@ -422,9 +445,9 @@ export default function InventoryManager({
   }, [toast]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || countDirty) return;
     loadData();
-  }, [open, syncTrigger, loadData]);
+  }, [open, syncTrigger, loadData, countDirty]);
 
   /** melt_id -> 熔解日期，用於投料統計的日期區間過濾 */
   const meltDateMap = useMemo(() => {
@@ -601,13 +624,17 @@ export default function InventoryManager({
     return [...set];
   }, [materialOptions, receipts]);
 
-  const openCreateForm = () => {
+  const openCreateForm = async () => {
+    if(!await confirmCount())return;
+    if(countDirty)setTab('receipts');
+    receiptDraftId.current=crypto.randomUUID(); receiptSnapshot.current=null; setReceiptStatus('');
     setEditingId(null);
     setForm(emptyForm(materialSelectOptions));
     setShowReceiptForm(true);
   };
 
   const openEditForm = (receipt: RawMaterialReceipt) => {
+    receiptDraftId.current=receipt.id; receiptSnapshot.current=receipt; setReceiptStatus('');
     const spec: Record<string, string> = {};
     SPEC_ELEMENTS.forEach(el => {
       const v = receipt.spec?.[el];
@@ -615,11 +642,12 @@ export default function InventoryManager({
     });
     setEditingId(receipt.id);
     setForm({
-      receipt_date: receipt.receipt_date || new Date().toISOString().slice(0, 10),
+      receipt_date: receipt.receipt_date || localDate(),
       raw_material: receipt.raw_material,
       weight: receipt.weight ? String(receipt.weight) : '',
       unit_price: receipt.unit_price ? String(receipt.unit_price) : '',
       supplier: receipt.supplier || '',
+      supplier_id: receipt.supplier_id || '',
       lot_no: receipt.lot_no || '',
       remark: receipt.remark || '',
       created_by: receipt.created_by || '',
@@ -629,12 +657,13 @@ export default function InventoryManager({
   };
 
   const handleSubmit = async () => {
+    if(submitting.current) return;
     if (!form.raw_material.trim()) {
       toast({ title: '請選擇或輸入原料名稱', variant: 'destructive' });
       return;
     }
     const weight = Number(form.weight);
-    if (!form.weight.trim() || Number.isNaN(weight) || weight <= 0) {
+    if (!form.weight.trim() || !Number.isFinite(weight) || weight <= 0) {
       toast({ title: '請輸入大於 0 的入庫重量', variant: 'destructive' });
       return;
     }
@@ -647,6 +676,9 @@ export default function InventoryManager({
       return;
     }
 
+    if (!Number.isFinite(Number(form.unit_price)) || Number(form.unit_price)<0) {toast({title:'單價須為大於或等於零的數值',variant:'destructive'});return;}
+    if(Object.values(form.spec).some(v=>v!=='' && (!Number.isFinite(Number(v))||Number(v)<0||Number(v)>100))) {toast({title:'成分須介於 0～100%',variant:'destructive'});return;}
+    if(Object.values(form.spec).reduce((sum,v)=>sum+Number(v||0),0)>100.001) {toast({title:'入庫成分合計不可超過 100%',variant:'destructive'});return;}
     const spec: Record<string, number> = {};
     SPEC_ELEMENTS.forEach(el => {
       const raw = form.spec[el];
@@ -662,49 +694,35 @@ export default function InventoryManager({
       weight,
       unit_price: Number(form.unit_price) || 0,
       supplier: form.supplier.trim(),
+      supplier_id: form.supplier_id || null,
       lot_no: form.lot_no.trim(),
       spec,
       remark: form.remark.trim(),
       created_by: form.created_by.trim(),
     };
 
-    setSaving(true);
+    submitting.current=true; setSaving(true); setReceiptStatus('正在儲存至雲端…');
     try {
-      if (editingId) {
-        await dsUpdateRawMaterialReceipt(editingId, payload);
-        toast({ title: '原料入庫紀錄已更新' });
-      } else {
-        await dsCreateRawMaterialReceipt(payload);
-        toast({ title: '原料入庫已新增' });
-      }
-      setShowReceiptForm(false);
-      setEditingId(null);
-      await loadData();
-      setTab('receipts');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('[InventoryManager] save failed:', err);
-      if (msg.includes('policy') || msg.includes('permission') || msg.includes('row-level security')) {
-        toast({ title: '權限不足，儲存失敗', description: '資料已暫存本地，連線恢復後將自動同步', variant: 'destructive' });
-      } else if (msg.includes('timeout') || msg.includes('network') || msg.includes('fetch')) {
-        toast({ title: '連線異常，資料已儲存至本地', description: '連線恢復後將自動同步', variant: 'destructive' });
-      } else {
-        toast({ title: '儲存失敗，請稍後再試', variant: 'destructive' });
-      }
-    } finally {
-      setSaving(false);
-    }
+      const saved=await saveReceipt(receiptDraftId.current,payload,receiptSnapshot.current);
+      receiptSnapshot.current=saved; receiptUnsaved.clearDirty();
+      setReceiptStatus('已同步至雲端');
+      toast({title:editingId?'原料入庫已更新並同步':'原料入庫已新增並同步'});
+      setShowReceiptForm(false);setEditingId(null);await loadData();setTab('receipts');
+    } catch(err) {
+      const message=err instanceof Error?err.message:'雲端未確認成功，請保留表單並重試。';
+      setReceiptStatus(message);toast({title:'入庫尚未確認儲存',description:message,variant:'destructive'});
+    } finally {submitting.current=false;setSaving(false);}
   };
 
   const handleDelete = async (receipt: RawMaterialReceipt) => {
     if (!window.confirm(`確定要刪除入庫紀錄 ${receipt.receipt_no} 嗎？`)) return;
     try {
-      await dsDeleteRawMaterialReceipt(receipt.id);
+      if (!await dsDeleteRawMaterialReceipt(receipt.id)) throw new Error('雲端未確認刪除成功');
       await loadData();
       toast({ title: '入庫紀錄已刪除' });
     } catch (err) {
       console.error('[InventoryManager] delete failed:', err);
-      toast({ title: '刪除失敗，請稍後再試', variant: 'destructive' });
+      toast({ title: '刪除未確認成功', description:err instanceof Error?err.message:'請重新讀取後再試', variant: 'destructive' });
     }
   };
 
@@ -721,7 +739,7 @@ export default function InventoryManager({
     if (isResidual) {
       headers = ['統計來源', '日期', '紀錄編號', '爐號', '材質／批次', '比例分母重量(kg)', '本爐殘湯重量(kg)', '殘湯率(%)'];
       body = [
-        ...residualExportRows(meltResidualRows, '熔解爐次（分母：總投料，不含前爐殘湯）'),
+        ...residualExportRows(meltResidualRows, '熔解爐次（明細分母含前爐殘湯；合計分母不含）'),
         ...residualExportRows(pourResidualRows, '批次澆注（分母：總出湯重）'),
       ];
     } else if (isConsumption) {
@@ -788,13 +806,14 @@ export default function InventoryManager({
     const end = new Date();
     const start = new Date();
     start.setDate(end.getDate() - days + 1);
-    setStartDate(start.toISOString().slice(0, 10));
-    setEndDate(end.toISOString().slice(0, 10));
+    setStartDate(localDate(start));
+    setEndDate(localDate(end));
   };
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={async v=>{if(v||await confirmCount())onOpenChange(v);}}>
+        {countGuard.dialog}
         <DialogContent className="bg-zinc-900 border-zinc-700 max-w-6xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-zinc-100 flex items-center gap-2">
@@ -821,14 +840,14 @@ export default function InventoryManager({
                       className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 h-9 text-xs">近7天</Button>
                     <Button onClick={() => setQuickRange(30)} variant="outline"
                       className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 h-9 text-xs">近30天</Button>
-                    <Button onClick={() => { setStartDate(defaultStartDate()); setEndDate(new Date().toISOString().slice(0, 10)); }}
+                    <Button onClick={() => { setStartDate(defaultStartDate()); setEndDate(localDate()); }}
                       variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 h-9 text-xs">本月</Button>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            {tab !== 'residual' && <div data-testid="inventory-summary" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {!loading && !dataError && tab !== 'residual' && tab !== 'adjustments' && <div data-testid="inventory-summary" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
               <Card className="bg-zinc-800 border-zinc-700">
                 <CardContent className="p-3">
                   <p className="text-xs text-zinc-400">總投料</p>
@@ -875,19 +894,20 @@ export default function InventoryManager({
 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <div className="flex gap-1">
-                <Button onClick={() => setTab('consumption')}
+                <Button onClick={async() => {if(await confirmCount())setTab('adjustments');}} variant={tab === 'adjustments' ? 'default' : 'secondary'} className="h-8 text-xs">盤點調整</Button>
+                <Button onClick={async() => {if(await confirmCount())setTab('consumption');}}
                   className={tab === 'consumption'
                     ? 'bg-amber-500 hover:bg-amber-600 text-zinc-900 h-8 text-xs'
                     : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 h-8 text-xs'}>
                   <BarChart3 className="w-3.5 h-3.5 mr-1" />投料統計
                 </Button>
-                <Button onClick={() => setTab('receipts')}
+                <Button onClick={async() => {if(await confirmCount())setTab('receipts');}}
                   className={tab === 'receipts'
                     ? 'bg-amber-500 hover:bg-amber-600 text-zinc-900 h-8 text-xs'
                     : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 h-8 text-xs'}>
                   <PackagePlus className="w-3.5 h-3.5 mr-1" />入庫紀錄
                 </Button>
-                <Button onClick={() => setTab('residual')}
+                <Button onClick={async() => {if(await confirmCount())setTab('residual');}}
                   className={tab === 'residual'
                     ? 'bg-violet-500 hover:bg-violet-600 text-white h-8 text-xs'
                     : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 h-8 text-xs'}>
@@ -895,7 +915,7 @@ export default function InventoryManager({
                 </Button>
               </div>
               <div className="flex gap-2">
-                <Button onClick={handleExport} variant="outline"
+                <Button onClick={handleExport} disabled={tab === 'adjustments'} variant="outline"
                   className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 h-8 text-xs">
                   <Download className="w-3.5 h-3.5 mr-1" />匯出
                 </Button>
@@ -909,7 +929,7 @@ export default function InventoryManager({
               <div className="py-10 text-center text-zinc-400 flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />載入中...
               </div>
-            ) : tab === 'consumption' ? (
+            ) : dataError ? <div role="alert" className="space-y-3 text-red-300"><p>{dataError}</p><Button onClick={loadData}>重新讀取</Button></div> : tab === 'adjustments' ? <InventoryAdjustments receipts={receipts} materials={meltMaterials} records={meltRecords} options={materialSelectOptions} startDate={startDate} endDate={endDate} onRefresh={loadData} onDirtyChange={setCountDirty} /> : tab === 'consumption' ? (
               <div className="space-y-4">
                 {consumptionRows.length === 0 ? (
                   <Card className="bg-zinc-800 border-zinc-700">
@@ -1094,13 +1114,15 @@ export default function InventoryManager({
       </Dialog>
 
       {/* 原料入庫新增／編輯表單 */}
-      <Dialog open={showReceiptForm} onOpenChange={v => { setShowReceiptForm(v); if (!v) setEditingId(null); }}>
+      <Dialog open={showReceiptForm} onOpenChange={async v => { if(saving || (!v&&!await receiptUnsaved.confirmLeave())) return; receiptUnsaved.clearDirty();setShowReceiptForm(v); if (!v) setEditingId(null); }}>
         <DialogContent className="bg-zinc-900 border-zinc-700 max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-zinc-100">{editingId ? '編輯原料入庫' : '新增原料入庫'}</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-3">
+          <p role="status" className="text-xs text-amber-300">{receiptStatus || (hasPendingSyncForTable('raw_material_receipts')?'有舊入庫資料待同步，請完成同步後再儲存。':'入庫需連線儲存；雲端確認成功後才計入庫存。')}</p>
+          {receiptUnsaved.dialog}
+          <fieldset disabled={saving} onChangeCapture={receiptUnsaved.markDirty} className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label className="text-zinc-400 text-xs">入庫日期 *</Label>
@@ -1140,9 +1162,13 @@ export default function InventoryManager({
               </div>
               <div>
                 <Label className="text-zinc-400 text-xs">供應商 *</Label>
-                <Input value={form.supplier} placeholder="供應商名稱"
-                  onChange={e => setForm({ ...form, supplier: e.target.value })}
-                  className="bg-zinc-800 border-zinc-700 text-zinc-100 h-9" />
+                <select aria-label="供應商" value={form.supplier_id} onChange={e => { const supplier=suppliers.find(s=>s.id===e.target.value); setForm({...form,supplier_id:e.target.value,supplier:supplier?.name || ''}); }} className="w-full rounded bg-zinc-800 border border-zinc-700 p-2 text-zinc-100 text-sm">
+                  <option value="">{form.supplier && !form.supplier_id ? `舊資料：${form.supplier}` : '請選擇廠商資料'}</option>
+                  {suppliers.filter(s=>s.status==='啟用' || s.id===form.supplier_id).map(s=><option key={s.id} value={s.id}>{s.supplier_no} · {s.name}{s.status==='停用'?'（停用）':''}</option>)}
+                </select>
+                {!supplierError && !suppliers.some(s=>s.status==='啟用') && <p className="text-xs text-amber-300">尚無啟用廠商，請先到左側「廠商資料」新增，再重新開啟此視窗。</p>}
+                {supplierError && <p role="alert" className="text-xs text-red-300">{supplierError}</p>}
+                <p className="text-xs text-zinc-500">選自廠商資料；舊入庫名稱保留，重新選擇後建立連結。</p>
               </div>
               <div>
                 <Label className="text-zinc-400 text-xs">供應商批號（可不填）</Label>
@@ -1182,7 +1208,7 @@ export default function InventoryManager({
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => { setShowReceiptForm(false); setEditingId(null); }}
+              <Button variant="outline" onClick={async() => { if(saving||!await receiptUnsaved.confirmLeave())return;receiptUnsaved.clearDirty();setShowReceiptForm(false); setEditingId(null); }}
                 className="border-zinc-600 text-zinc-300 hover:bg-zinc-700 h-9 text-xs">取消</Button>
               <Button onClick={handleSubmit} disabled={saving}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white h-9 text-xs">
@@ -1190,7 +1216,7 @@ export default function InventoryManager({
                 {editingId ? '儲存修改' : '確認入庫'}
               </Button>
             </div>
-          </div>
+          </fieldset>
         </DialogContent>
       </Dialog>
     </>

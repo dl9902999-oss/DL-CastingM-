@@ -7,6 +7,7 @@ export interface ResidualStatRow {
   furnaceNo: string;
   reference: string;
   baseWeight: number;
+  furnaceChargeWeight?: number;
   residualWeight: number;
   chargeWeight?: number;
   secondaryWeight?: number;
@@ -45,6 +46,7 @@ function buildResidualRows(records: MeltRecord[], materials: MeltMaterial[], sta
       id: record.id, date: record.melt_date, recordNo: record.melt_no,
       furnaceNo: record.furnace_no, reference: record.material_grade,
       baseWeight: roundResidual(entry?.base || 0),
+      ...(!previous ? { furnaceChargeWeight: roundResidual((entry?.base || 0) + (entry?.charge || 0) + (entry?.secondary || 0)) } : {}),
       residualWeight: roundResidual(previous ? (entry?.charge || 0) + (entry?.secondary || 0) : weight(record.residual_weight)),
       ...(previous ? { chargeWeight: roundResidual(entry?.charge || 0), secondaryWeight: roundResidual(entry?.secondary || 0) } : {}),
     };
@@ -82,7 +84,7 @@ export function summarizeResidual(rows: ResidualStatRow[]) {
 export function residualExportRows(rows: ResidualStatRow[], source: string): (string | number)[][] {
   const summary = summarizeResidual(rows);
   return [
-    ...rows.map(row => [source, row.date, row.recordNo, row.furnaceNo, row.reference, row.baseWeight, row.residualWeight, residualRate(row.residualWeight, row.baseWeight)]),
+    ...rows.map(row => [source, row.date, row.recordNo, row.furnaceNo, row.reference, row.furnaceChargeWeight ?? row.baseWeight, row.residualWeight, residualRate(row.residualWeight, row.furnaceChargeWeight ?? row.baseWeight)]),
     [source, '', '合計', '', '', summary.baseWeight, summary.residualWeight, summary.rate],
   ];
 }

@@ -156,29 +156,26 @@ const _bgSyncQueued = new Set<string>();
 const _editLockTables = new Set<string>();
 
 export async function beginEditTransaction(tables: string[]): Promise<void> {
-  const waitForChains = async () => {
-    // 等待既有背景同步任務結束（最多 3 秒），確保上鎖當下沒有在途的整表 upsert
-    const chains = tables.map(t => _bgSyncChains[t]).filter(p => p && typeof p.then === 'function');
-    if (chains.length > 0) {
-      await Promise.race([
-        Promise.allSettled(chains),
-        new Promise<void>(resolve => setTimeout(resolve, 3000)),
-      ]);
-    }
-  };
-  await waitForChains();
-  tables.forEach(t => _editLockTables.add(t));
-  // 雙重等待：第一次等待與上鎖之間若有新任務排入（並發寫入觸發），
-  // 鎖已生效會讓它在啟動時直接跳過；仍在執行的在途任務則由第二次等待收斂。
-  await waitForChains();
+  tables.forEach(table => _editLockTables.add(table));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const chains = tables.map(table => _bgSyncChains[table]).filter(Boolean);
+    await Promise.race([
+      Promise.allSettled(chains),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('背景同步尚未完成，本次尚未開始儲存，請稍後重試。')), 15000); }),
+    ]);
+  } catch (error) {
+    tables.forEach(table => _editLockTables.delete(table));
+    throw error;
+  } finally { if (timer) clearTimeout(timer); }
 }
 
-export function endEditTransaction(tables: string[]): void {
+export function endEditTransaction(tables: string[], upload = true): void {
   tables.forEach(t => {
     _editLockTables.delete(t);
     // 解鎖後補一次最終同步：以上傳當下的最新 localStorage 為準，
     // 墓碑／待同步刪除會在 bgSyncCollection 內部過濾，不會復活已刪列。
-    if (_bgSyncEnabled === true) {
+    if (upload && _bgSyncEnabled === true) {
       bgSyncCollection(t).catch(e => console.warn(`[Store] final bg sync ${t}:`, e));
     }
   });

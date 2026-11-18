@@ -11,11 +11,11 @@ export default function ResidualStatistics({ rows, source }: { rows: ResidualSta
   const title = isPrevious ? '前爐殘湯投料統計（獨立計算）' : isPour ? '批次澆注殘湯（獨立登錄）' : '爐次殘湯統計（本爐產生）';
   const baseLabel = isPour ? '總出湯重' : '總投料重（不含前爐殘湯）';
   const totalLabel = isPrevious ? '前爐殘湯投料合計' : isPour ? '澆注殘湯合計' : '本爐殘湯合計';
-  const rateLabel = isPrevious ? '前爐殘湯利用率' : isPour ? '澆注殘湯率' : '本爐殘湯率';
+  const rateLabel = isPrevious ? '前爐殘湯利用率' : isPour ? '澆注殘湯率' : '總殘湯率';
   const summary = summarizeResidual(rows);
   const chargeTotal = roundResidual(rows.reduce((sum, row) => sum + (row.chargeWeight || 0), 0));
   const secondaryTotal = roundResidual(rows.reduce((sum, row) => sum + (row.secondaryWeight || 0), 0));
-  const headers = ['日期', isPour ? '澆注編號' : '熔解編號', '爐號', isPour ? '批次' : '材質', `${baseLabel}(kg)`,
+  const headers = ['日期', isPour ? '澆注編號' : '熔解編號', '爐號', isPour ? '批次' : '材質', `${baseLabel}(kg)`, ...(!isPrevious && !isPour ? ['當爐投料總重(kg)'] : []),
     ...(isPrevious ? ['首次投料(kg)', '二次添加(kg)'] : []), isPrevious ? '前爐殘湯投料(kg)' : '殘湯重量(kg)', isPrevious ? rateLabel : '殘湯率'];
   return (
     <section data-testid={`residual-${source}`} className="space-y-3 rounded border border-violet-900/50 p-4 text-zinc-300">
@@ -31,7 +31,7 @@ export default function ResidualStatistics({ rows, source }: { rows: ResidualSta
         <div><dt>{totalLabel}</dt><dd className="mt-1 text-base text-violet-200" data-testid="residual-total">{summary.residualWeight} kg</dd></div>
         <div><dt>{rateLabel}</dt><dd className="mt-1 text-base text-violet-200">{summary.rate}%</dd></div>
       </dl>
-      <p className="text-xs text-zinc-400">{rateLabel} = {totalLabel} ÷ {baseLabel} × 100%；分母為 0 時顯示 0%。</p>
+      <p className="text-xs text-zinc-400">{rateLabel} = {totalLabel} ÷ {baseLabel} × 100%；分母為 0 時顯示 0%。{!isPrevious && !isPour && "明細當爐殘湯率使用當爐全部投料（含前爐殘湯）；合計使用區間總投料扣除前爐殘湯。預設區間為本月，可調整日期。"}</p>
       {!isPour && <Button type="button" variant="secondary" size="sm" aria-expanded={expanded} aria-controls={listId} onClick={() => setExpanded(value => !value)}>
         {expanded ? <ChevronUp className="mr-1 h-4 w-4" aria-hidden="true" /> : <ChevronDown className="mr-1 h-4 w-4" aria-hidden="true" />}
         {expanded ? '收折清單' : '展開清單'}（{rows.length} 筆）
@@ -46,10 +46,12 @@ export default function ResidualStatistics({ rows, source }: { rows: ResidualSta
               <tbody>{rows.map(row => <tr key={row.id} data-record-id={row.id} className="border-b border-zinc-700/50">
                 <td className="p-2">{row.date}</td><td className="p-2">{row.recordNo || '-'}</td><td className="p-2">{row.furnaceNo || '-'}</td><td className="p-2">{row.reference || '-'}</td>
                 <td className="p-2 text-right">{row.baseWeight}</td>
+                {!isPrevious && !isPour && <td className="p-2 text-right">{row.furnaceChargeWeight || 0}</td>}
                 {isPrevious && <><td className="p-2 text-right">{row.chargeWeight || 0}</td><td className="p-2 text-right">{row.secondaryWeight || 0}</td></>}
-                <td className="p-2 text-right text-violet-200">{row.residualWeight}</td><td className="p-2 text-right">{residualRate(row.residualWeight, row.baseWeight)}%</td>
+                <td className="p-2 text-right text-violet-200">{row.residualWeight}</td><td className="p-2 text-right">{residualRate(row.residualWeight, !isPrevious && !isPour ? row.furnaceChargeWeight || 0 : row.baseWeight)}%</td>
               </tr>)}</tbody>
               <tfoot className="bg-zinc-800 font-semibold"><tr><td colSpan={4} className="p-2">合計</td><td className="p-2 text-right">{summary.baseWeight}</td>
+                {!isPrevious && !isPour && <td className="p-2 text-right">{roundResidual(rows.reduce((sum,row) => sum + (row.furnaceChargeWeight || 0),0))}</td>}
                 {isPrevious && <><td className="p-2 text-right">{chargeTotal}</td><td className="p-2 text-right">{secondaryTotal}</td></>}
                 <td className="p-2 text-right text-violet-200">{summary.residualWeight}</td><td className="p-2 text-right">{summary.rate}%</td></tr></tfoot>
             </table>

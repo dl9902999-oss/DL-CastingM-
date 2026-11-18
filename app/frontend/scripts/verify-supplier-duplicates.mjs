@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+const exports={};new Function('exports',ts.transpileModule(readFileSync('src/lib/supplierDuplicates.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(exports);
+const rows=[{id:'a',name:'東隆國際股份有限公司',short_name:'東隆',phone:'03-9902999',email:'test@example.com',address:'宜蘭縣冬山鄉德興九路1號',status:'停用'}];
+assert.equal(exports.findDuplicateSuppliers(rows,{name:'東 隆',short_name:''}).length,1);
+assert.equal(exports.findPossibleDuplicateSuppliers(rows,{name:'東隆國際有限公司'})[0].reasons[0],'名稱相近');
+assert.ok(exports.findPossibleDuplicateSuppliers(rows,{phone:'+886 3 9902999'})[0].reasons.includes('電話或手機相同'));
+assert.equal(exports.findPossibleDuplicateSuppliers(rows,{}).length,0);
+assert.equal(exports.findPossibleDuplicateSuppliers(rows,{name:'東隆'},'a').length,0);
+assert.equal(exports.findPossibleDuplicateSuppliers(rows,{name:'西隆企業',phone:'0'}).length,0);
+assert.ok(exports.findPossibleDuplicateSuppliers(rows,{email:'TEST@example.com'})[0].reasons.includes('電子郵件相同'));
+console.log('PASS: exact names, similar legal names, international phones, blanks, self-exclusion, inactive suppliers and email.');

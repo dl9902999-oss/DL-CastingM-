@@ -1,0 +1,31 @@
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+import assert from 'node:assert/strict';
+const load=(path,env={})=>{const src=readFileSync(path,'utf8').replace(/^import .*;\r?\n/gm,'');const js=ts.transpileModule(src,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;const exports={};new Function('exports',...Object.keys(env),js)(exports,...Object.values(env));return exports;};
+const {validateMeltInput,furnaceFromNumber}=load('src/lib/meltValidation.ts');
+const r={melt_date:'2026-11-16',furnace_no:'2-1',power_start_time:'23:30',tap_time:'01:15',power_kwh:100,tap_temp:1500,residual_weight:10};
+const mats=[{raw_material:'生鐵',charge_weight:100,secondary_weight:0}];
+const valid=(patch={},body=2,chem={},range={})=>validateMeltInput({...r,...patch},body,mats,chem,range);
+assert.equal(furnaceFromNumber('3-2'),3);
+assert.equal(valid().errors.length,0);
+for(const patch of [{power_start_time:''},{tap_time:'23:30'},{power_kwh:-1},{tap_temp:Infinity},{residual_weight:-1}]) assert.ok(valid(patch).errors.length);
+assert.ok(valid({},1).errors.length);
+assert.ok(valid({},2,{IN_FURNACE:{C:70,Si:40}}).errors.length);
+assert.ok(valid({},2,{}, {C_min:4,C_max:2}).errors.length);
+assert.equal(valid({residual_weight:101}).warnings.length,1);
+assert.equal(valid({residual_weight:101}).errors.length,0);
+let result={data:null,error:null},calls=0,writes=0,pending=false,online=true;
+const service=load('src/lib/receiptService.ts',{supabase:{rpc:async()=>{calls++;return result;}},hasPendingSyncForTable:()=>pending,markRecentWrite:()=>{},navigator:{get onLine(){return online;}},localStorage:{getItem:()=> '[]',setItem:()=>writes++}});
+result={data:null,error:{message:'RECEIPT_CONFLICT'}};await assert.rejects(()=>service.saveReceipt('id',{},null),/修改或刪除/);assert.equal(writes,0);
+online=false;await assert.rejects(()=>service.saveReceipt('id',{},null),/離線/);assert.equal(calls,1);
+online=true;pending=true;await assert.rejects(()=>service.saveReceipt('id',{},null),/待同步/);assert.equal(calls,1);
+pending=false;result={data:{id:'wrong',receipt_no:'1'},error:null};await assert.rejects(()=>service.saveReceipt('id',{},null),/不完整/);assert.equal(writes,0);
+result={data:{id:'id',receipt_no:'1'},error:null};await service.saveReceipt('id',{},null);assert.equal(writes,1);
+const source=readFileSync('src/lib/supabaseStore.ts','utf8');
+for(const name of ['sbDeleteMeltRecord','sbDeleteRawMaterialReceipt']) {
+ const f=source.match(new RegExp(`export async function ${name}\\(id: string\\): Promise<boolean> \\{[\\s\\S]*?\\n\\}`))[0];
+ const js=ts.transpileModule(f,{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText;const exports={};let answer={data:null,error:{message:'denied'}};
+ new Function('exports','supabase',js)(exports,{from:()=>({delete:()=>({eq:()=>({select:()=>({single:async()=>answer})})})})});
+ await assert.rejects(()=>exports[name]('id')); answer={data:null,error:null};await assert.rejects(()=>exports[name]('id')); answer={data:{id:'id'},error:null};assert.equal(await exports[name]('id'),true);
+}
+console.log('PASS: furnace matching, overnight/missing times, numeric and chemistry validation, residual warning, offline/pending/conflict receipt failures, confirmed cache only, failed/zero-row/successful deletes. Mock transport.');

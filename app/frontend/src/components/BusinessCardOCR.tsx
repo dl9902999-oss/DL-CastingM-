@@ -4,233 +4,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useToast } from '@/hooks/use-toast';
 import { Camera, Upload, Loader2, ScanLine, X } from 'lucide-react';
 import Tesseract from 'tesseract.js';
+import { recognizeCloudCard } from '@/lib/businessCardCloud';
 
-interface OCRResult {
-  company_name: string;
-  short_name: string;
-  contact_name: string;
-  contact_title: string;
-  phone: string;
-  mobile: string;
-  fax: string;
-  email: string;
-  address: string;
-  website: string;
-}
+import { cardFields, parseBusinessCard, type OCRResult } from '@/lib/businessCard';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
-interface BusinessCardOCRProps {
-  onResult: (data: OCRResult) => void;
-}
-
-// 智能解析名片文字
-function parseBusinessCard(text: string): OCRResult {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-
-  const result: OCRResult = {
-    company_name: '',
-    short_name: '',
-    contact_name: '',
-    contact_title: '',
-    phone: '',
-    mobile: '',
-    fax: '',
-    email: '',
-    address: '',
-    website: '',
-  };
-
-  // Email pattern
-  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
-  // Phone patterns (Taiwan style)
-  const phoneRegex = /(?:TEL|Tel|tel|電話|Phone|phone|T)[：:\s]*([(\d)\s+-]+[\d-]+)/;
-  const faxRegex = /(?:FAX|Fax|fax|傳真|F)[：:\s]*([(\d)\s+-]+[\d-]+)/;
-  const mobileRegex = /(?:手機|行動|Mobile|mobile|M|Cell|cell)[：:\s]*(09[\d\s-]+)/;
-  // Generic phone number (Taiwan landline or mobile)
-  const genericPhoneRegex = /(\+?886[\s-]?\d[\s-]?[\d\s-]{7,}|0[2-9][\s-]?[\d\s-]{7,}|09\d{2}[\s-]?\d{3}[\s-]?\d{3})/;
-  // Website
-  const websiteRegex = /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}(?:\/\S*)?/;
-  // Address patterns (Taiwan)
-  const addressRegex = /(?:地址|Address|ADD|add)[：:\s]*(.*)/;
-  const addressPatternTW = /.{2,3}[市縣].{1,3}[區鄉鎮市].{2,}[路街道巷弄號樓]/;
-  // Title patterns
-  const titleKeywords = ['總經理', '副總', '經理', '協理', '主任', '課長', '組長', '專員', '業務', '工程師', 'Manager', 'Director', 'CEO', 'CTO', 'VP', 'President', 'Engineer', 'Supervisor', 'Sales', 'General Manager', '董事長', '總監', '處長', '廠長', '副廠長'];
-
-  const usedLines = new Set<number>();
-
-  // 1. Extract email
-  for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(emailRegex);
-    if (match) {
-      result.email = match[0];
-      usedLines.add(i);
-      break;
-    }
-  }
-
-  // 2. Extract phone
-  for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(phoneRegex);
-    if (match) {
-      result.phone = match[1].replace(/\s+/g, '').trim();
-      usedLines.add(i);
-      break;
-    }
-  }
-
-  // 3. Extract fax
-  for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(faxRegex);
-    if (match) {
-      result.fax = match[1].replace(/\s+/g, '').trim();
-      usedLines.add(i);
-      break;
-    }
-  }
-
-  // 4. Extract mobile
-  for (let i = 0; i < lines.length; i++) {
-    if (usedLines.has(i)) continue;
-    const match = lines[i].match(mobileRegex);
-    if (match) {
-      result.mobile = match[1].replace(/[\s-]/g, '').trim();
-      usedLines.add(i);
-      break;
-    }
-  }
-
-  // If no labeled mobile found, look for 09xx pattern
-  if (!result.mobile) {
-    for (let i = 0; i < lines.length; i++) {
-      if (usedLines.has(i)) continue;
-      const match = lines[i].match(/09\d{2}[\s-]?\d{3}[\s-]?\d{3}/);
-      if (match) {
-        result.mobile = match[0].replace(/[\s-]/g, '');
-        usedLines.add(i);
-        break;
-      }
-    }
-  }
-
-  // If no labeled phone found, look for generic landline
-  if (!result.phone) {
-    for (let i = 0; i < lines.length; i++) {
-      if (usedLines.has(i)) continue;
-      const match = lines[i].match(/0[2-9][\s-]?[\d\s-]{7,}/);
-      if (match && !match[0].startsWith('09')) {
-        result.phone = match[0].replace(/\s+/g, '').trim();
-        usedLines.add(i);
-        break;
-      }
-    }
-  }
-
-  // 5. Extract website
-  for (let i = 0; i < lines.length; i++) {
-    if (usedLines.has(i)) continue;
-    const line = lines[i];
-    // Skip email lines
-    if (emailRegex.test(line) && !line.includes('www') && !line.includes('http')) continue;
-    const match = line.match(websiteRegex);
-    if (match && !match[0].includes('@')) {
-      result.website = match[0];
-      usedLines.add(i);
-      break;
-    }
-  }
-
-  // 6. Extract address
-  for (let i = 0; i < lines.length; i++) {
-    if (usedLines.has(i)) continue;
-    const addrMatch = lines[i].match(addressRegex);
-    if (addrMatch) {
-      result.address = addrMatch[1].trim();
-      usedLines.add(i);
-      break;
-    }
-  }
-  if (!result.address) {
-    for (let i = 0; i < lines.length; i++) {
-      if (usedLines.has(i)) continue;
-      if (addressPatternTW.test(lines[i])) {
-        result.address = lines[i].replace(/^(?:地址|Address|ADD|add)[：:\s]*/, '').trim();
-        usedLines.add(i);
-        break;
-      }
-    }
-  }
-
-  // 7. Extract title
-  for (let i = 0; i < lines.length; i++) {
-    if (usedLines.has(i)) continue;
-    for (const title of titleKeywords) {
-      if (lines[i].includes(title)) {
-        result.contact_title = lines[i].trim();
-        usedLines.add(i);
-        break;
-      }
-    }
-    if (result.contact_title) break;
-  }
-
-  // 8. Extract company name (usually the first or second line, longest CJK text)
-  const cjkLines: { idx: number; text: string; len: number }[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (usedLines.has(i)) continue;
-    const cjkCount = (lines[i].match(/[\u4e00-\u9fff]/g) || []).length;
-    if (cjkCount >= 3) {
-      cjkLines.push({ idx: i, text: lines[i], len: cjkCount });
-    }
-  }
-
-  // Company name heuristic: contains 公司/企業/有限/股份/工業/科技/集團 etc.
-  const companyKeywords = ['公司', '企業', '有限', '股份', '工業', '科技', '集團', '工廠', '實業', 'Corp', 'Inc', 'Ltd', 'Co.', 'Company'];
-  for (const cl of cjkLines) {
-    for (const kw of companyKeywords) {
-      if (cl.text.includes(kw)) {
-        result.company_name = cl.text.trim();
-        usedLines.add(cl.idx);
-        break;
-      }
-    }
-    if (result.company_name) break;
-  }
-
-  // If no company keyword found, use the longest CJK line from top 3 lines
-  if (!result.company_name && cjkLines.length > 0) {
-    const topLines = cjkLines.filter(l => l.idx < 3).sort((a, b) => b.len - a.len);
-    if (topLines.length > 0) {
-      result.company_name = topLines[0].text.trim();
-      usedLines.add(topLines[0].idx);
-    }
-  }
-
-  // 9. Extract contact name (CJK name, typically 2-4 characters, not company/title)
-  const nameRegex = /^[\u4e00-\u9fff]{2,4}$/;
-  for (let i = 0; i < lines.length; i++) {
-    if (usedLines.has(i)) continue;
-    const cleaned = lines[i].replace(/\s/g, '');
-    if (nameRegex.test(cleaned)) {
-      result.contact_name = cleaned;
-      usedLines.add(i);
-      break;
-    }
-  }
-
-  // If no pure CJK name found, look for name patterns
-  if (!result.contact_name) {
-    for (let i = 0; i < lines.length; i++) {
-      if (usedLines.has(i)) continue;
-      const nameMatch = lines[i].match(/^([\u4e00-\u9fff]{2,4})\s/);
-      if (nameMatch) {
-        result.contact_name = nameMatch[1];
-        usedLines.add(i);
-        break;
-      }
-    }
-  }
-
-  return result;
-}
+interface BusinessCardOCRProps { onResult: (data: OCRResult) => void; }
 
 export default function BusinessCardOCR({ onResult }: BusinessCardOCRProps) {
   const { toast } = useToast();
@@ -238,6 +18,10 @@ export default function BusinessCardOCR({ onResult }: BusinessCardOCRProps) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [preview, setPreview] = useState<string | null>(null);
+  const [rawText, setRawText] = useState('');
+  const [draft, setDraft] = useState<OCRResult | null>(null);
+  const [mode, setMode] = useState<'cloud' | 'local'>('cloud');
+  const [rotation, setRotation] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
@@ -259,6 +43,9 @@ export default function BusinessCardOCR({ onResult }: BusinessCardOCRProps) {
     reader.onload = (ev) => {
       const dataUrl = ev.target?.result as string;
       setPreview(dataUrl);
+      setDraft(null);
+      setRawText('');
+      setRotation(0);
     };
     reader.readAsDataURL(file);
   };
@@ -269,8 +56,32 @@ export default function BusinessCardOCR({ onResult }: BusinessCardOCRProps) {
     setIsProcessing(true);
     setProgress(0);
 
+    let worker: Awaited<ReturnType<typeof Tesseract.createWorker>> | undefined;
     try {
-      const result = await Tesseract.recognize(preview, 'chi_tra+eng', {
+      const image = new Image();
+      image.src = preview;
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(2, 2400 / Math.max(image.width, image.height));
+      const width = Math.round(image.width * scale), height = Math.round(image.height * scale);
+      canvas.width = rotation % 180 ? height : width;
+      canvas.height = rotation % 180 ? width : height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('無法處理圖片，請重新選擇');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(rotation * Math.PI / 180);
+      ctx.drawImage(image, -width / 2, -height / 2, width, height);
+      if (mode === 'cloud') {
+        setProgress(30);
+        const parsed = await recognizeCloudCard(canvas.toDataURL('image/jpeg', 0.92));
+        setDraft(parsed);
+        setRawText('');
+        toast({ title: 'AI 辨識完成', description: '請對照原圖核對所有欄位，尤其是姓名與號碼' });
+        return;
+      }
+      worker = await Tesseract.createWorker('chi_tra+eng', Tesseract.OEM.LSTM_ONLY, {
         logger: (m) => {
           if (m.status === 'recognizing text') {
             setProgress(Math.round((m.progress || 0) * 100));
@@ -278,6 +89,8 @@ export default function BusinessCardOCR({ onResult }: BusinessCardOCRProps) {
         },
       });
 
+      await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT, preserve_interword_spaces: '1' });
+      const result = await worker.recognize(canvas, { rotateAuto: true });
       const text = result.data.text;
 
       if (!text || text.trim().length < 5) {
@@ -286,21 +99,24 @@ export default function BusinessCardOCR({ onResult }: BusinessCardOCRProps) {
       }
 
       const parsed = parseBusinessCard(text);
-      onResult(parsed);
-      toast({ title: '辨識完成', description: '名片資訊已自動填入表單，請確認並修正' });
-      setIsOpen(false);
-      setPreview(null);
+      setRawText(text);
+      setDraft(parsed);
+      toast({ title: '辨識完成', description: '請對照名片核對下方欄位，再確認填入' });
     } catch (err) {
       const message = err instanceof Error ? err.message : '辨識過程發生錯誤';
       toast({ title: '辨識失敗', description: message, variant: 'destructive' });
     } finally {
+      if (worker) await worker.terminate().catch(() => undefined);
       setIsProcessing(false);
       setProgress(0);
     }
-  }, [preview, onResult, toast]);
+  }, [preview, rotation, mode, toast]);
 
   const resetState = () => {
     setPreview(null);
+    setDraft(null);
+    setRawText('');
+    setRotation(0);
     setIsProcessing(false);
     setProgress(0);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -321,19 +137,25 @@ export default function BusinessCardOCR({ onResult }: BusinessCardOCRProps) {
       </Button>
 
       <Dialog open={isOpen} onOpenChange={(open) => { if (!isProcessing) { setIsOpen(open); if (!open) resetState(); } }}>
-        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-md">
+        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-amber-400 flex items-center gap-2">
               <ScanLine className="w-5 h-5" />
-              名片辨識（免費 · 無需 API Key）
+              名片辨識
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
+            <label className="block text-sm text-zinc-300">辨識方式
+              <select aria-label="辨識方式" value={mode} disabled={isProcessing} onChange={e => { setMode(e.target.value as 'cloud' | 'local'); setDraft(null); setRawText(''); }} className="mt-1 w-full rounded border border-zinc-600 bg-zinc-800 p-2">
+                <option value="cloud">雲端 AI 辨識</option><option value="local">本機文字辨識</option>
+              </select>
+            </label>
+            <p className="text-xs text-zinc-400">{mode === 'cloud' ? '開始辨識後，名片照片會經 Supabase 傳送至 Google AI，可能產生用量費用；核對後才填入表單。' : '照片在此瀏覽器內辨識，不傳送至 AI 服務。'}</p>
             {!preview ? (
               <div className="space-y-3">
                 <p className="text-sm text-zinc-400">
-                  拍攝或上傳名片照片，系統將在瀏覽器端辨識文字並自動填入客戶資料
+                  拍攝或上傳名片照片，系統會辨識文字，核對後再填入客戶資料
                 </p>
                 <p className="text-xs text-zinc-500">
                   💡 提示：照片越清晰、文字越正面，辨識效果越好
@@ -388,7 +210,8 @@ export default function BusinessCardOCR({ onResult }: BusinessCardOCRProps) {
                   <img
                     src={preview}
                     alt="名片預覽"
-                    className="w-full h-auto max-h-64 object-contain bg-zinc-800"
+                    className="w-full h-64 object-contain bg-zinc-800"
+                    style={{ transform: `rotate(${rotation}deg)`, padding: rotation % 180 ? '48px' : undefined }}
                   />
                   {!isProcessing && (
                     <Button
@@ -403,6 +226,20 @@ export default function BusinessCardOCR({ onResult }: BusinessCardOCRProps) {
                   )}
                 </div>
 
+                <Button type="button" variant="outline" disabled={isProcessing} onClick={() => { setRotation(value => (value + 90) % 360); setDraft(null); }}>向右旋轉 90°</Button>
+                {draft && <div className="space-y-3">
+                  <p className="text-sm text-amber-300">請核對姓名、電話及公司名稱；未辨識到的欄位會留白。</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {(Object.keys(cardFields) as (keyof OCRResult)[]).map(key => <label key={key} className="text-sm text-zinc-300">{cardFields[key]}
+                      <Input value={draft[key]} disabled={isProcessing} onChange={e => setDraft({ ...draft, [key]: e.target.value })} className="mt-1 bg-zinc-800 border-zinc-600" />
+                    </label>)}
+                  </div>
+                  {rawText && <details><summary className="text-sm text-zinc-400 cursor-pointer">查看／修正辨識原文</summary>
+                    <Textarea aria-label="辨識原文" value={rawText} disabled={isProcessing} onChange={e => setRawText(e.target.value)} className="mt-2 min-h-32" />
+                    <Button type="button" variant="outline" disabled={isProcessing} onClick={() => setDraft(parseBusinessCard(rawText))}>依原文重新解析欄位</Button>
+                  </details>}
+                  <Button type="button" disabled={isProcessing || !Object.values(draft).some(value => value.trim())} onClick={() => { onResult(draft); setIsOpen(false); resetState(); }} className="w-full bg-amber-600 hover:bg-amber-500">確認並填入客戶表單</Button>
+                </div>}
                 {/* Progress bar */}
                 {isProcessing && (
                   <div className="space-y-1">
@@ -413,7 +250,7 @@ export default function BusinessCardOCR({ onResult }: BusinessCardOCRProps) {
                       />
                     </div>
                     <p className="text-xs text-center text-zinc-400">
-                      辨識進度：{progress}%
+                      {mode === 'cloud' ? 'AI 正在讀取名片，請稍候…' : `辨識進度：${progress}%`}
                     </p>
                   </div>
                 )}
@@ -449,7 +286,7 @@ export default function BusinessCardOCR({ onResult }: BusinessCardOCRProps) {
                   </Button>
                 </div>
 
-                {isProcessing && (
+                {isProcessing && mode === 'local' && (
                   <p className="text-xs text-center text-zinc-500">
                     首次使用需下載語言包（約 10MB），之後會快很多...
                   </p>

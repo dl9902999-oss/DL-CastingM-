@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
+const load = (path, require = () => {}) => { const exports = {}; new Function('exports','require',ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(exports,require); return exports; };
+const fields=load('src/lib/businessCard.ts');
+let reply;
+const api=load('src/lib/businessCardCloud.ts',name=>name==='./businessCard'?fields:{hasSupabaseConfig:()=>true,supabase:{functions:{invoke:async()=>reply}}});
+assert.throws(()=>api.validateCloudCard({phone:123}));
+assert.throws(()=>api.validateCloudCard({}));
+assert.equal(api.validateCloudCard({company_name:' Test ',tax_id:'86201322'}).company_name,'Test');
+reply={data:null,error:{context:new Response(JSON.stringify({error:'GOOGLE_AI_API_KEY not configured'}))}};
+await assert.rejects(api.recognizeCloudCard('data:image/jpeg;base64,AAAA'),/尚未設定金鑰/);
+reply={data:{success:true,data:{company_name:'測試公司',tax_id:'86201322'}},error:null};
+assert.equal((await api.recognizeCloudCard('data:image/jpeg;base64,AAAA')).tax_id,'86201322');
+console.log('PASS: cloud response validation, missing key feedback, reviewed fields.');

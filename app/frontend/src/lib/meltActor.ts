@@ -1,0 +1,1 @@
+export function meltActor() { try { const u=JSON.parse(localStorage.getItem('foundry_current_user')||'null'); return u?.employee_id ? `${u.employee_id} ${u.name||''}`.trim() : '未提供登入者'; } catch { return '未提供登入者'; } }

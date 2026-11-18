@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { UserProfile } from '@/lib/types';
 import { getCurrentUser, login as storeLogin, logout as storeLogout, initDemoUsers } from '@/lib/store';
 import { dsLogin } from '@/lib/dataService';
-import { useDataConnection } from './DataContext';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -16,7 +15,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const { lastSyncTime } = useDataConnection();
 
   useEffect(() => {
     // Ensure demo users exist after every sync event
@@ -24,7 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const currentUser = getCurrentUser();
     setUser(currentUser);
     setIsLoading(false);
-  }, [lastSyncTime]);
+  }, []);
 
   const login = async (employeeId: string, password: string): Promise<{ success: boolean; error?: string }> => {
     // Ensure demo users exist before attempting login

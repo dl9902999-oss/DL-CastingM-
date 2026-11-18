@@ -1,5 +1,6 @@
 import { ReactNode, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { canAccessPage } from '@/lib/pageAccess';
 import { useDataConnection } from '@/contexts/DataContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -34,6 +35,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { label: '總覽', path: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, roles: ['Admin', 'Production', 'QC', 'Warehouse'] },
   { label: '客戶資料', path: '/customers', icon: <Users className="w-5 h-5" />, roles: ['Admin', 'Production'] },
+  { label: '廠商資料', path: '/suppliers', icon: <Factory className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '工單管理', path: '/work-orders', icon: <ClipboardList className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '開工造模', path: '/molding', icon: <Layers className="w-5 h-5" />, roles: ['Admin', 'Production'] },
   { label: '熔解管理', path: '/melting-management', icon: <Flame className="w-5 h-5" />, roles: ['Admin', 'Production'] },
@@ -64,14 +66,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     }
   };
 
-  const filteredNavItems = navItems.filter(item => {
-    if (!user) return false;
-    // Use permissions array if available, otherwise fall back to role-based
-    if (user.permissions && user.permissions.length > 0) {
-      return user.permissions.includes(item.path);
-    }
-    return item.roles.includes(user.role);
-  });
+  const filteredNavItems = navItems.filter(item => canAccessPage(user, item.path));
 
   const NavContent = () => (
     <div className="flex flex-col h-full">

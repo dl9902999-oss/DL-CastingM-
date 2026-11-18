@@ -1,0 +1,11 @@
+import { useEffect,useState } from 'react';
+import { readMeltAudit,type MeltAudit } from '@/lib/meltOperations';
+import { Button } from '@/components/ui/button';
+const names:Record<string,string>={melt_no:'熔解編號',melt_date:'日期',power_kwh:'耗電 kWh',tap_temp:'出爐溫度',residual_weight:'殘湯 kg',remark:'備註',raw_material:'原料',charge_weight:'投料 kg',secondary_weight:'追加 kg',material_grade:'材質',power_start_time:'開始送電',tap_time:'出湯時間',created_by:'原登錄人',target_range:'目標成分',archived_bundle:'作廢完整紀錄（含明細）'};
+const display=(v:unknown)=>v==null?'—':typeof v==='object'?JSON.stringify(v):String(v);
+export default function MeltHistory(){
+ const [rows,setRows]=useState<MeltAudit[]>([]),[error,setError]=useState(''),[query,setQuery]=useState(''),[loading,setLoading]=useState(true);
+ const load=async()=>{setLoading(true);try{setRows(await readMeltAudit());setError('');}catch{setError('歷程讀取失敗，請重試');}finally{setLoading(false);}};
+ useEffect(()=>{void load();},[]);
+ return <section className="space-y-3 text-zinc-200"><h3>修改與作廢歷程</h3><p className="text-xs text-zinc-400">啟用後開始記錄；舊資料不補造歷程。操作人來自目前登入資訊；舊版直接寫入會註明未提供登入者。作廢紀錄保留於此，不列入有效生產與庫存統計。</p><input aria-label="搜尋歷程" placeholder="搜尋熔解編號／操作人" className="bg-zinc-800 p-2" value={query} onChange={e=>setQuery(e.target.value)}/><Button onClick={load}>重新讀取</Button>{loading?<p>載入中…</p>:error?<p role="alert">{error}</p>:rows.filter(r=>`${r.melt_no} ${r.actor}`.includes(query)).map(r=><details key={r.id} className="border border-zinc-700 p-2"><summary>{new Date(r.created_at).toLocaleString('zh-TW')} · {r.melt_no||r.melt_id} · {r.reason?.startsWith('作廢：')?'作廢':r.action.endsWith('INSERT')?'新增':r.action.endsWith('DELETE')?'移除明細':'修改'} · {r.actor}</summary>{r.reason&&<p>{r.reason}</p>}<table className="w-full text-xs table-fixed"><thead><tr><th>欄位</th><th>修改前</th><th>修改後</th></tr></thead><tbody>{[...new Set([...Object.keys(r.before_data||{}),...Object.keys(r.after_data||{})])].filter(k=>!['id','melt_id','updated_at'].includes(k)&&JSON.stringify(r.before_data?.[k])!==JSON.stringify(r.after_data?.[k])).map(k=><tr key={k}><td>{names[k]||k}</td><td className="break-all whitespace-pre-wrap">{display(r.before_data?.[k])}</td><td className="break-all whitespace-pre-wrap">{display(r.after_data?.[k])}</td></tr>)}</tbody></table></details>)}{!loading&&!error&&!rows.length&&<p>尚無修改歷程。</p>}</section>;
+}

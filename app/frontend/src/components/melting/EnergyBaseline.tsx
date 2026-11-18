@@ -55,6 +55,7 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
   const filteredPoints = useMemo(() => points.filter(r =>
     (!dateRange.start || r.melt_date >= dateRange.start) && (!dateRange.end || r.melt_date <= dateRange.end)), [points, dateRange]);
   const groups = [1,2].map(body => filteredPoints.filter(r => furnaceBody(r) === body));
+  const furnaceThree = filteredPoints.filter(r => furnaceBody(r) === 3);
   const plotted = groups.flat().sort(compareMelts);
   const average = mean(plotted);
   const extent = useMemo(() => {
@@ -75,7 +76,8 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
   const energyMax = Math.max(1, ...plotted.map(r => r.energy)) * 1.1;
   const moveWindow = (next: number) => setWindowOffset(Math.max(0, Math.min(maxOffset, next)));
   const stopDragging = () => { drag.current = null; setDragging(false); };
-  useEffect(() => { setWindowOffset(0); }, [extent[0], extent[1]]);
+  const [extentStart, extentEnd] = extent;
+  useEffect(() => { setWindowOffset(0); }, [extentStart, extentEnd]);
   const shown = plotted.slice(page * 30, (page + 1) * 30);
   return <section className="space-y-5 text-zinc-200" data-testid="energy-baseline">
     <div className="flex flex-wrap gap-4 items-end">
@@ -160,7 +162,7 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
           <XAxis type="number" dataKey="date" name="日期" domain={[windowStart - day / 2, windowEnd + day / 2]} allowDataOverflow ticks={dates} tickFormatter={dateLabel} minTickGap={24} stroke="#a1a1aa" fontSize={11} />
           <YAxis type="number" dataKey="energy" name="能耗" domain={[0, energyMax]} stroke="#a1a1aa" fontSize={11} width={48} />
           <Tooltip content={<PointTooltip />} /><Legend />
-          {visibleGroups.map((rows,index) => <Scatter key={index} name={`${index+1}號爐體（非第一爐）`} data={rows.filter(r => !isFirst(r))} fill={colors[index]} isAnimationActive={false} />)}
+          {visibleGroups.map((rows,index) => <Scatter key={index} name={`${index+1}號爐體趨勢`} line={{ stroke: colors[index], strokeWidth: 2 }} data={[...rows].sort((a,b) => a.date-b.date || (a.daily_sequence || 0)-(b.daily_sequence || 0))} fill={colors[index]} isAnimationActive={false} />)}
           <Scatter name={mode === 'daily' ? '第一爐（各爐體每日第一批）' : '第一爐（重新築爐後第001批）'} data={visibleGroups.flat().filter(isFirst)} fill="#ef4444" isAnimationActive={false} />
           {groups.map((rows,index) => { const avg = mean(rows.filter(isFirst)); return avg == null ? null : <ReferenceLine key={index} y={avg} stroke={colors[index]} strokeDasharray="5 5" label={{ value: `${index+1}號第一批均 ${avg.toFixed(3)}`,fill: colors[index],fontSize:10,position:index ? 'insideBottomRight':'insideTopRight' }} />; })}
         </ScatterChart>
@@ -172,7 +174,7 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
       </label>
       <p className="mb-3 text-xs text-zinc-400">左右拖曳圖表或滑桿查看其他日期，每次最多顯示{windowDays}個日曆天（含無資料日期），可切換一個月、雙週或單週；不足所選天數時顯示全部日期。聚焦圖表後亦可用左右方向鍵。上方統計、平均基線與下方明細維持完整篩選範圍。</p>
       </>}
-      <p className="text-xs text-zinc-400">每一點代表一批；同日期共用X座標，依實際能耗上下排列。相同日期且能耗相同的點會重疊，全部批次可在下方明細查看。</p>
+      <p className="text-xs text-zinc-400">折線依日期與當日批次順序連接各爐體全部批次，紅點標示第一爐。每一點代表一批；同日期共用X座標，依實際能耗上下排列。相同日期且能耗相同的點會重疊，全部批次可在下方明細查看。</p>
     </div>
     <div className="space-y-2 text-xs">
       <p data-testid="energy-average" data-average={average ?? ''} data-count={plotted.length}>區間平均能耗：{display(average)} kWh/kg · {plotted.length} 批（目前篩選內1、2號爐體全部批次的算術平均）</p>
@@ -188,6 +190,12 @@ export default function EnergyBaseline({ records, detailVersion }: { records: Me
       </tbody></table>
     </div>
     {plotted.length > 30 && <div className="flex justify-end items-center gap-3 text-sm"><button disabled={page===0} onClick={() => setPage(p=>p-1)} className="disabled:opacity-40">上一頁</button><span>{page+1} / {Math.ceil(plotted.length/30)}</span><button disabled={(page+1)*30>=plotted.length} onClick={() => setPage(p=>p+1)} className="disabled:opacity-40">下一頁</button></div>}
+    <section className="space-y-3 rounded border border-violet-800 p-4" data-testid="energy-furnace-three">
+      <h3>3 號爐獨立能耗</h3>
+      <p className="text-xs text-zinc-400">設備結構、容量與用電不同，以下資料不納入 1、2 號爐平均或基線；套用相同日期篩選。</p>
+      <p className="text-sm">{furnaceThree.length} 批 · 平均 {display(mean(furnaceThree))} kWh/kg · 加權能耗 {display(furnaceThree.length ? furnaceThree.reduce((s,r) => s+r.power_kwh,0)/furnaceThree.reduce((s,r) => s+r.charge,0) : null)} kWh/kg</p>
+      {furnaceThree.length ? <div className="max-h-72 overflow-auto"><table className="w-full text-xs"><thead><tr>{['日期／編號','投料 kg','耗電 kWh','能耗 kWh/kg'].map(t => <th key={t} className="p-2 text-left">{t}</th>)}</tr></thead><tbody>{furnaceThree.map(r => <tr key={r.id} className="border-t border-zinc-700"><td className="p-2">{r.melt_date}／{r.melt_no}</td><td>{r.charge.toFixed(1)}</td><td>{r.power_kwh}</td><td>{r.energy.toFixed(3)}</td></tr>)}</tbody></table></div> : <p className="text-xs text-zinc-400">此區間無 3 號爐有效能耗資料。</p>}
+    </section>
     <p className="text-xs text-zinc-400">能耗 = 耗電 ÷ 投料明細總重量；平均為算術平均，加權能耗為總耗電 ÷ 總投料。差異 = 第一批平均 − 後續批平均；沒有樣本時顯示「—」，不以零代替。</p>
   </section>;
 }

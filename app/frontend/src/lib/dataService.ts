@@ -274,6 +274,11 @@ export async function syncPendingToSupabase(
   }
 
   for (const [table, entries] of Object.entries(tableGroups)) {
+    if (table === 'melt_pourings') {
+      remainingQueue.push(...entries); failed += entries.length;
+      errorMessage = '舊澆注待同步資料須先核對，不自動覆寫雲端。';
+      continue;
+    }
     try {
       const items = entries
         .filter(e => e.action !== 'delete' && e.data)
@@ -1130,21 +1135,21 @@ export async function dsUpdateMeltRecord(id: string, data: Partial<Omit<MeltReco
 }
 
 export async function dsDeleteMeltRecord(id: string): Promise<boolean> {
-  return withRLSFallback(
-    () => sbStore.sbDeleteMeltRecord(id),
-    () => localStore.deleteMeltRecord(id),
-    'dsDeleteMeltRecord',
-    { table: 'melt_records', action: 'delete', recordId: id }
-  );
+  if (readPendingSyncQueue().some(row=>row.table === 'melt_records')) throw new Error('尚有待同步資料，請完成同步後再刪除。');
+  const confirmed = await sbStore.sbDeleteMeltRecord(id);
+  if (!confirmed) throw new Error('雲端未確認刪除成功。');
+  markRecentWrite('melt_records');
+  markDeletedIds('melt_records', [id]);
+  try {
+    const rows=JSON.parse(localStorage.getItem('foundry_melt_records') || '[]');
+    localStorage.setItem('foundry_melt_records',JSON.stringify(rows.filter((row: {id:string})=>row.id!==id)));
+  } catch { console.warn('雲端刪除成功，請重新整理本機快取。'); }
+  return true;
 }
 
 export async function dsRecalcMeltRecord(meltId: string): Promise<MeltRecord | null> {
-  return withRLSFallback(
-    () => sbStore.sbRecalcMeltRecord(meltId),
-    () => localStore.recalcMeltRecord(meltId),
-    'dsRecalcMeltRecord',
-    { table: 'melt_records', action: 'update' }
-  );
+  // Failed cloud reads must never become a queued local zero-value update.
+  return sbStore.sbRecalcMeltRecord(meltId);
 }
 
 // ============================================================
@@ -1850,17 +1855,16 @@ export async function dsUpdateRawMaterialReceipt(
 }
 
 export async function dsDeleteRawMaterialReceipt(id: string): Promise<boolean> {
-  return withRLSFallback(
-    () => sbStore.sbDeleteRawMaterialReceipt(id),
-    () => {
-      const all = readLocalRawReceipts();
-      const filtered = all.filter(r => r.id !== id);
-      writeLocalRawReceipts(filtered);
-      return filtered.length < all.length;
-    },
-    'dsDeleteRawMaterialReceipt',
-    { table: 'raw_material_receipts', action: 'delete', recordId: id }
-  );
+  if (readPendingSyncQueue().some(row=>row.table === 'raw_material_receipts')) throw new Error('尚有待同步資料，請完成同步後再刪除。');
+  const confirmed = await sbStore.sbDeleteRawMaterialReceipt(id);
+  if (!confirmed) throw new Error('雲端未確認刪除成功。');
+  markRecentWrite('raw_material_receipts');
+  markDeletedIds('raw_material_receipts', [id]);
+  try {
+    const rows=JSON.parse(localStorage.getItem('foundry_raw_material_receipts') || '[]');
+    localStorage.setItem('foundry_raw_material_receipts',JSON.stringify(rows.filter((row: {id:string})=>row.id!==id)));
+  } catch { console.warn('雲端刪除成功，請重新整理本機快取。'); }
+  return true;
 }
 
 // ============================================================
@@ -2287,7 +2291,10 @@ export async function dsTraceByShipment(shipmentNo: string) {
 // Target Ranges (localStorage only - simple key-value)
 // ============================================================
 export async function dsGetMeltTargetRange(meltId: string): Promise<Record<string, number> | null> {
-  return localStore.getMeltTargetRange(meltId);
+  const { data, error } = await sbStore.supabaseClient().from('melt_records').select('target_range').eq('id', meltId).single();
+  if (error) throw error;
+  // null means not migrated yet; {} explicitly means the user cleared the range.
+  return data.target_range ?? localStore.getMeltTargetRange(meltId);
 }
 
 export async function dsSaveMeltTargetRange(meltId: string, range: Record<string, number>): Promise<void> {

@@ -179,13 +179,17 @@ function notifyListeners(table: string) {
  *   - Exception: 'users_profile' table always keeps local data if server is empty.
  * - On error, keep existing localStorage intact.
  */
+let syncGeneration = 0;
+
 async function refreshLocalFromSupabase(table: string): Promise<void> {
+  const generation = syncGeneration;
   const storageKey = TABLE_TO_STORAGE_KEY[table];
   if (!storageKey) return;
 
   try {
     const source = table === 'melt_records' ? 'melt_sequence_records' : table;
     const { data: fetchedRows, error: selectError } = await supabase.from(source).select('*');
+    if (generation !== syncGeneration) return;
     if (selectError) {
       console.warn(`[RealtimeSync] Failed to refresh ${table}:`, selectError.message);
       return;
@@ -318,6 +322,7 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
           .from(table)
           .select('*', { count: 'exact', head: true });
 
+        if (generation !== syncGeneration) return;
         if (countError) {
           // Query failed - likely RLS/auth issue, keep local data safe
           console.warn(`[RealtimeSync] Count check failed for ${table}, keeping local data:`, countError.message);
@@ -364,6 +369,7 @@ async function refreshLocalFromSupabase(table: string): Promise<void> {
  * Includes automatic reconnection on channel errors.
  */
 export function startRealtimeSync(): void {
+  const generation = syncGeneration;
   if (_isSubscribed) return;
 
   const url = import.meta.env.VITE_SUPABASE_URL;
@@ -384,6 +390,7 @@ export function startRealtimeSync(): void {
       'postgres_changes',
       { event: '*', schema: 'public', table },
       async (payload) => {
+        if (generation !== syncGeneration) return;
         console.log(`[RealtimeSync] Change on ${payload.table}:`, payload.eventType);
         // 遠端刪除事件：立刻在本地留下墓碑，確保同一台裝置上的殘留快取
         // 不會在後續刷新或整表上傳時把這筆資料寫回雲端。
@@ -394,6 +401,7 @@ export function startRealtimeSync(): void {
           }
         }
         await refreshLocalFromSupabase(payload.table);
+        if (generation !== syncGeneration) return;
         notifyListeners(payload.table);
 
         // Fire cross-device work_orders change event
@@ -411,6 +419,7 @@ export function startRealtimeSync(): void {
   }
 
   _channel.subscribe((status) => {
+    if (generation !== syncGeneration) return;
     if (status === 'SUBSCRIBED') {
       _isSubscribed = true;
       _retryCount = 0; // Reset retry count on successful subscription
@@ -521,6 +530,7 @@ export function stopRealtimeSync(): void {
  * Remove all event listeners (for cleanup on unmount).
  */
 export function cleanupRealtimeSync(): void {
+  syncGeneration++;
   stopRealtimeSync();
   if (_visibilityListenerAttached) {
     document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -542,8 +552,10 @@ export function isRealtimeConnected(): boolean {
  * Useful on initial load or when returning to the app to ensure local data is up-to-date.
  */
 export async function fullSyncFromSupabase(): Promise<void> {
+  const generation = syncGeneration;
   const promises = WATCHED_TABLES.map(table => refreshLocalFromSupabase(table));
   await Promise.allSettled(promises);
+  if (generation !== syncGeneration) return;
   // Notify listeners that all data has been refreshed
   notifyListeners('*');
 }

@@ -37,6 +37,29 @@ export interface Customer {
   updated_at: string;
 }
 
+export type SupplierType = '原料供應商' | '耗材供應商' | '設備供應商' | '加工廠' | '熱處理廠' | '運輸商' | '貿易商' | '其他';
+export type SupplierStatus = CustomerStatus;
+
+export interface Supplier {
+  id: string;
+  supplier_no: string;
+  name: string;
+  short_name: string;
+  type: SupplierType | '';
+  address: string;
+  delivery_addresses: string[];
+  phone: string;
+  email: string;
+  contact1_name: string;
+  contact1_phone: string;
+  contact2_name: string;
+  contact2_phone: string;
+  status: SupplierStatus;
+  remarks: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WorkOrderItem {
   id: string;
   line_no: string;

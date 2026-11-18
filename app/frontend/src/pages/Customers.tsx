@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { dsGetCustomers, dsCreateCustomer, dsUpdateCustomer, dsDeleteCustomer } from '@/lib/dataService';
-import { DuplicateCustomerError } from '@/lib/customerDuplicates';
+import { DuplicateCustomerError, findPossibleDuplicateCustomers } from '@/lib/customerDuplicates';
 import { Customer, CustomerType, CustomerStatus } from '@/lib/types';
 import { Plus, Search, Edit, Trash2, Users, X, Upload, RefreshCw } from 'lucide-react';
 import BatchImportDialog from '@/components/BatchImportDialog';
@@ -16,6 +16,30 @@ import { useDataConnection } from '@/contexts/DataContext';
 
 const CUSTOMER_TYPES: CustomerType[] = ['產業機械', '砂石產業', '營造工程', '汽車模具', '鑄造廠', '加工廠', '貿易商', '其他'];
 const CUSTOMER_STATUSES: CustomerStatus[] = ['啟用', '停用'];
+const FILTER_COLUMNS = [
+  { key: 'customer_no', label: '客戶編號' },
+  { key: 'name', label: '客戶名稱' },
+  { key: 'short_name', label: '簡稱' },
+  { key: 'type', label: '類型' },
+  { key: 'phone', label: '電話' },
+  { key: 'contact1_name', label: '聯絡人' },
+  { key: 'status', label: '狀態' },
+] as const;
+const EMPTY_FILTERS = { customer_no: '', name: '', short_name: '', type: '', phone: '', contact1_name: '', status: '' };
+const TABLE_COLUMNS = [...FILTER_COLUMNS, { key: 'actions', label: '操作' }] as const;
+const DEFAULT_WIDTHS = [140, 240, 150, 150, 170, 150, 130, 110];
+const WIDTHS_STORAGE_KEY = 'customers.columnWidths.v1';
+const MIN_COLUMN_WIDTH = 100;
+const MAX_COLUMN_WIDTH = 800;
+
+function readColumnWidths(): number[] {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(WIDTHS_STORAGE_KEY) || 'null');
+    if (Array.isArray(saved) && saved.length === DEFAULT_WIDTHS.length &&
+      saved.every(value => typeof value === 'number' && Number.isFinite(value) && value >= MIN_COLUMN_WIDTH && value <= MAX_COLUMN_WIDTH)) return saved;
+  } catch { /* Browser storage may be unavailable. */ }
+  return [...DEFAULT_WIDTHS];
+}
 
 interface FormState {
   name: string;
@@ -54,12 +78,34 @@ export default function Customers() {
   const { lastSyncTime } = useDataConnection();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [columnFilters, setColumnFilters] = useState(EMPTY_FILTERS);
+  const [columnWidths, setColumnWidths] = useState(readColumnWidths);
+  const columnDrag = useRef<{ index: number; x: number; width: number } | null>(null);
+  useEffect(() => {
+    try { localStorage.setItem(WIDTHS_STORAGE_KEY, JSON.stringify(columnWidths)); }
+    catch { /* Resizing still works when browser storage is unavailable. */ }
+  }, [columnWidths]);
+  const resizeColumn = (index: number, width: number) => {
+    setColumnWidths(previous => previous.map((value, i) => i === index ? Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, width)) : value));
+  };
+  const hasFilters = Boolean(searchQuery.trim()) || Object.values(columnFilters).some(value => value.trim());
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+
+  const possibleDuplicates = useMemo(() => findPossibleDuplicateCustomers(customers, form, editCustomer?.id), [customers, form, editCustomer]);
+  const duplicateNotice = <div className="space-y-2 rounded border border-amber-500/40 p-3 text-sm" aria-live="polite">
+    <p className="text-amber-300">可能重複客戶（依目前已載入清單比對）</p>
+    {possibleDuplicates.length ? <div className="max-h-40 overflow-y-auto space-y-2">{possibleDuplicates.map(({customer, reasons}) => <div key={customer.id} className="border-t border-zinc-700 pt-2">
+      <p>{customer.customer_no} · {customer.name} {customer.short_name && `（${customer.short_name}）`} · {customer.status}</p>
+      <p className="text-amber-300">{reasons.join('、')}</p>
+      <p className="text-zinc-400">{[customer.phone, customer.contact1_phone, customer.address].filter(Boolean).join(' · ')}</p>
+    </div>)}</div> : <p className="text-zinc-400">目前沒有符合的候選；不代表一定沒有重複。</p>}
+    <p className="text-xs text-zinc-400">請核對既有資料；相似名稱或共用電話不一定是同一家公司。新增儲存時仍會檢查最新雲端的全名與簡稱。</p>
+  </div>;
 
   // Load customers from dataService (routes to Supabase when connected)
   const loadCustomers = useCallback(async () => {
@@ -100,14 +146,23 @@ export default function Customers() {
   const [isBatchImportOpen, setIsBatchImportOpen] = useState(false);
 
   const filteredCustomers = useMemo(() => {
-    if (!searchQuery.trim()) return customers;
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
     return customers.filter(c =>
-      c.name.toLowerCase().includes(q) ||
+      (!q || c.name.toLowerCase().includes(q) ||
       c.short_name.toLowerCase().includes(q) ||
-      c.customer_no.toLowerCase().includes(q)
-    );
-  }, [customers, searchQuery]);
+      c.customer_no.toLowerCase().includes(q)) &&
+      FILTER_COLUMNS.every(({ key }) => {
+        const value = columnFilters[key].trim().toLowerCase();
+        const actual = (c[key] || '').toLowerCase();
+        if (!value) return true;
+        if (key === 'type' || key === 'status') return actual === value;
+        return actual.includes(value);
+      })
+    ).sort((a, b) => a.customer_no.localeCompare(b.customer_no, 'en', {
+      numeric: true,
+      sensitivity: 'base',
+    }));
+  }, [customers, searchQuery, columnFilters]);
 
   const handleCreate = async () => {
     if (!form.name.trim()) {
@@ -283,7 +338,7 @@ export default function Customers() {
   };
 
   // Handle OCR result from business card recognition
-  const handleOCRResult = (data: { company_name: string; short_name: string; contact_name: string; contact_title: string; phone: string; mobile: string; fax: string; email: string; address: string; website: string }) => {
+  const handleOCRResult = (data: { company_name: string; short_name: string; contact_name: string; contact_title: string; phone: string; mobile: string; fax: string; email: string; address: string; website: string; tax_id?: string }) => {
     setForm(prev => ({
       ...prev,
       name: data.company_name || prev.name,
@@ -296,6 +351,7 @@ export default function Customers() {
       remarks: [
         prev.remarks,
         data.contact_title ? `職稱: ${data.contact_title}` : '',
+        data.tax_id ? `統一編號: ${data.tax_id}` : '',
         data.fax ? `傳真: ${data.fax}` : '',
         data.website ? `網站: ${data.website}` : '',
       ].filter(Boolean).join('\n'),
@@ -466,28 +522,80 @@ export default function Customers() {
           />
         </div>
 
+        <div className="flex items-center gap-3 text-sm text-zinc-400">
+          <span aria-live="polite">{isLoading ? '載入中...' : `顯示 ${filteredCustomers.length} / ${customers.length} 筆客戶`}</span>
+          <span>拖曳欄位標題右側可調整寬度</span>
+          <Button variant="ghost" size="sm" onClick={() => setColumnWidths([...DEFAULT_WIDTHS])}>重設欄寬</Button>
+          {hasFilters && <Button variant="ghost" size="sm" onClick={() => { setSearchQuery(''); setColumnFilters(EMPTY_FILTERS); }}>
+            <X className="w-4 h-4 mr-1" />清除篩選
+          </Button>}
+        </div>
+
         {/* Loading state */}
         {isLoading ? (
           <div className="text-center py-8 text-zinc-400">載入中...</div>
         ) : (
           /* Customer List */
           <div className="overflow-x-auto rounded-lg border border-zinc-700">
-            <table className="w-full text-sm">
+            <table className="table-fixed text-sm [&_td]:break-words" style={{ width: columnWidths.reduce((sum, width) => sum + width, 0) }}>
+              <colgroup>{TABLE_COLUMNS.map((column, index) => <col key={column.key} style={{ width: columnWidths[index] }} />)}</colgroup>
               <thead className="bg-zinc-800">
                 <tr>
-                  <th className="px-3 py-2 text-left text-zinc-300">客戶編號</th>
-                  <th className="px-3 py-2 text-left text-zinc-300">客戶名稱</th>
-                  <th className="px-3 py-2 text-left text-zinc-300">簡稱</th>
-                  <th className="px-3 py-2 text-left text-zinc-300">類型</th>
-                  <th className="px-3 py-2 text-left text-zinc-300">電話</th>
-                  <th className="px-3 py-2 text-left text-zinc-300">聯絡人</th>
-                  <th className="px-3 py-2 text-left text-zinc-300">狀態</th>
-                  <th className="px-3 py-2 text-left text-zinc-300">操作</th>
+                  {TABLE_COLUMNS.map((column, index) => <th key={column.key} scope="col" className="relative px-3 py-2 text-left text-zinc-300">
+                    {column.label}
+                    <div role="separator" aria-label={`調整${column.label}欄寬`} aria-orientation="vertical"
+                      aria-valuemin={MIN_COLUMN_WIDTH} aria-valuemax={MAX_COLUMN_WIDTH} aria-valuenow={columnWidths[index]} tabIndex={0}
+                      title="拖曳調整欄寬；方向鍵微調，雙擊還原"
+                      className="absolute right-0 top-0 h-full w-2 cursor-col-resize touch-none select-none border-r border-zinc-600 hover:bg-amber-500/40 focus:bg-amber-500/40 focus:outline-none"
+                      onPointerDown={event => {
+                        if (event.button !== 0) return;
+                        event.preventDefault();
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        columnDrag.current = { index, x: event.clientX, width: columnWidths[index] };
+                      }}
+                      onPointerMove={event => {
+                        const drag = columnDrag.current;
+                        if (drag && drag.index === index) resizeColumn(index, drag.width + event.clientX - drag.x);
+                      }}
+                      onPointerUp={event => {
+                        columnDrag.current = null;
+                        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+                      }}
+                      onPointerCancel={() => { columnDrag.current = null; }}
+                      onLostPointerCapture={() => { columnDrag.current = null; }}
+                      onDoubleClick={() => resizeColumn(index, DEFAULT_WIDTHS[index])}
+                      onKeyDown={event => {
+                        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                          event.preventDefault();
+                          resizeColumn(index, columnWidths[index] + (event.key === 'ArrowRight' ? 10 : -10));
+                        }
+                      }} />
+                  </th>)}
+                </tr>
+                <tr>
+                  {FILTER_COLUMNS.map(({ key, label }) => (
+                    <th key={key} className="px-3 pb-3 font-normal">
+                      {key === 'type' || key === 'status' ? (
+                        <Select value={columnFilters[key] || 'all'} onValueChange={value => setColumnFilters(prev => ({ ...prev, [key]: value === 'all' ? '' : value }))}>
+                          <SelectTrigger aria-label={`篩選${label}`} className="h-8 w-full min-w-0 bg-zinc-900 border-zinc-600"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">全部{label}</SelectItem>
+                            {(key === 'type' ? CUSTOMER_TYPES : CUSTOMER_STATUSES).map(value => <SelectItem key={value} value={value}>{value}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input aria-label={`篩選${label}`} placeholder={`篩選${label}`} value={columnFilters[key]}
+                          onChange={event => setColumnFilters(prev => ({ ...prev, [key]: event.target.value }))}
+                          className="h-8 w-full min-w-0 bg-zinc-900 border-zinc-600" />
+                      )}
+                    </th>
+                  ))}
+                  <th><span className="sr-only">操作欄無篩選</span></th>
                 </tr>
               </thead>
               <tbody>
                 {filteredCustomers.length === 0 ? (
-                  <tr><td colSpan={8} className="px-3 py-8 text-center text-zinc-500">無客戶資料</td></tr>
+                  <tr><td colSpan={8} className="px-3 py-8 text-center text-zinc-500">{hasFilters ? '沒有符合篩選條件的客戶' : '無客戶資料'}</td></tr>
                 ) : (
                   filteredCustomers.map(c => (
                     <tr key={c.id} className="border-t border-zinc-700 hover:bg-zinc-800/50">
@@ -523,8 +631,9 @@ export default function Customers() {
 
       {/* Create Dialog */}
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg" onPointerDownOutside={e => e.preventDefault()}>
+        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg max-h-[90vh] overflow-y-auto" onPointerDownOutside={e => e.preventDefault()}>
           <DialogHeader><DialogTitle>新增客戶</DialogTitle></DialogHeader>
+          {duplicateNotice}
           {formContent}
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => setIsCreateOpen(false)}>取消</Button>
@@ -537,8 +646,9 @@ export default function Customers() {
 
       {/* Edit Dialog */}
       <Dialog open={!!editCustomer} onOpenChange={open => { if (!open) { setEditCustomer(null); setForm(emptyForm); } }}>
-        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg" onPointerDownOutside={e => e.preventDefault()}>
+        <DialogContent className="bg-zinc-900 border-zinc-700 max-w-lg max-h-[90vh] overflow-y-auto" onPointerDownOutside={e => e.preventDefault()}>
           <DialogHeader><DialogTitle>編輯客戶</DialogTitle></DialogHeader>
+          {duplicateNotice}
           {formContent}
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => { setEditCustomer(null); setForm(emptyForm); }}>取消</Button>

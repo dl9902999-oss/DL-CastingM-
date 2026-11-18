@@ -1,4 +1,8 @@
+import { readCloudPourings } from '@/lib/pouringService';
+import { batchPouringStatus } from '@/lib/pouringData';
+import type { MeltPouring } from '@/lib/supabaseStore';
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { compareWorkOrders, type WorkOrderSort } from '@/lib/workOrderSorting';
 import { useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
 import CreateCustomerButton from '@/components/CreateCustomerButton';
@@ -14,7 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkOrder, MoldingBatch, MoldSupply, MoldType, HeatTreatment, Pattern, Customer } from '@/lib/types';
-import { dsGetCustomers, dsGetWorkOrders, dsCreateWorkOrder, dsUpdateWorkOrder, dsDeleteWorkOrder, dsGetMoldingBatches, dsGetPatterns, dsGetMeltRecords } from '@/lib/dataService';
+import { dsGetCustomers, dsGetWorkOrders, dsCreateWorkOrder, dsUpdateWorkOrder, dsDeleteWorkOrder, dsGetMoldingBatches, dsGetPatterns } from '@/lib/dataService';
 import { Plus, Search, Edit, Image, FileImage, X, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { onWorkOrderChange, WorkOrderChangeEvent } from '@/lib/realtimeSync';
@@ -272,6 +276,7 @@ export default function WorkOrders() {
   const [batches, setBatches] = useState<MoldingBatch[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [orderNoSort, setOrderNoSort] = useState<WorkOrderSort>('serialDesc');
   const [filterCustomer, setFilterCustomer] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
@@ -357,40 +362,21 @@ export default function WorkOrders() {
     return batches.filter(b => b.work_order_id === orderId).reduce((sum, b) => sum + b.quantity_planned, 0);
   };
 
-  const [meltRecordsCache, setMeltRecordsCache] = useState<Array<{ id: string }>>([]);
-
-  // Load melt records for pouring status check
+  const [pourings, setPourings] = useState<MeltPouring[] | null>(null);
   useEffect(() => {
-    dsGetMeltRecords().then(records => setMeltRecordsCache(records)).catch(() => {});
-  }, [syncTrigger]);
-
-  // Check if a batch has pouring records (from melt_pouring_* localStorage)
-  const getBatchPouringStatus = (batchId: string): 'none' | 'partial' | 'full' => {
-    for (const record of meltRecordsCache) {
-      const pouringKey = `melt_pouring_${record.id}`;
-      const savedPouring = localStorage.getItem(pouringKey);
-      if (savedPouring) {
-        try {
-          const pouringData = JSON.parse(savedPouring) as Array<{
-            batch_id: string;
-            pouring_weights: number[];
-            quantity: number;
-          }>;
-          const batchPouring = pouringData.find(p => p.batch_id === batchId);
-          if (batchPouring) {
-            const filledWeights = batchPouring.pouring_weights.filter(w => w > 0).length;
-            if (filledWeights >= batchPouring.quantity) return 'full';
-            if (filledWeights > 0) return 'partial';
-          }
-        } catch { /* ignore parse errors */ }
-      }
-    }
-    return 'none';
-  };
+    let cancelled = false;
+    setPourings(null);
+    readCloudPourings().then(rows => { if (!cancelled) setPourings(rows); }).catch(() => {
+      if (!cancelled) toast({ title: '澆注狀態讀取失敗，請恢復連線後重新整理', variant: 'destructive' });
+    });
+    return () => { cancelled = true; };
+  }, [syncTrigger, toast]);
+  const getBatchPouringStatus = (batchId: string) => batchPouringStatus(pourings || [], batchId, batches.find(b => b.id === batchId)?.quantity_planned || 0);
 
   // Derive display status based on batch quantities and pouring status
   const getDisplayStatus = (order: WorkOrder) => {
     const startedQty = getStartedQty(order.id);
+    if (pourings === null && order.status !== 'Cancelled') return { label: '澆注狀態待確認', cls: 'bg-zinc-600 text-zinc-300' };
     if (order.status === 'Cancelled') return { label: '已取消', cls: 'bg-zinc-600 text-zinc-300' };
 
     // Check if all batches cover the order quantity (fully started)
@@ -610,7 +596,7 @@ export default function WorkOrders() {
       if (orderDate > filterDateTo) return false;
     }
     return true;
-  });
+  }).sort((a, b) => compareWorkOrders(a, b, orderNoSort));
 
   return (
     <AppLayout>
@@ -753,6 +739,20 @@ export default function WorkOrders() {
             />
           </div>
           <div className="flex flex-wrap gap-2 items-end">
+            <div className="min-w-[170px]">
+              <Label className="text-zinc-400 text-xs mb-1 block">工單編號排序</Label>
+              <Select value={orderNoSort} onValueChange={value => setOrderNoSort(value as WorkOrderSort)}>
+                <SelectTrigger aria-label="工單編號排序" className="bg-zinc-800 border-zinc-700 text-zinc-100 h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-800 border-zinc-700">
+                  <SelectItem value="serialAsc" className="text-zinc-200">流水號升冪（小到大）</SelectItem>
+                  <SelectItem value="serialDesc" className="text-zinc-200">流水號降冪（大到小）</SelectItem>
+                  <SelectItem value="categoryAsc" className="text-zinc-200">客戶類別升冪（A → H）</SelectItem>
+                  <SelectItem value="categoryDesc" className="text-zinc-200">客戶類別降冪（H → A）</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex-1 min-w-[140px]">
               <Label className="text-zinc-400 text-xs mb-1 block">客戶篩選</Label>
               <Select value={filterCustomer} onValueChange={setFilterCustomer}>
@@ -815,6 +815,7 @@ export default function WorkOrders() {
           </div>
         </div>
 
+        <p className="text-xs text-zinc-500">依工單編號中的流水號或客戶類別字母排序；同類別依流水號降冪，無法辨識排序欄位的編號列在最後。</p>
         {/* Orders List */}
         <div className="space-y-2">
           {filtered.length === 0 ? (

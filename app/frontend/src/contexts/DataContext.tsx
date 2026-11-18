@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { isSupabaseConnected, attemptReconnect, getConnectionStatus, syncPendingToSupabase, getPendingSyncCount, getSyncHistory, getSyncStats, clearSyncHistory, type SyncLogEntry, type SyncLogStatus } from '../lib/dataService';
 import { startRealtimeSync, cleanupRealtimeSync, fullSyncFromSupabase, onDataChange } from '../lib/realtimeSync';
 import { forceFullUpload } from '../lib/store';
+import { createSyncLifetime } from '../lib/syncLifetime';
 
 export type { SyncLogEntry, SyncLogStatus };
 
@@ -54,6 +55,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const autoSyncTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const recoveryTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const wasOffline = useRef(false);
+  const lifetime = useRef(createSyncLifetime());
+  useEffect(() => {
+    lifetime.current.start();
+    return () => lifetime.current.stop();
+  }, []);
 
   const [syncHistory, setSyncHistory] = useState<SyncLogEntry[]>(getSyncHistory());
   const [syncStats, setSyncStatsState] = useState(getSyncStats());
@@ -72,11 +78,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   // Perform pending sync upload when connection is available
   const performPendingSync = useCallback(async (trigger: 'auto_recovery' | 'manual_refresh' | 'periodic' | 'initial' = 'auto_recovery'): Promise<{ success: number; failed: number } | null> => {
+    const current = lifetime.current.capture();
+    if (!current()) return null;
     const count = getPendingSyncCount();
     if (count === 0) return null;
 
     try {
       const result = await syncPendingToSupabase(trigger);
+      if (!current()) return null;
       setPendingSyncCount(getPendingSyncCount());
       if (result.success > 0) {
         setLastSyncResult({
@@ -96,12 +105,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   // Auto-recovery: periodically check if network is back when offline
   useEffect(() => {
+    const current = lifetime.current.capture();
     if (isOnline === false && !isLoading) {
       wasOffline.current = true;
       // Start recovery check
       if (!recoveryTimer.current) {
         recoveryTimer.current = setInterval(async () => {
           const connected = await attemptReconnect();
+          if (!current()) return;
           if (connected) {
             setIsOnline(true);
             setConnectionReason('none');
@@ -127,6 +138,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   // When transitioning from offline to online, perform full upload FIRST, then pull fresh data
   useEffect(() => {
+    const current = lifetime.current.capture();
     if (isOnline === true && wasOffline.current) {
       wasOffline.current = false;
       // Sequential: upload first, then download to avoid race condition
@@ -134,18 +146,22 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         try {
           // Step 1: Upload pending sync queue
           await performPendingSync('auto_recovery');
+          if (!current()) return;
           // Step 2: Full upload to ensure all localStorage data is synced to cloud
           await forceFullUpload();
+          if (!current()) return;
           // Step 3: Wait a moment for server to commit writes
           await new Promise(resolve => setTimeout(resolve, 1000));
+          if (!current()) return;
           // Step 4: NOW pull fresh data from Supabase (safe because upload is done)
           await fullSyncFromSupabase();
+          if (!current()) return;
           setLastSyncTime(Date.now());
         } catch (e) {
           console.warn('[DataContext] Recovery sync error:', e);
         }
         // Re-start realtime sync
-        startRealtimeSync();
+        if (current()) startRealtimeSync();
       })();
     }
   }, [isOnline, performPendingSync]);
@@ -176,9 +192,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [isOnline, performPendingSync]);
 
   useEffect(() => {
+    const current = lifetime.current.capture();
     let unsubscribe: (() => void) | null = null;
 
     isSupabaseConnected().then(async (connected) => {
+      if (!current()) return;
       setIsOnline(connected);
       setIsLoading(false);
       setConnectionReason(getConnectionStatus().reason);
@@ -197,14 +215,18 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           const pending = getPendingSyncCount();
           if (pending > 0) {
             await performPendingSync('initial');
+            if (!current()) return;
             // Also force full upload to ensure all local data reaches cloud
             await forceFullUpload();
+            if (!current()) return;
             // Wait for server to commit
             await new Promise(resolve => setTimeout(resolve, 800));
+            if (!current()) return;
           }
 
           // Step 2: NOW pull fresh data from Supabase (safe because local data is already uploaded)
           await fullSyncFromSupabase();
+          if (!current()) return;
           setLastSyncTime(Date.now());
         }
 
@@ -220,12 +242,15 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       if (unsubscribe) unsubscribe();
+      initialSyncDone.current = false;
       cleanupRealtimeSync();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshData = useCallback(async () => {
+    const current = lifetime.current.capture();
+    if (!current()) return;
     // Debounce: prevent multiple simultaneous refreshes
     if (refreshInProgress.current) return;
     refreshInProgress.current = true;
@@ -234,6 +259,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       // Try to reconnect (handles recovery from _writeFailed state)
       // attemptReconnect now also tests write permission
       const connected = await attemptReconnect();
+      if (!current()) return;
       setIsOnline(connected);
       setConnectionReason(getConnectionStatus().reason);
       setPendingSyncCount(getPendingSyncCount());
@@ -241,17 +267,21 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       if (connected) {
         // Upload pending local data first
         const syncResult = await performPendingSync('manual_refresh');
+        if (!current()) return;
 
         // Proceed with full upload if pending sync had no failures
         if (syncResult && syncResult.failed === 0) {
           await forceFullUpload();
+          if (!current()) return;
         }
 
         // Wait for server to commit before pulling
         await new Promise(resolve => setTimeout(resolve, 500));
+        if (!current()) return;
 
         // Pull fresh data from Supabase
         await fullSyncFromSupabase();
+        if (!current()) return;
         // Re-start realtime sync if it was stopped
         startRealtimeSync();
 

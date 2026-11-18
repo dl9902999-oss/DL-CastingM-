@@ -1,3 +1,4 @@
+import { readAllPages } from './readAllPages';
 import { supabase } from './supabase';
 import { filterRemovedIds } from './pendingSyncGuard';
 import { Customer, WorkOrder, MoldingBatch, MeltingRecord, MeltRecord, MeltMaterial, MeltChemistry, QualityInspection, DefectRecord, CAPARecord, WarehouseEntry, ShipmentOrder, UserProfile, Pattern, PatternVersion, PatternHistory, PatternMaintenance, PatternLoan } from './types';
@@ -424,9 +425,8 @@ function mapMoldingBatch(row: Record<string, unknown>): MoldingBatch {
 // Melting Records (Legacy simple)
 // ============================================================
 export async function sbGetMeltingRecords(): Promise<MeltingRecord[]> {
-  const { data, error } = await supabase.from('melting_records').select('*').order('created_at', { ascending: false });
-  if (error) throw error;
-  return (data || []).map(mapMeltingRecord);
+  const data = await readAllPages<Record<string, unknown>>((from, to) => supabase.from('melting_records').select('*').order('created_at', { ascending: false }).order('id').range(from, to));
+  return data.map(mapMeltingRecord);
 }
 
 export async function sbCreateMeltingRecord(recordData: { batch_id: string; batch_no: string; furnace_no: string; melting_weight: number; pouring_weights: number[]; residual_weight?: number }): Promise<MeltingRecord> {
@@ -491,9 +491,8 @@ function mapMeltingRecord(row: Record<string, unknown>): MeltingRecord {
 // Melt Records (New full version)
 // ============================================================
 export async function sbGetMeltRecords(): Promise<MeltRecord[]> {
-  const { data, error } = await supabase.from('melt_sequence_records').select('*').order('created_at', { ascending: false });
-  if (error) throw error;
-  return (data || []).map(mapMeltRecord);
+  const data = await readAllPages<Record<string, unknown>>((from, to) => supabase.from('melt_sequence_records').select('*').order('created_at', { ascending: false }).order('id').range(from, to));
+  return data.map(mapMeltRecord);
 }
 
 /**
@@ -566,14 +565,18 @@ export async function sbUpdateMeltRecord(id: string, updates: Partial<MeltRecord
 }
 
 export async function sbDeleteMeltRecord(id: string): Promise<boolean> {
-  const { error } = await supabase.from('melt_records').delete().eq('id', id);
-  return !error;
+  const { data, error } = await supabase.from('melt_records').delete().eq('id', id).select('id').single();
+  if (error) throw error;
+  if (data?.id !== id) throw new Error('雲端未確認刪除成功，請重新讀取確認。');
+  return true;
 }
 
 export async function sbRecalcMeltRecord(meltId: string): Promise<MeltRecord | null> {
-  const { data: materials } = await supabase.from('melt_materials').select('*').eq('melt_id', meltId);
-  const totalChargeWeight = (materials || []).reduce((sum: number, m: Record<string, unknown>) => sum + ((m.subtotal as number) || 0), 0);
-  const { data: record } = await supabase.from('melt_records').select('power_kwh').eq('id', meltId).single();
+  const materials = await sbGetMeltMaterials(meltId);
+  const totalChargeWeight = (materials || []).reduce((sum: number, m: MeltMaterial) => sum + Number(m.charge_weight) + Number(m.secondary_weight), 0);
+  const { data: record, error: readError } = await supabase.from('melt_records').select('power_kwh').eq('id', meltId).single();
+  if (readError) throw readError;
+  if (!record) throw new Error('找不到熔解紀錄，未執行重算');
   const powerKwh = (record?.power_kwh as number) || 0;
   const specificEnergy = totalChargeWeight > 0 ? Math.round((powerKwh / totalChargeWeight) * 1000) / 1000 : 0;
 
@@ -585,7 +588,7 @@ export async function sbRecalcMeltRecord(meltId: string): Promise<MeltRecord | n
   return data ? mapMeltRecord(data) : null;
 }
 
-function mapMeltRecord(row: Record<string, unknown>): MeltRecord {
+export function mapMeltRecord(row: Record<string, unknown>): MeltRecord {
   return {
     furnace_body: Number(row.furnace_body) || undefined,
     rebuild: Boolean(row.rebuild),
@@ -619,11 +622,12 @@ function mapMeltRecord(row: Record<string, unknown>): MeltRecord {
 // Melt Materials
 // ============================================================
 export async function sbGetMeltMaterials(meltId?: string): Promise<MeltMaterial[]> {
-  let query = supabase.from('melt_materials').select('*');
-  if (meltId) query = query.eq('melt_id', meltId);
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data || []).map(mapMeltMaterial);
+  const data = await readAllPages<Record<string, unknown>>((from, to) => {
+    let query = supabase.from('melt_materials').select('*').order('id');
+    if (meltId) query = query.eq('melt_id', meltId);
+    return query.range(from, to);
+  });
+  return data.map(mapMeltMaterial);
 }
 
 export async function sbCreateMeltMaterial(materialData: Omit<MeltMaterial, 'id' | 'subtotal'>): Promise<MeltMaterial> {
@@ -681,7 +685,7 @@ export async function sbDeleteMeltMaterial(id: string): Promise<boolean> {
   return true;
 }
 
-function mapMeltMaterial(row: Record<string, unknown>): MeltMaterial {
+export function mapMeltMaterial(row: Record<string, unknown>): MeltMaterial {
   return {
     id: row.id as string,
     melt_id: (row.melt_id as string) || '',
@@ -696,11 +700,12 @@ function mapMeltMaterial(row: Record<string, unknown>): MeltMaterial {
 // Melt Chemistry
 // ============================================================
 export async function sbGetMeltChemistry(meltId?: string): Promise<MeltChemistry[]> {
-  let query = supabase.from('melt_chemistries').select('*');
-  if (meltId) query = query.eq('melt_id', meltId);
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data || []).map(mapMeltChemistry);
+  const data = await readAllPages<Record<string, unknown>>((from, to) => {
+    let query = supabase.from('melt_chemistries').select('*').order('id');
+    if (meltId) query = query.eq('melt_id', meltId);
+    return query.range(from, to);
+  });
+  return data.map(mapMeltChemistry);
 }
 
 export async function sbCreateMeltChemistry(chemData: Omit<MeltChemistry, 'id'>): Promise<MeltChemistry> {
@@ -766,7 +771,7 @@ export async function sbDeleteMeltChemistry(id: string): Promise<boolean> {
   return true;
 }
 
-function mapMeltChemistry(row: Record<string, unknown>): MeltChemistry {
+export function mapMeltChemistry(row: Record<string, unknown>): MeltChemistry {
   return {
     id: row.id as string,
     melt_id: (row.melt_id as string) || '',
@@ -805,10 +810,11 @@ export interface MeltPouring {
 }
 
 export async function sbGetMeltPourings(meltId?: string): Promise<MeltPouring[]> {
-  let query = supabase.from('melt_pourings').select('*');
-  if (meltId) query = query.eq('melt_id', meltId);
-  const { data, error } = await query;
-  if (error) throw error;
+  const data = await readAllPages<Record<string, unknown>>((from, to) => {
+    let query = supabase.from('melt_pourings').select('*').order('id');
+    if (meltId) query = query.eq('melt_id', meltId);
+    return query.range(from, to);
+  });
   return (data || []).map((row: Record<string, unknown>) => ({
     id: row.id as string,
     melt_id: (row.melt_id as string) || '',
@@ -994,6 +1000,7 @@ export interface RawMaterialReceipt {
   weight: number;
   unit_price: number;
   supplier: string;
+  supplier_id?: string | null;
   lot_no: string;
   spec: Record<string, number>;
   remark: string;
@@ -1013,6 +1020,7 @@ function mapRawMaterialReceipt(row: Record<string, unknown>): RawMaterialReceipt
     weight: Number(row.weight) || 0,
     unit_price: Number(row.unit_price) || 0,
     supplier: (row.supplier as string) || '',
+    supplier_id: (row.supplier_id as string) || null,
     lot_no: (row.lot_no as string) || '',
     spec: (row.spec as Record<string, number>) || {},
     remark: (row.remark as string) || '',
@@ -1041,6 +1049,7 @@ function buildReceiptPayload(data: Partial<RawMaterialReceiptInput>): Record<str
   if (data.raw_material !== undefined) payload.raw_material = data.raw_material;
   if (data.weight !== undefined) payload.weight = Number(data.weight) || 0;
   if (data.unit_price !== undefined) payload.unit_price = Number(data.unit_price) || 0;
+  if (data.supplier_id !== undefined) payload.supplier_id = data.supplier_id || null;
   if (data.supplier !== undefined) payload.supplier = data.supplier || '';
   if (data.lot_no !== undefined) payload.lot_no = data.lot_no || '';
   if (data.spec !== undefined) payload.spec = data.spec || {};
@@ -1050,12 +1059,8 @@ function buildReceiptPayload(data: Partial<RawMaterialReceiptInput>): Record<str
 }
 
 export async function sbGetRawMaterialReceipts(): Promise<RawMaterialReceipt[]> {
-  const { data, error } = await supabase
-    .from('raw_material_receipts')
-    .select('*')
-    .order('receipt_date', { ascending: false });
-  if (error) throw error;
-  return (data || []).map(mapRawMaterialReceipt);
+  const data = await readAllPages<Record<string, unknown>>((from, to) => supabase.from('raw_material_receipts').select('*').order('receipt_date', { ascending: false }).order('id').range(from, to));
+  return data.map(mapRawMaterialReceipt);
 }
 
 export async function sbCreateRawMaterialReceipt(data: RawMaterialReceiptInput): Promise<RawMaterialReceipt> {
@@ -1101,8 +1106,10 @@ export async function sbUpdateRawMaterialReceipt(
 }
 
 export async function sbDeleteRawMaterialReceipt(id: string): Promise<boolean> {
-  const { error } = await supabase.from('raw_material_receipts').delete().eq('id', id);
-  return !error;
+  const { data, error } = await supabase.from('raw_material_receipts').delete().eq('id', id).select('id').single();
+  if (error) throw error;
+  if (data?.id !== id) throw new Error('雲端未確認刪除成功，請重新讀取確認。');
+  return true;
 }
 
 // ============================================================
