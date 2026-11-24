@@ -19,7 +19,7 @@ const pageRoles: Record<string, UserRole[]> = {
 
 // Presentation guard only. Database policies must independently enforce access.
 export function canAccessPage(user: UserProfile | null, path: string): boolean {
-  if (!user || !Object.hasOwn(pageRoles, path)) return false;
+  if (!user || !Object.prototype.hasOwnProperty.call(pageRoles, path)) return false;
   if (!['Admin', 'Production', 'QC', 'Warehouse'].includes(user.role)) return false;
   if (['/user-management', '/sync-verify'].includes(path) && user.role !== 'Admin') return false;
   // Existing administrators who manage permissions can access this new directory

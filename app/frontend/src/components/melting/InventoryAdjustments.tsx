@@ -51,7 +51,7 @@ export default function InventoryAdjustments({ receipts, materials, records, opt
         if(error)throw new Error(error.message.includes('INVENTORY_CONFLICT')?'庫存已被其他人變更，本次尚未儲存。請按重新讀取，確認新差額後再送出。':error.message);
         if(data?.id!==req.id)throw new Error('雲端未確認成功，請保留輸入內容重試。');
         countRequest.current=null;unsaved.clearDirty();setActual('');setForm(f=>({...f,quantity_delta:'',reason:''}));
-        setMessage('盤點調整已儲存至雲端。'); await load(); await onRefresh();
+        setMessage(data.unchanged === true ? '盤點重量與帳面一致，未新增調整紀錄。' : '盤點調整已儲存至雲端。'); await load(); await onRefresh();
       } catch(err) { setError(err instanceof Error?err.message:'儲存失敗'); }
       finally {setSaving(false);}
     }}>
