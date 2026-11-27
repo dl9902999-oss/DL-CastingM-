@@ -1,5 +1,5 @@
 import { orderItems, resolveOrderItem, itemMatches } from '@/lib/workOrderItems';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSyncTrigger } from '@/hooks/useSyncedData';
 import AppLayout from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ export default function Shipment() {
   // 非空字串代表正在編輯既有出貨單，null 代表新增
   const [editingId, setEditingId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const mutationInFlight = useRef(false);
   const { toast } = useToast();
 
   const [form, setForm] = useState({
@@ -84,6 +85,7 @@ export default function Shipment() {
   };
 
   const handleSubmit = async () => {
+    if (mutationInFlight.current) return;
     if (!form.work_order_id || form.quantity <= 0 || !form.ship_date) {
       toast({ title: '請填寫所有必要欄位', variant: 'destructive' });
       return;
@@ -93,6 +95,7 @@ export default function Shipment() {
     if (!wo || !item || !Number.isInteger(form.quantity)) { toast({ title: '請選擇工單品項並輸入整數數量', variant: 'destructive' }); return; }
     const reserved = shipments.filter(row => row.id !== editingId && row.work_order_id === wo.id && itemMatches(wo,item,row.work_order_item_id)).reduce((sum,row)=>sum+row.quantity,0);
     if (reserved + form.quantity > item.quantity) { toast({ title: `超過此品項尚未建立出貨單的數量（${Math.max(0,item.quantity-reserved)} 件）`, variant: 'destructive' }); return; }
+    mutationInFlight.current = true;
     setSubmitting(true);
     try {
       if (editingId) {
@@ -125,27 +128,40 @@ export default function Shipment() {
     } catch (err: unknown) {
       handleError(err, editingId ? '更新失敗，請稍後再試' : '建立失敗，請稍後再試');
     } finally {
+      mutationInFlight.current = false;
       setSubmitting(false);
     }
   };
 
   const handleShip = async (id: string) => {
+    if (mutationInFlight.current) return;
+    mutationInFlight.current = true;
+    setSubmitting(true);
     try {
       await dsUpdateShipmentOrder(id, { status: 'Shipped' });
       await loadData();
       toast({ title: '已標記為已出貨' });
     } catch (err: unknown) {
       handleError(err, '更新失敗，請稍後再試');
+    } finally {
+      mutationInFlight.current = false;
+      setSubmitting(false);
     }
   };
 
   const handleDelete = async (id: string) => {
+    if (mutationInFlight.current) return;
+    mutationInFlight.current = true;
+    setSubmitting(true);
     try {
       await dsDeleteShipmentOrder(id);
       await loadData();
       toast({ title: '出貨單已刪除' });
     } catch (err: unknown) {
       handleError(err, '刪除失敗，請稍後再試');
+    } finally {
+      mutationInFlight.current = false;
+      setSubmitting(false);
     }
   };
 
@@ -189,7 +205,7 @@ export default function Shipment() {
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       {shipment.status === 'Pending' && (
-                        <Button size="sm" onClick={() => handleShip(shipment.id)} className="bg-green-600 hover:bg-green-700 text-white">
+                        <Button size="sm" disabled={submitting} onClick={() => handleShip(shipment.id)} className="bg-green-600 hover:bg-green-700 text-white">
                           <Check className="w-3 h-3 mr-1" />確認出貨
                         </Button>
                       )}
@@ -206,6 +222,7 @@ export default function Shipment() {
                         size="sm"
                         variant="ghost"
                         title="刪除"
+                        disabled={submitting}
                         className="text-red-400 hover:text-red-300"
                         onClick={() => handleDelete(shipment.id)}
                       >
